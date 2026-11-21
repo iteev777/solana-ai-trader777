@@ -75,6 +75,18 @@ def run_bot():
 
                 if price <= 0:
                     continue
+                    position = paper.positions[address]
+
+entry = position["entry_price"]
+
+change = ((price / entry) - 1) * 100
+
+print(
+    "POSITION:", address,
+    "| ENTRY:", entry,
+    "| CURRENT:", price,
+    "| PROFIT:", round(change, 2), "%"
+)
 
                 result = paper.update_position(address, price)
 
