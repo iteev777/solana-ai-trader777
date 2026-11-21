@@ -4,6 +4,8 @@ import paper_trading as paper
 import sniper_scanner as sniper
 
 from scanner import scan_tokens
+from discovery.token_aggregator import collect_tokens
+
 from ai_analyzer import analyze_token
 from rugcheck import get_rugcheck_report
 from liquidity_monitor import check_liquidity
@@ -25,6 +27,7 @@ SCAN_INTERVAL = 30
 
 MINIMUM_SCORE = 70
 MAX_RUGCHECK_SCORE = 40
+
 SNIPER_MIN_LIQUIDITY = 2500
 SNIPER_TOKEN_TIMEOUT = 120
 
@@ -35,6 +38,7 @@ last_scan_time = 0
 last_prices = {}
 
 pending_sniper_tokens = {}
+seen_discovery_tokens = set()
 
 
 def get_market_data(token_address):
@@ -192,22 +196,85 @@ def check_rugcheck(address):
     return True
 
 
+def get_all_discovery_tokens():
+
+    all_tokens = []
+
+    try:
+        tokens = scan_tokens()
+
+        for token in tokens:
+            token["discovery_sources"] = (
+                token.get("discovery_sources", ["main_scanner"])
+            )
+            all_tokens.append(token)
+
+    except Exception as error:
+        print("MAIN SCANNER ERROR:", repr(error))
+
+    try:
+        tokens = collect_tokens()
+
+        for token in tokens:
+            all_tokens.append(token)
+
+    except Exception as error:
+        print("DISCOVERY ERROR:", repr(error))
+
+    unique_tokens = {}
+
+    for token in all_tokens:
+
+        address = token.get("tokenAddress")
+
+        if not address:
+            continue
+
+        if address not in unique_tokens:
+            unique_tokens[address] = token
+
+        else:
+            existing = unique_tokens[address]
+
+            sources = set(
+                existing.get("discovery_sources", [])
+            )
+
+            sources.update(
+                token.get("discovery_sources", [])
+            )
+
+            existing["discovery_sources"] = list(sources)
+
+    result = list(unique_tokens.values())
+
+    print("ALL DISCOVERY CANDIDATES:", len(result))
+
+    return result
+
+
 def scan_and_trade():
 
-    tokens = scan_tokens()
+    tokens = get_all_discovery_tokens()
 
     print("CANDIDATES RECEIVED:", len(tokens))
 
-    for token in tokens[:20]:
+    for token in tokens[:50]:
 
         address = token.get("tokenAddress")
 
         if not address or address in paper.positions:
             continue
 
+        if address in seen_discovery_tokens:
+            continue
+
+        seen_discovery_tokens.add(address)
+
         market = get_market_data(address)
 
         if not market:
+            print("NO VALID PRICE DATA:", address)
             continue
 
         market["discovery_sources"] = token.get(
@@ -220,6 +287,7 @@ def scan_and_trade():
 
         print("--------------------------------")
         print("TOKEN:", address)
+        print("SOURCES:", market["discovery_sources"])
         print("SCORE:", score)
         print("DECISION:", analysis["decision"])
         print("REASONS:", analysis["reasons"])
@@ -245,6 +313,7 @@ def scan_and_trade():
             continue
 
         price = float(market.get("priceUsd") or 0)
+
         liquidity = float(
             market.get("liquidity", {}).get("usd") or 0
         )
@@ -433,15 +502,17 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 8.0")
+    print("SOLANA MEMECOIN BOT 9.0")
     print("MODE: PAPER TRADING ONLY")
     print("MAIN SCANNER: ACTIVE")
+    print("DISCOVERY AGGREGATOR: ACTIVE")
+    print("GECKOTERMINAL: ENABLED")
+    print("PUMPFUN: ENABLED (API MAY BLOCK REQUESTS)")
+    print("BIRDEYE: ENABLED IF API KEY EXISTS")
     print("LAUNCH SNIPER: STARTING")
     print("RUGCHECK: ACTIVE")
     print("LIQUIDITY MONITOR: ACTIVE")
     print("SHARED BALANCE:", paper.balance, "USD")
-    print("MAIN POSITION LIMIT: 10")
-    print("SNIPER POSITION LIMIT: 10")
     print("================================")
 
     sniper.start_sniper_listener()
