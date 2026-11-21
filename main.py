@@ -8,6 +8,7 @@ from ai_analyzer import analyze_token
 from database import initialize_database, save_analysis, save_trade
 from risk_manager import can_open_trade
 
+
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 BALANCE = 100.00
@@ -59,34 +60,37 @@ def run_bot():
     print("MODE: PAPER TRADING ONLY")
     print("STARTING BALANCE:", BALANCE, "USD")
     print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
+    print("SCAN INTERVAL:", SCAN_INTERVAL, "SECONDS")
     print("================================")
 
     while True:
         try:
+
             # 1. Seurataan avoimia positioita
             for address in list(paper.positions.keys()):
 
                 market = get_market_data(address)
 
                 if not market:
+                    print("PRICE DATA UNAVAILABLE:", address)
                     continue
 
                 price = float(market.get("priceUsd") or 0)
 
                 if price <= 0:
                     continue
-                    position = paper.positions[address]
 
-entry = position["entry_price"]
+                position = paper.positions[address]
+                entry = position["entry_price"]
 
-change = ((price / entry) - 1) * 100
+                change = ((price / entry) - 1) * 100
 
-print(
-    "POSITION:", address,
-    "| ENTRY:", entry,
-    "| CURRENT:", price,
-    "| PROFIT:", round(change, 2), "%"
-)
+                print(
+                    "POSITION:", address,
+                    "| ENTRY:", entry,
+                    "| CURRENT:", price,
+                    "| PROFIT:", round(change, 2), "%"
+                )
 
                 result = paper.update_position(address, price)
 
@@ -140,7 +144,7 @@ print(
                     "| DECISION:", analysis["decision"]
                 )
 
-                # 3. Ostetaan vain riittävän korkean pistemäärän tokenit
+                # 3. Tarkistetaan ostosignaali
                 if score < MINIMUM_SCORE:
                     continue
 
@@ -156,7 +160,8 @@ print(
 
                 result = paper.open_position(address, price)
 
-                if result.startswith("PAPER BUY"):
+                if isinstance(result, str) and result.startswith("PAPER BUY"):
+
                     save_trade(
                         address,
                         "BUY",
@@ -165,15 +170,19 @@ print(
                     )
 
                     print("NEW PAPER POSITION:", address)
+                    print("ENTRY PRICE:", price)
                     print("BALANCE:", round(paper.balance, 2), "USD")
 
-            print("Open positions:", len(paper.positions))
-            print("Paper balance:", round(paper.balance, 2), "USD")
-            print("Daily losses:", round(daily_loss, 2), "USD")
-            print("Scan completed. Waiting...")
+            # 4. Tulostetaan yhteenveto
+            print("--------------------------------")
+            print("OPEN POSITIONS:", len(paper.positions))
+            print("PAPER BALANCE:", round(paper.balance, 2), "USD")
+            print("DAILY LOSSES:", round(daily_loss, 2), "USD")
+            print("SCAN COMPLETED. WAITING...")
+            print("--------------------------------")
 
         except Exception as error:
-            print("BOT ERROR:", error)
+            print("BOT ERROR:", repr(error))
 
         time.sleep(SCAN_INTERVAL)
 
