@@ -45,6 +45,10 @@ SNIPER_MIN_LIQUIDITY = 2500
 SNIPER_TOKEN_TIMEOUT = 300
 DISCOVERY_TOKEN_TIMEOUT = 600
 
+WAIT_RETRY_INTERVAL = 10
+ERROR_RETRY_INTERVAL = 30
+MAX_ANALYSIS_RETRIES = 2
+
 executor = ThreadPoolExecutor(max_workers=WORKERS)
 
 pending_tasks = {}
@@ -65,6 +69,9 @@ last_prices = {}
 
 def safe_float(value):
 
+    if isinstance(value, bool):
+        return None
+
     try:
         number = float(value)
 
@@ -73,7 +80,7 @@ def safe_float(value):
 
         return number
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -82,12 +89,19 @@ def get_token_address(token):
     if not isinstance(token, dict):
         return None
 
-    return (
+    address = (
         token.get("tokenAddress")
         or token.get("address")
         or token.get("token_address")
         or token.get("mint")
     )
+
+    if not isinstance(address, str):
+        return None
+
+    address = address.strip()
+
+    return address if address else None
 
 
 def get_liquidity(pair):
@@ -100,7 +114,59 @@ def get_liquidity(pair):
     if not isinstance(liquidity_data, dict):
         return None
 
-    return safe_float(liquidity_data.get("usd"))
+    liquidity = safe_float(liquidity_data.get("usd"))
+
+    if liquidity is None or liquidity < 0:
+        return None
+
+    return liquidity
+
+
+def remove_pending_duplicates(address):
+
+    pending_sniper_tokens.pop(address, None)
+    pending_discovery_tokens.pop(address, None)
+
+
+def queue_retry(
+    address,
+    strategy_name,
+    token,
+    first_seen,
+    attempts,
+    delay
+):
+
+    if attempts >= MAX_ANALYSIS_RETRIES:
+
+        print(
+            "ANALYSIS RETRIES EXHAUSTED:",
+            address
+        )
+
+        seen_tokens.discard(address)
+        remove_pending_duplicates(address)
+
+        return
+
+    item = {
+        "first_seen": first_seen,
+        "token": token,
+        "attempts": attempts + 1,
+        "retry_after": time.time() + delay
+    }
+
+    if strategy_name == "sniper":
+
+        pending_discovery_tokens.pop(address, None)
+        pending_sniper_tokens[address] = item
+
+    else:
+
+        pending_sniper_tokens.pop(address, None)
+        pending_discovery_tokens[address] = item
+
+    seen_tokens.discard(address)
 
 
 # ==========================================
@@ -108,6 +174,9 @@ def get_liquidity(pair):
 # ==========================================
 
 def get_market_data(token_address):
+
+    if not isinstance(token_address, str) or not token_address:
+        return None
 
     try:
 
@@ -151,7 +220,10 @@ def get_market_data(token_address):
 
     except Exception as error:
 
-        print("TROJAN V2 MARKET DATA ERROR:", repr(error))
+        print(
+            "TROJAN V2 MARKET DATA ERROR:",
+            repr(error)
+        )
 
         return None
 
@@ -184,12 +256,16 @@ def check_rugcheck(token_address):
 
         if not isinstance(analysis, dict):
 
-            print("RUGCHECK INVALID ANALYSIS:", token_address)
+            print(
+                "RUGCHECK INVALID ANALYSIS:",
+                token_address
+            )
 
             return False
 
         status = analysis.get("status")
         score = safe_float(analysis.get("score"))
+        high_risks = safe_float(analysis.get("high_risks"))
 
         print(
             "RUGCHECK DECISION:",
@@ -209,7 +285,13 @@ def check_rugcheck(token_address):
         if score is None or score >= MAX_RUGCHECK_SCORE:
             return False
 
-        if analysis.get("high_risks", 0) > 0:
+        if high_risks is None or high_risks < 0:
+            return False
+
+        if not high_risks.is_integer():
+            return False
+
+        if high_risks > 0:
             return False
 
         return True
@@ -272,7 +354,6 @@ def analyze_token_task(address, strategy_name, token):
                     "strategy": strategy_name
                 }
 
-        # Prepare market data for Trojan V2 strategy.
         token_data = dict(pair)
 
         token_data["address"] = address
@@ -285,12 +366,18 @@ def analyze_token_task(address, strategy_name, token):
         if not isinstance(sources, list):
             sources = [strategy_name]
 
-        token_data["discovery_sources"] = sources
+        token_data["discovery_sources"] = [
+            source.strip().lower()
+            for source in sources
+            if isinstance(source, str) and source.strip()
+        ]
+
+        if not token_data["discovery_sources"]:
+            token_data["discovery_sources"] = [strategy_name]
 
         if not isinstance(token_data.get("liquidity"), dict):
             token_data["liquidity"] = {"usd": liquidity}
 
-        # Run AI analysis and risk evaluation through strategy.py.
         account = paper.get_account_summary()
 
         open_positions = len(paper.get_positions())
@@ -317,10 +404,12 @@ def analyze_token_task(address, strategy_name, token):
                 "status": "rejected",
                 "address": address,
                 "score": trade_decision.get("score", 0),
-                "reason": trade_decision.get("reason", "STRATEGY REJECTED")
+                "reason": trade_decision.get(
+                    "reason",
+                    "STRATEGY REJECTED"
+                )
             }
 
-        # Security check must pass before paper trading.
         if not check_rugcheck(address):
 
             return {
@@ -330,12 +419,22 @@ def analyze_token_task(address, strategy_name, token):
                 "reason": "RUGCHECK FAILED"
             }
 
+        score = safe_float(trade_decision.get("score"))
+
+        if score is None or not 0 <= score <= 100:
+
+            return {
+                "status": "rejected",
+                "address": address,
+                "reason": "INVALID APPROVED SCORE"
+            }
+
         return {
             "status": "approved",
             "address": address,
             "price": price,
             "liquidity": liquidity,
-            "score": trade_decision["score"],
+            "score": score,
             "strategy": strategy_name,
             "analysis": trade_decision
         }
@@ -358,9 +457,18 @@ def analyze_token_task(address, strategy_name, token):
 # TASK SCHEDULER
 # ==========================================
 
-def schedule_token(address, strategy_name, token=None):
+def schedule_token(
+    address,
+    strategy_name,
+    token=None,
+    first_seen=None,
+    attempts=0
+):
 
-    if not address:
+    if not isinstance(address, str) or not address:
+        return False
+
+    if strategy_name not in ("main", "sniper"):
         return False
 
     if address in seen_tokens:
@@ -378,20 +486,26 @@ def schedule_token(address, strategy_name, token=None):
     if address in paper.get_positions():
         return False
 
+    if not isinstance(token, dict):
+        token = {}
+
     seen_tokens.add(address)
 
     future = executor.submit(
         analyze_token_task,
         address,
         strategy_name,
-        token or {}
+        token
     )
 
     pending_tasks[address] = {
         "future": future,
         "strategy": strategy_name,
-        "first_seen": time.time(),
-        "token": token or {}
+        "first_seen": (
+            first_seen if first_seen is not None else time.time()
+        ),
+        "token": token,
+        "attempts": attempts
     }
 
     print(
@@ -430,27 +544,61 @@ def process_completed_tasks():
                 repr(error)
             )
 
+            queue_retry(
+                address,
+                task["strategy"],
+                task["token"],
+                task["first_seen"],
+                task["attempts"],
+                ERROR_RETRY_INTERVAL
+            )
+
+            continue
+
+        if not isinstance(result, dict):
+
+            queue_retry(
+                address,
+                task["strategy"],
+                task["token"],
+                task["first_seen"],
+                task["attempts"],
+                ERROR_RETRY_INTERVAL
+            )
+
             continue
 
         status = result.get("status")
 
         if status == "waiting":
 
-            seen_tokens.discard(address)
+            queue_retry(
+                address,
+                task["strategy"],
+                task["token"],
+                task["first_seen"],
+                task["attempts"],
+                WAIT_RETRY_INTERVAL
+            )
 
-            pending_item = {
-                "first_seen": task["first_seen"],
-                "token": task["token"]
-            }
+            continue
 
-            if task["strategy"] == "sniper":
-                pending_sniper_tokens[address] = pending_item
-            else:
-                pending_discovery_tokens[address] = pending_item
+        if status == "error":
+
+            queue_retry(
+                address,
+                task["strategy"],
+                task["token"],
+                task["first_seen"],
+                task["attempts"],
+                ERROR_RETRY_INTERVAL
+            )
 
             continue
 
         if status != "approved":
+
+            remove_pending_duplicates(address)
 
             print(
                 "TOKEN REJECTED:",
@@ -463,24 +611,53 @@ def process_completed_tasks():
 
             continue
 
-        save_analysis(
-            address,
-            result["score"],
-            str(result["analysis"]),
-            mode="paper"
-        )
+        score = safe_float(result.get("score"))
+        price = safe_float(result.get("price"))
+        strategy_name = result.get("strategy")
+        analysis = result.get("analysis")
+
+        if (
+            score is None
+            or price is None
+            or price <= 0
+            or strategy_name not in ("main", "sniper")
+            or not isinstance(analysis, dict)
+        ):
+
+            print("INVALID APPROVED RESULT:", address)
+
+            remove_pending_duplicates(address)
+
+            continue
+
+        # Save the actual decision, not the whole dictionary.
+        try:
+
+            save_analysis(
+                address,
+                score,
+                analysis.get("action", "BUY_SIGNAL"),
+                mode="paper"
+            )
+
+        except Exception as error:
+
+            print(
+                "ANALYSIS SAVE ERROR:",
+                address,
+                repr(error)
+            )
 
         trade_result = manager.process_approved_signal(
             address,
-            result["price"],
-            strategy=result["strategy"]
+            price,
+            strategy=strategy_name
         )
 
         print("APPROVED SIGNAL:", address)
         print("SIGNAL RESULTS:", trade_result)
 
-        pending_sniper_tokens.pop(address, None)
-        pending_discovery_tokens.pop(address, None)
+        remove_pending_duplicates(address)
 
 
 # ==========================================
@@ -495,7 +672,7 @@ def add_discovery_tokens():
 
         result = scan_tokens()
 
-        if result:
+        if isinstance(result, (list, tuple)):
             tokens.extend(result)
 
     except Exception as error:
@@ -506,7 +683,7 @@ def add_discovery_tokens():
 
         result = collect_tokens()
 
-        if result:
+        if isinstance(result, (list, tuple)):
             tokens.extend(result)
 
     except Exception as error:
@@ -549,7 +726,10 @@ def receive_sniper_tokens():
 
         except Exception as error:
 
-            print("SNIPER QUEUE ERROR:", repr(error))
+            print(
+                "SNIPER QUEUE ERROR:",
+                repr(error)
+            )
 
             break
 
@@ -567,9 +747,14 @@ def receive_sniper_tokens():
         if address in pending_tasks:
             continue
 
+        # Sniper takes priority over a waiting discovery retry.
+        pending_discovery_tokens.pop(address, None)
+
         pending_sniper_tokens[address] = {
             "token": token,
-            "first_seen": time.time()
+            "first_seen": time.time(),
+            "attempts": 0,
+            "retry_after": 0
         }
 
         received += 1
@@ -593,6 +778,9 @@ def process_sniper_tokens():
 
             continue
 
+        if current_time < item.get("retry_after", 0):
+            continue
+
         if address in pending_tasks:
             continue
 
@@ -605,7 +793,9 @@ def process_sniper_tokens():
         schedule_token(
             address,
             "sniper",
-            item.get("token", {})
+            item.get("token", {}),
+            first_seen=item["first_seen"],
+            attempts=item.get("attempts", 0)
         )
 
 
@@ -628,7 +818,13 @@ def process_discovery_pending():
 
             continue
 
+        if current_time < item.get("retry_after", 0):
+            continue
+
         if address in pending_tasks:
+            continue
+
+        if address in pending_sniper_tokens:
             continue
 
         if address in paper.get_positions():
@@ -640,7 +836,9 @@ def process_discovery_pending():
         schedule_token(
             address,
             "main",
-            item.get("token", {})
+            item.get("token", {}),
+            first_seen=item["first_seen"],
+            attempts=item.get("attempts", 0)
         )
 
 
@@ -650,13 +848,16 @@ def process_discovery_pending():
 
 def record_sale(address, result):
 
+    if not isinstance(result, dict):
+        return
+
     print(
         "PAPER SALE:",
         address,
         "| P/L:",
-        result["profit_loss"],
+        result.get("profit_loss", "N/A"),
         "| BALANCE:",
-        result["balance"]
+        result.get("balance", "N/A")
     )
 
 
@@ -705,8 +906,7 @@ def monitor_positions():
                     price
                 )
 
-                if isinstance(result, dict):
-                    record_sale(address, result)
+                record_sale(address, result)
 
                 continue
 
@@ -727,13 +927,22 @@ def monitor_positions():
                 repr(error)
             )
 
-        result = paper.update_position(
-            address,
-            price
-        )
+        try:
 
-        if isinstance(result, dict):
+            result = paper.update_position(
+                address,
+                price
+            )
+
             record_sale(address, result)
+
+        except Exception as error:
+
+            print(
+                "POSITION UPDATE ERROR:",
+                address,
+                repr(error)
+            )
 
 
 # ==========================================
@@ -772,7 +981,10 @@ def print_statistics():
 
     except Exception as error:
 
-        print("STATISTICS ERROR:", repr(error))
+        print(
+            "STATISTICS ERROR:",
+            repr(error)
+        )
 
 
 # ==========================================
@@ -837,7 +1049,10 @@ def run_bot():
 
         except Exception as error:
 
-            print("MAIN LOOP ERROR:", repr(error))
+            print(
+                "MAIN LOOP ERROR:",
+                repr(error)
+            )
 
         elapsed = time.time() - loop_start
 
