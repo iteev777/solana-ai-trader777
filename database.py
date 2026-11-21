@@ -21,8 +21,13 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
-SCHEMA_VERSION = 2
+VALID_STRATEGIES = ("main", "sniper")
+SCHEMA_VERSION = 3
 
+
+# ==========================================
+# TIME AND VALIDATION
+# ==========================================
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -37,6 +42,11 @@ def validate_mode(mode):
         raise ValueError("Invalid trading mode: " + str(mode))
 
 
+def validate_strategy(strategy):
+    if strategy not in VALID_STRATEGIES:
+        raise ValueError("Invalid strategy: " + str(strategy))
+
+
 def validate_number(value, name):
     try:
         number = float(value)
@@ -49,6 +59,10 @@ def validate_number(value, name):
     return number
 
 
+# ==========================================
+# DATABASE CONNECTION
+# ==========================================
+
 @contextmanager
 def connect():
     connection = sqlite3.connect(
@@ -57,6 +71,7 @@ def connect():
     )
 
     connection.row_factory = sqlite3.Row
+
     connection.execute("PRAGMA busy_timeout = 30000")
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA synchronous = NORMAL")
@@ -73,7 +88,68 @@ def connect():
         connection.close()
 
 
+def add_column_if_missing(
+    connection,
+    table,
+    column,
+    definition
+):
+    existing = [
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(" + table + ")"
+        ).fetchall()
+    ]
+
+    if column not in existing:
+        connection.execute(
+            "ALTER TABLE " + table
+            + " ADD COLUMN " + column
+            + " " + definition
+        )
+
+
+# ==========================================
+# DAILY STATISTICS RESET
+# ==========================================
+
+def _ensure_daily_stats_current(connection, mode):
+
+    current_date = today()
+
+    account = connection.execute("""
+        SELECT daily_date
+        FROM account_state
+        WHERE mode = ?
+    """, (mode,)).fetchone()
+
+    if not account:
+        return
+
+    stored_date = account["daily_date"]
+
+    if stored_date != current_date:
+
+        connection.execute("""
+            UPDATE account_state
+            SET daily_loss = 0,
+                daily_realized_pnl = 0,
+                daily_date = ?,
+                updated_at = ?
+            WHERE mode = ?
+        """, (
+            current_date,
+            now(),
+            mode
+        ))
+
+
+# ==========================================
+# DATABASE INITIALIZATION
+# ==========================================
+
 def initialize_database():
+
     with connect() as connection:
 
         connection.execute("PRAGMA journal_mode = WAL")
@@ -101,17 +177,23 @@ def initialize_database():
         """)
 
         add_column_if_missing(
-            connection, "trades", "mode",
+            connection,
+            "trades",
+            "mode",
             "TEXT NOT NULL DEFAULT 'paper'"
         )
 
         add_column_if_missing(
-            connection, "trades", "strategy",
+            connection,
+            "trades",
+            "strategy",
             "TEXT NOT NULL DEFAULT 'main'"
         )
 
         add_column_if_missing(
-            connection, "analyses", "mode",
+            connection,
+            "analyses",
+            "mode",
             "TEXT NOT NULL DEFAULT 'paper'"
         )
 
@@ -127,7 +209,9 @@ def initialize_database():
         """)
 
         add_column_if_missing(
-            connection, "account_state", "daily_date",
+            connection,
+            "account_state",
+            "daily_date",
             "TEXT"
         )
 
@@ -143,6 +227,28 @@ def initialize_database():
                 PRIMARY KEY (mode, token_address)
             )
         """)
+
+        # Migrate older positions tables.
+        add_column_if_missing(
+            connection,
+            "positions",
+            "strategy",
+            "TEXT NOT NULL DEFAULT 'main'"
+        )
+
+        add_column_if_missing(
+            connection,
+            "positions",
+            "opened_at",
+            "TEXT"
+        )
+
+        add_column_if_missing(
+            connection,
+            "positions",
+            "metadata",
+            "TEXT"
+        )
 
         connection.execute("""
             CREATE TABLE IF NOT EXISTS pending_tokens (
@@ -177,6 +283,7 @@ def initialize_database():
             VALUES ('schema_version', ?)
         """, (str(SCHEMA_VERSION),))
 
+        # Indexes.
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_trades_mode
             ON trades(mode)
@@ -219,27 +326,12 @@ def initialize_database():
     print("================================")
 
 
-def add_column_if_missing(connection, table, column, definition):
-    existing = [
-        row["name"]
-        for row in connection.execute(
-            "PRAGMA table_info(" + table + ")"
-        ).fetchall()
-    ]
-
-    if column not in existing:
-        connection.execute(
-            "ALTER TABLE " + table
-            + " ADD COLUMN " + column
-            + " " + definition
-        )
-
-
 # ==========================================
 # ACCOUNTS
 # ==========================================
 
 def initialize_account(mode, starting_balance):
+
     validate_mode(mode)
 
     starting_balance = validate_number(
@@ -248,6 +340,7 @@ def initialize_account(mode, starting_balance):
     )
 
     with connect() as connection:
+
         connection.execute("""
             INSERT OR IGNORE INTO account_state
             (
@@ -268,9 +361,16 @@ def initialize_account(mode, starting_balance):
 
 
 def get_account_state(mode):
+
     validate_mode(mode)
 
     with connect() as connection:
+
+        _ensure_daily_stats_current(
+            connection,
+            mode
+        )
+
         row = connection.execute("""
             SELECT *
             FROM account_state
@@ -286,16 +386,19 @@ def save_account_state(
     daily_loss=0,
     daily_realized_pnl=0
 ):
+
     validate_mode(mode)
 
     balance = validate_number(balance, "balance")
     daily_loss = validate_number(daily_loss, "daily_loss")
+
     daily_realized_pnl = validate_number(
         daily_realized_pnl,
         "daily_realized_pnl"
     )
 
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO account_state
             (
@@ -325,9 +428,11 @@ def save_account_state(
 
 
 def reset_daily_stats(mode):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         connection.execute("""
             UPDATE account_state
             SET daily_loss = 0,
@@ -335,10 +440,15 @@ def reset_daily_stats(mode):
                 daily_date = ?,
                 updated_at = ?
             WHERE mode = ?
-        """, (today(), now(), mode))
+        """, (
+            today(),
+            now(),
+            mode
+        ))
 
 
 def get_account_summary(mode):
+
     account = get_account_state(mode)
 
     if not account:
@@ -364,7 +474,7 @@ def get_account_summary(mode):
 
 
 # ==========================================
-# ATOMIC PAPER / LIVE ACCOUNT OPERATIONS
+# ATOMIC POSITION OPENING
 # ==========================================
 
 def open_position_atomic(
@@ -375,15 +485,28 @@ def open_position_atomic(
     strategy="main",
     metadata=None
 ):
-    validate_mode(mode)
 
-    entry_price = validate_number(entry_price, "entry_price")
-    invested = validate_number(invested, "invested")
+    validate_mode(mode)
+    validate_strategy(strategy)
+
+    if not token_address:
+        raise ValueError("Missing token address")
+
+    entry_price = validate_number(
+        entry_price,
+        "entry_price"
+    )
+
+    invested = validate_number(
+        invested,
+        "invested"
+    )
 
     if entry_price <= 0 or invested <= 0:
         raise ValueError("Price and investment must be positive")
 
     with connect() as connection:
+
         connection.execute("BEGIN IMMEDIATE")
 
         account = connection.execute("""
@@ -467,13 +590,21 @@ def open_position_atomic(
     return "POSITION OPENED"
 
 
+# ==========================================
+# ATOMIC POSITION CLOSING
+# ==========================================
+
 def close_position_atomic(
     mode,
     token_address,
     current_price,
     reason="CLOSED"
 ):
+
     validate_mode(mode)
+
+    if not token_address:
+        raise ValueError("Missing token address")
 
     current_price = validate_number(
         current_price,
@@ -484,7 +615,14 @@ def close_position_atomic(
         raise ValueError("Price must be positive")
 
     with connect() as connection:
+
         connection.execute("BEGIN IMMEDIATE")
+
+        # Reset daily statistics before recording today's close.
+        _ensure_daily_stats_current(
+            connection,
+            mode
+        )
 
         position = connection.execute("""
             SELECT *
@@ -512,9 +650,16 @@ def close_position_atomic(
             current_price / entry_price
         )
 
-        profit_loss = round(returned_amount - invested, 2)
+        profit_loss = round(
+            returned_amount - invested,
+            2
+        )
 
-        new_balance = float(account["balance"]) + returned_amount
+        new_balance = (
+            float(account["balance"])
+            + returned_amount
+        )
+
         new_daily_loss = (
             float(account["daily_loss"])
             + max(0, -profit_loss)
@@ -528,19 +673,24 @@ def close_position_atomic(
         connection.execute("""
             DELETE FROM positions
             WHERE mode = ? AND token_address = ?
-        """, (mode, token_address))
+        """, (
+            mode,
+            token_address
+        ))
 
         connection.execute("""
             UPDATE account_state
             SET balance = ?,
                 daily_loss = ?,
                 daily_realized_pnl = ?,
+                daily_date = ?,
                 updated_at = ?
             WHERE mode = ?
         """, (
             new_balance,
             new_daily_loss,
             new_daily_pnl,
+            today(),
             now(),
             mode
         ))
@@ -590,15 +740,25 @@ def save_position(
     strategy="main",
     metadata=None
 ):
-    validate_mode(mode)
 
-    entry_price = validate_number(entry_price, "entry_price")
-    invested = validate_number(invested, "invested")
+    validate_mode(mode)
+    validate_strategy(strategy)
+
+    entry_price = validate_number(
+        entry_price,
+        "entry_price"
+    )
+
+    invested = validate_number(
+        invested,
+        "invested"
+    )
 
     if entry_price <= 0 or invested <= 0:
         raise ValueError("Invalid position values")
 
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO positions
             (
@@ -629,19 +789,26 @@ def save_position(
 
 
 def delete_position(mode, token_address):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         connection.execute("""
             DELETE FROM positions
             WHERE mode = ? AND token_address = ?
-        """, (mode, token_address))
+        """, (
+            mode,
+            token_address
+        ))
 
 
 def get_positions(mode):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         rows = connection.execute("""
             SELECT *
             FROM positions
@@ -651,6 +818,7 @@ def get_positions(mode):
     positions = {}
 
     for row in rows:
+
         position = dict(row)
 
         try:
@@ -684,13 +852,20 @@ def save_trade(
     mode="paper",
     strategy="main"
 ):
+
     validate_mode(mode)
+    validate_strategy(strategy)
 
     price = validate_number(price, "price")
     amount = validate_number(amount, "amount")
-    profit_loss = validate_number(profit_loss, "profit_loss")
+
+    profit_loss = validate_number(
+        profit_loss,
+        "profit_loss"
+    )
 
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO trades
             (
@@ -717,27 +892,50 @@ def save_trade(
 
 
 def get_trade_stats(mode="paper", strategy=None):
+
     validate_mode(mode)
 
+    if strategy is not None:
+        validate_strategy(strategy)
+
     with connect() as connection:
+
         if strategy:
+
             result = connection.execute("""
                 SELECT
                     COUNT(*) AS total,
-                    SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
-                    SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END) AS losses,
+                    SUM(
+                        CASE WHEN profit_loss > 0
+                        THEN 1 ELSE 0 END
+                    ) AS wins,
+                    SUM(
+                        CASE WHEN profit_loss < 0
+                        THEN 1 ELSE 0 END
+                    ) AS losses,
                     SUM(profit_loss) AS total_profit
                 FROM trades
                 WHERE action = 'SELL'
                 AND mode = ?
                 AND strategy = ?
-            """, (mode, strategy)).fetchone()
+            """, (
+                mode,
+                strategy
+            )).fetchone()
+
         else:
+
             result = connection.execute("""
                 SELECT
                     COUNT(*) AS total,
-                    SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
-                    SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END) AS losses,
+                    SUM(
+                        CASE WHEN profit_loss > 0
+                        THEN 1 ELSE 0 END
+                    ) AS wins,
+                    SUM(
+                        CASE WHEN profit_loss < 0
+                        THEN 1 ELSE 0 END
+                    ) AS losses,
                     SUM(profit_loss) AS total_profit
                 FROM trades
                 WHERE action = 'SELL'
@@ -752,24 +950,35 @@ def get_trade_stats(mode="paper", strategy=None):
         "total_trades": total,
         "winning_trades": wins,
         "losing_trades": losses,
-        "win_rate": round((wins / total) * 100, 2) if total else 0,
-        "total_profit": round(result["total_profit"] or 0, 2)
+        "win_rate": (
+            round((wins / total) * 100, 2)
+            if total else 0
+        ),
+        "total_profit": round(
+            result["total_profit"] or 0,
+            2
+        )
     }
 
 
 def get_recent_trades(mode="paper", limit=20):
+
     validate_mode(mode)
 
     limit = max(1, min(int(limit), 500))
 
     with connect() as connection:
+
         rows = connection.execute("""
             SELECT *
             FROM trades
             WHERE mode = ?
             ORDER BY id DESC
             LIMIT ?
-        """, (mode, limit)).fetchall()
+        """, (
+            mode,
+            limit
+        )).fetchall()
 
     return [dict(row) for row in rows]
 
@@ -778,13 +987,26 @@ def get_recent_trades(mode="paper", limit=20):
 # ANALYSES
 # ==========================================
 
-def save_analysis(token, score, decision, mode="paper"):
+def save_analysis(
+    token,
+    score,
+    decision,
+    mode="paper"
+):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO analyses
-            (token_address, score, decision, timestamp, mode)
+            (
+                token_address,
+                score,
+                decision,
+                timestamp,
+                mode
+            )
             VALUES (?, ?, ?, ?, ?)
         """, (
             token,
@@ -806,12 +1028,21 @@ def save_pending_token(
     first_seen,
     token_data
 ):
+
     validate_mode(mode)
+    validate_strategy(strategy)
 
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO pending_tokens
-            (mode, token_address, strategy, first_seen, token_data)
+            (
+                mode,
+                token_address,
+                strategy,
+                first_seen,
+                token_data
+            )
             VALUES (?, ?, ?, ?, ?)
 
             ON CONFLICT(mode, token_address) DO UPDATE SET
@@ -828,19 +1059,26 @@ def save_pending_token(
 
 
 def delete_pending_token(mode, token_address):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         connection.execute("""
             DELETE FROM pending_tokens
             WHERE mode = ? AND token_address = ?
-        """, (mode, token_address))
+        """, (
+            mode,
+            token_address
+        ))
 
 
 def get_pending_tokens(mode):
+
     validate_mode(mode)
 
     with connect() as connection:
+
         rows = connection.execute("""
             SELECT *
             FROM pending_tokens
@@ -850,6 +1088,7 @@ def get_pending_tokens(mode):
     result = []
 
     for row in rows:
+
         item = dict(row)
 
         try:
@@ -868,11 +1107,22 @@ def get_pending_tokens(mode):
 # BOT EVENT LOG
 # ==========================================
 
-def log_event(event_type, message, token_address=None):
+def log_event(
+    event_type,
+    message,
+    token_address=None
+):
+
     with connect() as connection:
+
         connection.execute("""
             INSERT INTO bot_events
-            (event_type, message, token_address, timestamp)
+            (
+                event_type,
+                message,
+                token_address,
+                timestamp
+            )
             VALUES (?, ?, ?, ?)
         """, (
             str(event_type),
@@ -883,9 +1133,11 @@ def log_event(event_type, message, token_address=None):
 
 
 def get_recent_events(limit=50):
+
     limit = max(1, min(int(limit), 500))
 
     with connect() as connection:
+
         rows = connection.execute("""
             SELECT *
             FROM bot_events
@@ -901,7 +1153,9 @@ def get_recent_events(limit=50):
 # ==========================================
 
 def get_database_health():
+
     with connect() as connection:
+
         integrity = connection.execute(
             "PRAGMA integrity_check"
         ).fetchone()[0]
@@ -913,22 +1167,53 @@ def get_database_health():
             ORDER BY name
         """).fetchall()
 
+        version = connection.execute("""
+            SELECT value
+            FROM schema_meta
+            WHERE key = 'schema_version'
+        """).fetchone()
+
     return {
         "database": DATABASE,
         "integrity": integrity,
-        "schema_version": SCHEMA_VERSION,
-        "tables": [row["name"] for row in tables]
+        "schema_version": (
+            int(version["value"])
+            if version else None
+        ),
+        "tables": [
+            row["name"]
+            for row in tables
+        ]
     }
 
 
+# ==========================================
+# TROJAN V2 DATABASE TEST
+# ==========================================
+
 if __name__ == "__main__":
+
     initialize_database()
 
     initialize_account("paper", 100.00)
     initialize_account("live", 0.00)
 
-    print("PAPER ACCOUNT:", get_account_summary("paper"))
-    print("LIVE ACCOUNT:", get_account_summary("live"))
-    print("DATABASE HEALTH:", get_database_health())
-    print("PAPER TRADE STATS:", get_trade_stats("paper"))
+    print("PAPER ACCOUNT:")
+    print(get_account_summary("paper"))
+
+    print("LIVE ACCOUNT:")
+    print(get_account_summary("live"))
+
+    print("PAPER TRADE STATS:")
+    print(get_trade_stats("paper"))
+
+    print("MAIN STATS:")
+    print(get_trade_stats("paper", "main"))
+
+    print("SNIPER STATS:")
+    print(get_trade_stats("paper", "sniper"))
+
+    print("DATABASE HEALTH:")
+    print(get_database_health())
+
     print("TROJAN V2 DATABASE TEST COMPLETED")
