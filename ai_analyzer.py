@@ -37,16 +37,64 @@ def analyze_token(token):
 
     total_transactions = buys + sells
 
-    # 1. LIQUIDITY
+    # SAFETY CHECK 1: LIQUIDITY
 
     if liquidity < 10000:
         return {
             "score": 0,
             "decision": "REJECT",
-            "reasons": ["Liquidity too low"]
+            "reasons": ["Liquidity below 10000 USD"]
         }
 
-    elif liquidity >= 50000:
+    # SAFETY CHECK 2: TOKEN AGE
+
+    pair_created = get_number(
+        token.get("pairCreatedAt")
+    )
+
+    if pair_created > 0:
+
+        age_minutes = (
+            time.time() * 1000 - pair_created
+        ) / 60000
+
+        if age_minutes < 10:
+            return {
+                "score": 0,
+                "decision": "REJECT",
+                "reasons": ["Trading pair too new"]
+            }
+
+    # SAFETY CHECK 3: EXTREME PRICE PUMP
+
+    if price_h1 > 50:
+        return {
+            "score": 0,
+            "decision": "REJECT",
+            "reasons": ["Extreme hourly price increase"]
+        }
+
+    # SAFETY CHECK 4: SUSPICIOUS VOLUME
+
+    if liquidity > 0 and volume / liquidity > 10:
+        return {
+            "score": 0,
+            "decision": "REJECT",
+            "reasons": ["Suspicious volume to liquidity ratio"]
+        }
+
+    # SAFETY CHECK 5: SELLING PRESSURE
+
+    if total_transactions >= 10 and sells > buys * 1.5:
+        return {
+            "score": 0,
+            "decision": "REJECT",
+            "reasons": ["Excessive selling pressure"]
+        }
+
+    # SCORING: LIQUIDITY
+
+    if liquidity >= 50000:
         score += 30
         reasons.append("Excellent liquidity")
 
@@ -58,7 +106,7 @@ def analyze_token(token):
         score += 15
         reasons.append("Acceptable liquidity")
 
-    # 2. TRADING VOLUME
+    # SCORING: VOLUME
 
     if volume >= 50000:
         score += 25
@@ -72,7 +120,7 @@ def analyze_token(token):
         score += 10
         reasons.append("Moderate volume")
 
-    # 3. BUYING PRESSURE
+    # SCORING: BUYING PRESSURE
 
     if total_transactions >= 20:
         score += 10
@@ -93,11 +141,7 @@ def analyze_token(token):
             score += 10
             reasons.append("More buyers than sellers")
 
-        elif buy_ratio < 0.35:
-            score -= 10
-            reasons.append("Strong selling pressure")
-
-    # 4. SHORT-TERM MOMENTUM
+    # SCORING: MOMENTUM
 
     if 0 < price_h1 <= 15:
         score += 10
@@ -111,34 +155,9 @@ def analyze_token(token):
         score -= 5
         reasons.append("Negative short-term movement")
 
-    # 5. DAILY PRICE MOVEMENT
-
     if price_h24 > 0:
         score += 5
         reasons.append("Positive daily movement")
-
-    # 6. TOKEN AGE
-
-    pair_created = get_number(
-        token.get("pairCreatedAt")
-    )
-
-    if pair_created > 0:
-
-        age_hours = (
-            time.time() * 1000 - pair_created
-        ) / 3600000
-
-        if age_hours < 0:
-            age_hours = 0
-
-        if age_hours < 0.17:
-            score -= 10
-            reasons.append("Extremely new trading pair")
-
-        elif age_hours < 24:
-            score += 5
-            reasons.append("New trading pair")
 
     score = max(0, min(100, score))
 
@@ -152,4 +171,4 @@ def analyze_token(token):
 
 
 if __name__ == "__main__":
-    print("ADVANCED TOKEN ANALYZER READY")
+    print("ADVANCED TOKEN ANALYZER 2.0 READY")
