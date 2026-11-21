@@ -11,7 +11,7 @@ from risk_manager import can_open_trade
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 BALANCE = 100.00
-SCAN_INTERVAL = 60
+SCAN_INTERVAL = 30
 MINIMUM_SCORE = 70
 
 daily_loss = 0.00
