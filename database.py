@@ -69,6 +69,28 @@ def save_analysis(token, score, decision):
         ))
 
 
+def get_trade_stats():
+
+    with connect() as connection:
+
+        result = connection.execute("""
+            SELECT
+                COUNT(*),
+                SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN profit_loss < 0 THEN 1 ELSE 0 END),
+                SUM(profit_loss)
+            FROM trades
+            WHERE action = 'SELL'
+        """).fetchone()
+
+    return {
+        "total_trades": result[0] or 0,
+        "winning_trades": result[1] or 0,
+        "losing_trades": result[2] or 0,
+        "total_profit": round(result[3] or 0, 2)
+    }
+
+
 if __name__ == "__main__":
     initialize_database()
-    print("DATABASE 1.0 READY")
+    print("DATABASE 2.0 READY")
