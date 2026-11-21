@@ -1,3 +1,7 @@
+# ==========================================
+# TROJAN V2 - MAIN TRADING ENGINE
+# ==========================================
+
 import time
 import queue
 import math
@@ -6,12 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 import paper_trading as paper
 import sniper_scanner as sniper
 import trading_manager as manager
+import strategy as trading_strategy
 
 from api_client import get_json
 from scanner import scan_tokens
 from discovery.token_aggregator import collect_tokens
 
-from ai_analyzer import analyze_token
 from rugcheck import get_rugcheck_report
 from liquidity_monitor import check_liquidity
 
@@ -35,9 +39,7 @@ SCAN_INTERVAL = 60
 POSITION_CHECK_INTERVAL = 10
 STATISTICS_INTERVAL = 60
 
-MINIMUM_SCORE = 70
 MAX_RUGCHECK_SCORE = 40
-
 SNIPER_MIN_LIQUIDITY = 2500
 
 SNIPER_TOKEN_TIMEOUT = 300
@@ -73,6 +75,19 @@ def safe_float(value):
 
     except (ValueError, TypeError):
         return None
+
+
+def get_token_address(token):
+
+    if not isinstance(token, dict):
+        return None
+
+    return (
+        token.get("tokenAddress")
+        or token.get("address")
+        or token.get("token_address")
+        or token.get("mint")
+    )
 
 
 def get_liquidity(pair):
@@ -120,7 +135,6 @@ def get_market_data(token_address):
 
             liquidity = get_liquidity(pair)
 
-            # Missing liquidity is not treated as zero data.
             liquidity_rank = (
                 liquidity if liquidity is not None else -1
             )
@@ -137,7 +151,7 @@ def get_market_data(token_address):
 
     except Exception as error:
 
-        print("MARKET DATA ERROR:", repr(error))
+        print("TROJAN V2 MARKET DATA ERROR:", repr(error))
 
         return None
 
@@ -153,7 +167,7 @@ def get_token_price(token_address):
 
 
 # ==========================================
-# RUGCHECK V2
+# TROJAN V2 RUGCHECK
 # ==========================================
 
 def check_rugcheck(token_address):
@@ -166,21 +180,15 @@ def check_rugcheck(token_address):
             print("RUGCHECK UNKNOWN:", token_address)
             return False
 
-        # V2 response contains the original report
-        # and the separate security analysis.
         analysis = result.get("analysis")
 
         if not isinstance(analysis, dict):
 
-            print(
-                "RUGCHECK INVALID ANALYSIS:",
-                token_address
-            )
+            print("RUGCHECK INVALID ANALYSIS:", token_address)
 
             return False
 
         status = analysis.get("status")
-
         score = safe_float(analysis.get("score"))
 
         print(
@@ -192,17 +200,13 @@ def check_rugcheck(token_address):
             score
         )
 
-        # Missing or incomplete security data is rejected.
         if status != "PASS":
             return False
 
         if analysis.get("safe") is not True:
             return False
 
-        if score is None:
-            return False
-
-        if score >= MAX_RUGCHECK_SCORE:
+        if score is None or score >= MAX_RUGCHECK_SCORE:
             return False
 
         if analysis.get("high_risks", 0) > 0:
@@ -225,7 +229,7 @@ def check_rugcheck(token_address):
 # TOKEN ANALYSIS WORKER
 # ==========================================
 
-def analyze_token_task(address, strategy, token):
+def analyze_token_task(address, strategy_name, token):
 
     pair = get_market_data(address)
 
@@ -234,7 +238,7 @@ def analyze_token_task(address, strategy, token):
         return {
             "status": "waiting",
             "address": address,
-            "strategy": strategy
+            "strategy": strategy_name
         }
 
     try:
@@ -255,71 +259,74 @@ def analyze_token_task(address, strategy, token):
             return {
                 "status": "waiting",
                 "address": address,
-                "strategy": strategy
+                "strategy": strategy_name
             }
 
-        if strategy == "sniper":
+        if strategy_name == "sniper":
 
             if liquidity < SNIPER_MIN_LIQUIDITY:
 
                 return {
                     "status": "waiting",
                     "address": address,
-                    "strategy": strategy
+                    "strategy": strategy_name
                 }
 
-        # Build the data structure expected by AI Analyzer V2.
+        # Prepare market data for Trojan V2 strategy.
         token_data = dict(pair)
 
         token_data["address"] = address
 
         sources = token.get(
             "sources",
-            token.get("discovery_sources", [strategy])
+            token.get("discovery_sources", [strategy_name])
         )
 
         if not isinstance(sources, list):
-            sources = [strategy]
+            sources = [strategy_name]
 
         token_data["discovery_sources"] = sources
 
-        # Ensure expected market-data structures exist.
         if not isinstance(token_data.get("liquidity"), dict):
             token_data["liquidity"] = {"usd": liquidity}
 
-        analysis = analyze_token(token_data)
+        # Run AI analysis and risk evaluation through strategy.py.
+        account = paper.get_account_summary()
 
-        if not isinstance(analysis, dict):
+        open_positions = len(paper.get_positions())
 
-            return {
-                "status": "rejected",
-                "address": address,
-                "reason": "AI ANALYSIS FAILED"
-            }
+        trade_decision = trading_strategy.evaluate_trade(
+            token_data,
+            account["balance"],
+            open_positions,
+            account["daily_loss"],
+            strategy=strategy_name
+        )
 
-        score = safe_float(analysis.get("score"))
-
-        if score is None:
-            score = 0
-
-        decision = analysis.get("decision")
-
-        if score < MINIMUM_SCORE or decision != "APPROVE":
+        if not isinstance(trade_decision, dict):
 
             return {
                 "status": "rejected",
                 "address": address,
-                "score": score,
-                "reason": "AI SCORE OR DECISION FAILED"
+                "reason": "INVALID STRATEGY RESULT"
             }
 
-        # RugCheck must pass before paper trading.
+        if trade_decision.get("action") != "BUY_SIGNAL":
+
+            return {
+                "status": "rejected",
+                "address": address,
+                "score": trade_decision.get("score", 0),
+                "reason": trade_decision.get("reason", "STRATEGY REJECTED")
+            }
+
+        # Security check must pass before paper trading.
         if not check_rugcheck(address):
 
             return {
                 "status": "rejected",
                 "address": address,
-                "score": score,
+                "score": trade_decision.get("score", 0),
                 "reason": "RUGCHECK FAILED"
             }
 
@@ -328,15 +335,15 @@ def analyze_token_task(address, strategy, token):
             "address": address,
             "price": price,
             "liquidity": liquidity,
-            "score": score,
-            "strategy": strategy,
-            "analysis": analysis
+            "score": trade_decision["score"],
+            "strategy": strategy_name,
+            "analysis": trade_decision
         }
 
     except Exception as error:
 
         print(
-            "ANALYSIS TASK ERROR:",
+            "TROJAN V2 ANALYSIS ERROR:",
             address,
             repr(error)
         )
@@ -351,7 +358,7 @@ def analyze_token_task(address, strategy, token):
 # TASK SCHEDULER
 # ==========================================
 
-def schedule_token(address, strategy, token=None):
+def schedule_token(address, strategy_name, token=None):
 
     if not address:
         return False
@@ -376,13 +383,13 @@ def schedule_token(address, strategy, token=None):
     future = executor.submit(
         analyze_token_task,
         address,
-        strategy,
+        strategy_name,
         token or {}
     )
 
     pending_tasks[address] = {
         "future": future,
-        "strategy": strategy,
+        "strategy": strategy_name,
         "first_seen": time.time(),
         "token": token or {}
     }
@@ -391,7 +398,7 @@ def schedule_token(address, strategy, token=None):
         "TOKEN QUEUED:",
         address,
         "| STRATEGY:",
-        strategy
+        strategy_name
     )
 
     return True
@@ -438,7 +445,6 @@ def process_completed_tasks():
 
             if task["strategy"] == "sniper":
                 pending_sniper_tokens[address] = pending_item
-
             else:
                 pending_discovery_tokens[address] = pending_item
 
@@ -514,11 +520,7 @@ def add_discovery_tokens():
         if not isinstance(token, dict):
             continue
 
-        address = (
-            token.get("address")
-            or token.get("token_address")
-            or token.get("mint")
-        )
+        address = get_token_address(token)
 
         if not address:
             continue
@@ -554,11 +556,7 @@ def receive_sniper_tokens():
         if not isinstance(token, dict):
             continue
 
-        address = (
-            token.get("mint")
-            or token.get("address")
-            or token.get("token_address")
-        )
+        address = get_token_address(token)
 
         if not address:
             continue
@@ -688,7 +686,6 @@ def monitor_positions():
 
         last_prices[address] = price
 
-        # Liquidity protection.
         try:
 
             liquidity_status = check_liquidity(
@@ -730,7 +727,6 @@ def monitor_positions():
                 repr(error)
             )
 
-        # Stop-loss and take-profit.
         result = paper.update_position(
             address,
             price
@@ -741,7 +737,7 @@ def monitor_positions():
 
 
 # ==========================================
-# STATISTICS
+# TROJAN V2 STATISTICS
 # ==========================================
 
 def print_statistics():
@@ -780,7 +776,7 @@ def print_statistics():
 
 
 # ==========================================
-# MAIN BOT LOOP
+# TROJAN V2 MAIN LOOP
 # ==========================================
 
 def run_bot():
@@ -851,7 +847,7 @@ def run_bot():
 
 
 # ==========================================
-# STARTUP
+# TROJAN V2 STARTUP
 # ==========================================
 
 if __name__ == "__main__":
