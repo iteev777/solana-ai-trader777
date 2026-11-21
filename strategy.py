@@ -1,44 +1,115 @@
 from ai_analyzer import analyze_token
-from risk_manager import can_open_trade
+from risk_manager import check_trade_risk
+
 
 TRADE_SIZE = 5.00
-MINIMUM_SCORE = 70
+
+MINIMUM_SCORES = {
+    "main": 70,
+    "sniper": 75
+}
+
+VALID_STRATEGIES = ("main", "sniper")
 
 
-def evaluate_trade(token, balance, open_positions, daily_loss):
+def evaluate_trade(
+    token,
+    balance,
+    open_positions,
+    daily_loss,
+    strategy="main"
+):
 
-    analysis = analyze_token(token)
+    if strategy not in VALID_STRATEGIES:
+        return {
+            "action": "REJECT",
+            "score": 0,
+            "reason": "Unknown strategy"
+        }
 
-    score = analysis["score"]
+    if not isinstance(token, dict):
+        return {
+            "action": "REJECT",
+            "score": 0,
+            "reason": "Invalid token data"
+        }
 
-    if score < MINIMUM_SCORE:
+    try:
+
+        analysis = analyze_token(token)
+
+        if not isinstance(analysis, dict):
+            raise ValueError("Invalid AI analysis")
+
+        score = float(analysis.get("score", 0))
+
+        if score < 0 or score > 100:
+            raise ValueError("Invalid AI score")
+
+    except Exception as error:
+
+        print("STRATEGY ANALYSIS ERROR:", repr(error))
+
+        return {
+            "action": "REJECT",
+            "score": 0,
+            "reason": "AI analysis failed"
+        }
+
+    minimum_score = MINIMUM_SCORES[strategy]
+
+    if analysis.get("decision") != "APPROVE":
         return {
             "action": "WAIT",
             "score": score,
-            "reason": "Score too low"
+            "strategy": strategy,
+            "reason": "AI did not approve token"
         }
 
-    allowed = can_open_trade(
-        balance,
-        open_positions,
-        daily_loss,
-        TRADE_SIZE
+    if score < minimum_score:
+        return {
+            "action": "WAIT",
+            "score": score,
+            "strategy": strategy,
+            "reason": "Score below strategy threshold"
+        }
+
+    risk_result = check_trade_risk(
+        balance=balance,
+        trade_size=TRADE_SIZE,
+        daily_loss=daily_loss,
+        open_positions=open_positions,
+        strategy=strategy
     )
+
+    if isinstance(risk_result, dict):
+        allowed = risk_result.get("allowed", False)
+        risk_reason = risk_result.get("reason", "Risk limits reached")
+    else:
+        allowed = bool(risk_result)
+        risk_reason = "Risk limits reached"
 
     if not allowed:
         return {
             "action": "REJECT",
             "score": score,
-            "reason": "Risk limits reached"
+            "strategy": strategy,
+            "reason": risk_reason
         }
 
     return {
         "action": "BUY_SIGNAL",
         "score": score,
+        "strategy": strategy,
         "trade_size": TRADE_SIZE,
-        "reasons": analysis["reasons"]
+        "reasons": analysis.get("reasons", [])
     }
 
 
 if __name__ == "__main__":
-    print("STRATEGY ENGINE 1.0 READY")
+
+    print("TROJAN STRATEGY ENGINE V2 READY")
+    print("STRATEGIES:", VALID_STRATEGIES)
+    print("MAIN MINIMUM SCORE:", MINIMUM_SCORES["main"])
+    print("SNIPER MINIMUM SCORE:", MINIMUM_SCORES["sniper"])
+    print("MODE: SIGNALS ONLY")
