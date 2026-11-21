@@ -1,12 +1,12 @@
+# ==========================================
+# TROJAN V2 - RUGCHECK SECURITY ANALYZER
+# ==========================================
+
 import requests
 import math
 import time
 import threading
 
-
-# ==========================================
-# TROJAN V2 - RUGCHECK SECURITY ANALYZER
-# ==========================================
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
@@ -47,11 +47,9 @@ def get_authority_status(data, authority_name):
 
     value = data[authority_name]
 
-    # RugCheck API: null means authority revoked.
     if value is None or value is False or value == "":
         return "DISABLED"
 
-    # Active authority may be returned as a public key string.
     if value is True:
         return "ACTIVE"
 
@@ -66,7 +64,7 @@ def get_risk_level(risk):
     if not isinstance(risk, dict):
         return "UNKNOWN"
 
-    level = str(risk.get("level", "")).lower()
+    level = str(risk.get("level", "")).lower().strip()
 
     if level in ("danger", "critical", "high"):
         return "HIGH"
@@ -103,79 +101,109 @@ def analyze_rugcheck_report(data):
 
     reasons = []
 
+    # Only normalized score is accepted.
+    # Raw score is not comparable to MAX_SAFE_SCORE.
+
     raw_score = get_number(data.get("score_normalised"))
 
-    if raw_score is None:
-        raw_score = get_number(data.get("score"))
+    risks = data.get("risks")
 
-    risks = data.get("risks", [])
+    risks_valid = isinstance(risks, list)
 
-    if not isinstance(risks, list):
+    if not risks_valid:
         risks = []
+        reasons.append("Risk list unavailable or invalid")
 
     high_risks = 0
     medium_risks = 0
     low_risks = 0
+    unknown_risks = 0
 
     for risk in risks:
 
         if not isinstance(risk, dict):
+            unknown_risks += 1
+            reasons.append("Invalid risk entry")
             continue
 
         level = get_risk_level(risk)
         name = str(risk.get("name", "Unknown risk"))
 
         if level == "HIGH":
+
             high_risks += 1
             reasons.append("HIGH RISK: " + name)
 
         elif level == "MEDIUM":
+
             medium_risks += 1
             reasons.append("MEDIUM RISK: " + name)
 
         elif level == "LOW":
+
             low_risks += 1
 
-    # RugCheck places authorities inside the token object.
+        else:
+
+            unknown_risks += 1
+            reasons.append("UNKNOWN RISK LEVEL: " + name)
+
+    # Authorities may exist at root or inside token.
+
     token_data = data.get("token")
 
     if not isinstance(token_data, dict):
         token_data = {}
 
+    mint_data = dict(data)
+    mint_data.update(token_data)
+
     mint_authority = get_authority_status(
-        token_data,
+        mint_data,
         "mintAuthority"
     )
 
     freeze_authority = get_authority_status(
-        token_data,
+        mint_data,
         "freezeAuthority"
     )
 
     if mint_authority == "ACTIVE":
+
         high_risks += 1
         reasons.append("Mint authority is active")
 
     elif mint_authority == "DISABLED":
+
         reasons.append("Mint authority disabled")
 
     else:
+
         reasons.append("Mint authority status unknown")
 
     if freeze_authority == "ACTIVE":
+
         high_risks += 1
         reasons.append("Freeze authority is active")
 
     elif freeze_authority == "DISABLED":
+
         reasons.append("Freeze authority disabled")
 
     else:
+
         reasons.append("Freeze authority status unknown")
 
     # Top holder concentration.
-    top_holders = data.get("topHolders", [])
 
-    if isinstance(top_holders, list) and top_holders:
+    top_holders = data.get("topHolders")
+
+    holders_valid = (
+        isinstance(top_holders, list)
+        and len(top_holders) > 0
+    )
+
+    if holders_valid:
 
         holder_percentages = []
 
@@ -186,7 +214,7 @@ def analyze_rugcheck_report(data):
 
             percentage = get_number(holder.get("pct"))
 
-            if percentage is not None:
+            if percentage is not None and 0 <= percentage <= 100:
                 holder_percentages.append(percentage)
 
         if holder_percentages:
@@ -194,45 +222,50 @@ def analyze_rugcheck_report(data):
             top_holder = max(holder_percentages)
 
             if top_holder >= 50:
+
                 high_risks += 1
                 reasons.append("Extreme top holder concentration")
 
             elif top_holder >= 30:
+
                 medium_risks += 1
                 reasons.append("High top holder concentration")
 
             else:
+
                 reasons.append("Top holder concentration acceptable")
 
         else:
+
+            holders_valid = False
             reasons.append("Top holder percentages unavailable")
 
     else:
+
         reasons.append("Top holder data unavailable")
 
-    # Missing score or authority data means no approval.
+    # Fail closed when essential data is missing.
+
     if raw_score is None:
 
-        return {
-            "status": "UNKNOWN",
-            "safe": False,
-            "score": None,
-            "risk_count": len(risks),
-            "high_risks": high_risks,
-            "medium_risks": medium_risks,
-            "low_risks": low_risks,
-            "mint_authority": mint_authority,
-            "freeze_authority": freeze_authority,
-            "reasons": reasons + ["Risk score unavailable"]
-        }
+        reasons.append("Normalized risk score unavailable")
+
+    if not risks_valid:
+        reasons.append("Risk information incomplete")
+
+    if not holders_valid:
+        reasons.append("Holder information incomplete")
 
     if (
-        mint_authority == "UNKNOWN"
+        raw_score is None
+        or not risks_valid
+        or not holders_valid
+        or mint_authority == "UNKNOWN"
         or freeze_authority == "UNKNOWN"
+        or unknown_risks > 0
     ):
 
         status = "UNKNOWN"
-        reasons.append("Authority information incomplete")
 
     elif raw_score >= MAX_SAFE_SCORE:
 
@@ -274,9 +307,12 @@ def analyze_rugcheck_report(data):
 
 def get_rugcheck_report(token_address):
 
-    if not token_address:
+    if not isinstance(token_address, str) or not token_address.strip():
+
         print("RUGCHECK ERROR: Missing token address")
         return None
+
+    token_address = token_address.strip()
 
     now = time.time()
 
@@ -291,7 +327,9 @@ def get_rugcheck_report(token_address):
             if now - cached_time < CACHE_SECONDS:
                 return cached_data
 
-    url = API_URL + str(token_address) + "/report"
+            _cache.pop(token_address, None)
+
+    url = API_URL + token_address + "/report"
 
     try:
 
@@ -302,6 +340,7 @@ def get_rugcheck_report(token_address):
         )
 
         if response.status_code == 429:
+
             print("RUGCHECK: Rate limit reached")
             return None
 
@@ -310,6 +349,7 @@ def get_rugcheck_report(token_address):
         data = response.json()
 
         if not isinstance(data, dict):
+
             print("RUGCHECK ERROR: Invalid response")
             return None
 
@@ -322,7 +362,7 @@ def get_rugcheck_report(token_address):
         }
 
         with _cache_lock:
-            _cache[token_address] = (now, result)
+            _cache[token_address] = (time.time(), result)
 
         print("================================")
         print("TROJAN V2 RUGCHECK")
@@ -343,11 +383,18 @@ def get_rugcheck_report(token_address):
         return result
 
     except requests.RequestException as error:
-        print("RUGCHECK CONNECTION ERROR:", error)
+
+        print("RUGCHECK CONNECTION ERROR:", repr(error))
         return None
 
     except ValueError as error:
-        print("RUGCHECK DATA ERROR:", error)
+
+        print("RUGCHECK DATA ERROR:", repr(error))
+        return None
+
+    except Exception as error:
+
+        print("RUGCHECK UNKNOWN ERROR:", repr(error))
         return None
 
 
