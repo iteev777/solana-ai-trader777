@@ -35,7 +35,6 @@ def evaluate_trade(
         }
 
     try:
-
         analysis = analyze_token(token)
 
         if not isinstance(analysis, dict):
@@ -43,11 +42,7 @@ def evaluate_trade(
 
         score = float(analysis.get("score", 0))
 
-        if score < 0 or score > 100:
-            raise ValueError("Invalid AI score")
-
     except Exception as error:
-
         print("STRATEGY ANALYSIS ERROR:", repr(error))
 
         return {
@@ -56,7 +51,12 @@ def evaluate_trade(
             "reason": "AI analysis failed"
         }
 
-    minimum_score = MINIMUM_SCORES[strategy]
+    if not 0 <= score <= 100:
+        return {
+            "action": "REJECT",
+            "score": 0,
+            "reason": "Invalid AI score"
+        }
 
     if analysis.get("decision") != "APPROVE":
         return {
@@ -66,7 +66,7 @@ def evaluate_trade(
             "reason": "AI did not approve token"
         }
 
-    if score < minimum_score:
+    if score < MINIMUM_SCORES[strategy]:
         return {
             "action": "WAIT",
             "score": score,
@@ -74,20 +74,13 @@ def evaluate_trade(
             "reason": "Score below strategy threshold"
         }
 
-    risk_result = check_trade_risk(
-        balance=balance,
-        trade_size=TRADE_SIZE,
-        daily_loss=daily_loss,
-        open_positions=open_positions,
+    allowed, risk_reason = check_trade_risk(
+        balance,
+        open_positions,
+        daily_loss,
+        TRADE_SIZE,
         strategy=strategy
     )
-
-    if isinstance(risk_result, dict):
-        allowed = risk_result.get("allowed", False)
-        risk_reason = risk_result.get("reason", "Risk limits reached")
-    else:
-        allowed = bool(risk_result)
-        risk_reason = "Risk limits reached"
 
     if not allowed:
         return {
@@ -107,9 +100,5 @@ def evaluate_trade(
 
 
 if __name__ == "__main__":
-
     print("TROJAN STRATEGY ENGINE V2 READY")
-    print("STRATEGIES:", VALID_STRATEGIES)
-    print("MAIN MINIMUM SCORE:", MINIMUM_SCORES["main"])
-    print("SNIPER MINIMUM SCORE:", MINIMUM_SCORES["sniper"])
     print("MODE: SIGNALS ONLY")
