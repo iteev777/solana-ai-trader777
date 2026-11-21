@@ -1,4 +1,5 @@
 import requests
+import time
 
 from api_client import get_json
 
@@ -17,49 +18,97 @@ SOURCES = {
         "https://api.dexscreener.com/community-takeovers/latest/v1"
 }
 
+REQUEST_TIMEOUT = 15
+CACHE_TTL = 25
+MAX_RETRIES = 1
+
+MAX_RESULTS = 200
+
+SCAN_COOLDOWN = 5
+
+_last_scan_time = 0
+
 
 def fetch_source(name, url):
 
     try:
-
         data = get_json(
             url,
-            timeout=15,
-            cache_ttl=25,
-            max_retries=1
+            timeout=REQUEST_TIMEOUT,
+            cache_ttl=CACHE_TTL,
+            max_retries=MAX_RETRIES
         )
 
         if not isinstance(data, list):
             print("INVALID SOURCE DATA:", name)
             return []
 
-        print(name, "FOUND:", len(data))
+        print(
+            "SOURCE:",
+            name,
+            "| FOUND:",
+            len(data)
+        )
 
         return data
 
-    except (requests.RequestException, ValueError) as error:
+    except requests.RequestException as error:
+        print("SOURCE REQUEST ERROR:", name, repr(error))
+        return []
 
+    except Exception as error:
         print("SOURCE ERROR:", name, repr(error))
         return []
 
 
+def normalize_token(token):
+
+    if not isinstance(token, dict):
+        return None
+
+    chain = str(token.get("chainId", "")).lower()
+
+    if chain != "solana":
+        return None
+
+    address = token.get("tokenAddress")
+
+    if not isinstance(address, str):
+        return None
+
+    address = address.strip()
+
+    if not address:
+        return None
+
+    return address
+
+
 def scan_tokens():
 
+    global _last_scan_time
+
+    current_time = time.time()
+
+    if current_time - _last_scan_time < SCAN_COOLDOWN:
+        print("SCANNER COOLDOWN ACTIVE")
+        return []
+
+    _last_scan_time = current_time
+
     discovered = {}
+
+    source_stats = {}
 
     for source_name, url in SOURCES.items():
 
         tokens = fetch_source(source_name, url)
 
+        source_stats[source_name] = len(tokens)
+
         for token in tokens:
 
-            if not isinstance(token, dict):
-                continue
-
-            if token.get("chainId") != "solana":
-                continue
-
-            address = token.get("tokenAddress")
+            address = normalize_token(token)
 
             if not address:
                 continue
@@ -69,26 +118,34 @@ def scan_tokens():
                 discovered[address] = {
                     "tokenAddress": address,
                     "chainId": "solana",
-                    "discovery_sources": []
+                    "discovery_sources": [],
+                    "discovery_timestamp": current_time
                 }
 
-            if source_name not in discovered[address]["discovery_sources"]:
+            candidate = discovered[address]
 
-                discovered[address]["discovery_sources"].append(
-                    source_name
-                )
+            if source_name not in candidate["discovery_sources"]:
+                candidate["discovery_sources"].append(source_name)
 
     results = list(discovered.values())
 
     results.sort(
-        key=lambda token: len(token["discovery_sources"]),
+        key=lambda token: (
+            len(token["discovery_sources"]),
+            token["discovery_timestamp"]
+        ),
         reverse=True
     )
 
+    results = results[:MAX_RESULTS]
+
     print("================================")
-    print("MULTI-SOURCE SCANNER 5.0")
-    print("TOTAL UNIQUE TOKENS:", len(results))
+    print("MULTI-SOURCE SCANNER V2")
+    print("UNIQUE TOKENS:", len(results))
     print("================================")
+
+    for source_name, count in source_stats.items():
+        print("SOURCE RESULT:", source_name, count)
 
     for token in results[:10]:
 
