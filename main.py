@@ -1,6 +1,7 @@
 import time
 import requests
 import paper_trading as paper
+import sniper_scanner as sniper
 
 from scanner import scan_tokens
 from ai_analyzer import analyze_token
@@ -21,14 +22,19 @@ API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 POSITION_CHECK_INTERVAL = 5
 SCAN_INTERVAL = 30
+
 MINIMUM_SCORE = 70
 MAX_RUGCHECK_SCORE = 40
+SNIPER_MIN_LIQUIDITY = 10000
+SNIPER_TOKEN_TIMEOUT = 120
 
 daily_loss = 0.0
 daily_realized_pnl = 0.0
 
 last_scan_time = 0
 last_prices = {}
+
+pending_sniper_tokens = {}
 
 
 def get_market_data(token_address):
@@ -40,7 +46,6 @@ def get_market_data(token_address):
         )
 
         response.raise_for_status()
-
         pairs = response.json()
 
         if not isinstance(pairs, list) or not pairs:
@@ -61,10 +66,9 @@ def get_market_data(token_address):
             )
         )
 
-    except (requests.RequestException, ValueError) as error:
+    except (requests.RequestException, ValueError, TypeError) as error:
 
         print("MARKET DATA ERROR:", error)
-
         return None
 
 
@@ -91,6 +95,7 @@ def record_sale(address, price, result):
 
     print("================================")
     print("PAPER SELL:", address)
+    print("STRATEGY:", result.get("strategy", "main"))
     print("SELL REASON:", result["result"])
     print("PROFIT / LOSS:", pnl, "USD")
     print("NEW BALANCE:", result["balance"], "USD")
@@ -114,7 +119,6 @@ def monitor_positions():
         )
 
         if price <= 0:
-            print("INVALID PRICE:", address)
             continue
 
         liquidity_status = check_liquidity(
@@ -137,13 +141,13 @@ def monitor_positions():
         position = paper.positions[address]
 
         entry = position["entry_price"]
-
         change = ((price / entry) - 1) * 100
 
         last_prices[address] = price
 
         print("--------------------------------")
         print("POSITION:", address)
+        print("STRATEGY:", position.get("strategy", "main"))
         print("CHANGE:", round(change, 2), "%")
         print("LIQUIDITY STATUS:", liquidity_status)
 
@@ -151,6 +155,41 @@ def monitor_positions():
 
         if isinstance(result, dict):
             record_sale(address, price, result)
+
+
+def check_rugcheck(address):
+
+    print("RUGCHECK CHECK:", address)
+
+    report = get_rugcheck_report(address)
+
+    if not isinstance(report, dict):
+        print("TRADE BLOCKED: RugCheck unavailable")
+        return False
+
+    try:
+        rug_score = float(report.get("score_normalised"))
+    except (ValueError, TypeError):
+        print("TRADE BLOCKED: Invalid RugCheck score")
+        return False
+
+    risks = report.get("risks", [])
+
+    critical_risk = any(
+        str(risk.get("level", "")).lower()
+        in ["danger", "critical"]
+        for risk in risks
+        if isinstance(risk, dict)
+    )
+
+    print("RUGCHECK SCORE:", rug_score)
+
+    if rug_score >= MAX_RUGCHECK_SCORE or critical_risk:
+        print("TRADE BLOCKED: RugCheck risk")
+        return False
+
+    print("RUGCHECK PASSED")
+    return True
 
 
 def scan_and_trade():
@@ -181,7 +220,6 @@ def scan_and_trade():
 
         print("--------------------------------")
         print("TOKEN:", address)
-        print("DISCOVERY SOURCES:", analysis.get("source_count", 0))
         print("SCORE:", score)
         print("DECISION:", analysis["decision"])
         print("REASONS:", analysis["reasons"])
@@ -191,46 +229,19 @@ def scan_and_trade():
         if score < MINIMUM_SCORE:
             continue
 
-        print("RUGCHECK CHECK:", address)
-
-        report = get_rugcheck_report(address)
-
-        if not isinstance(report, dict):
-            print("TRADE BLOCKED: RugCheck report unavailable")
+        if not check_rugcheck(address):
             continue
-
-        try:
-            rug_score = float(report.get("score_normalised"))
-        except (ValueError, TypeError):
-            print("TRADE BLOCKED: Invalid RugCheck score")
-            continue
-
-        risks = report.get("risks", [])
-
-        critical_risk = any(
-            str(risk.get("level", "")).lower()
-            in ["danger", "critical"]
-            for risk in risks
-            if isinstance(risk, dict)
-        )
-
-        print("RUGCHECK SCORE:", rug_score)
-
-        if rug_score >= MAX_RUGCHECK_SCORE or critical_risk:
-            print("TRADE BLOCKED: RugCheck risk")
-            continue
-
-        print("RUGCHECK PASSED")
 
         allowed = can_open_trade(
             paper.balance,
-            len(paper.positions),
+            paper.position_count("main"),
             daily_loss,
-            paper.TRADE_SIZE
+            paper.TRADE_SIZE,
+            strategy="main"
         )
 
         if not allowed:
-            print("TRADE BLOCKED BY RISK MANAGER")
+            print("MAIN TRADE BLOCKED BY RISK MANAGER")
             continue
 
         price = float(market.get("priceUsd") or 0)
@@ -241,11 +252,14 @@ def scan_and_trade():
         if price <= 0 or liquidity <= 0:
             continue
 
-        result = paper.open_position(address, price)
+        result = paper.open_position(
+            address,
+            price,
+            strategy="main"
+        )
 
         if isinstance(result, str) and result.startswith("PAPER BUY"):
 
-            check_liquidity(address, liquidity)
             last_prices[address] = price
 
             save_trade(
@@ -256,14 +270,117 @@ def scan_and_trade():
             )
 
             print("================================")
-            print("PAPER BUY:", address)
+            print("MAIN PAPER BUY:", address)
             print("ENTRY PRICE:", price)
             print("INVESTMENT:", paper.TRADE_SIZE, "USD")
-            print("INITIAL LIQUIDITY:", liquidity, "USD")
             print("REMAINING BALANCE:", paper.balance, "USD")
             print("================================")
 
         time.sleep(0.5)
+
+
+def receive_sniper_tokens():
+
+    tokens = sniper.get_new_tokens()
+
+    for token in tokens:
+
+        address = token.get("address")
+
+        if not address or address in paper.positions:
+            continue
+
+        if address in pending_sniper_tokens:
+            continue
+
+        pending_sniper_tokens[address] = {
+            "token": token,
+            "first_seen": time.time()
+        }
+
+        print("SNIPER TOKEN QUEUED:", address)
+
+
+def process_sniper_tokens():
+
+    receive_sniper_tokens()
+
+    for address in list(pending_sniper_tokens.keys()):
+
+        pending = pending_sniper_tokens[address]
+        age = time.time() - pending["first_seen"]
+
+        if age > SNIPER_TOKEN_TIMEOUT:
+            print("SNIPER TOKEN EXPIRED:", address)
+            del pending_sniper_tokens[address]
+            continue
+
+        if address in paper.positions:
+            del pending_sniper_tokens[address]
+            continue
+
+        market = get_market_data(address)
+
+        if not market:
+            print("SNIPER WAITING FOR PRICE:", address)
+            continue
+
+        price = float(market.get("priceUsd") or 0)
+
+        liquidity = float(
+            market.get("liquidity", {}).get("usd") or 0
+        )
+
+        if price <= 0:
+            continue
+
+        if liquidity < SNIPER_MIN_LIQUIDITY:
+            print("SNIPER WAITING FOR LIQUIDITY:", liquidity)
+            continue
+
+        allowed = can_open_trade(
+            paper.balance,
+            paper.position_count("sniper"),
+            daily_loss,
+            paper.TRADE_SIZE,
+            strategy="sniper"
+        )
+
+        if not allowed:
+            print("SNIPER TRADE BLOCKED BY RISK MANAGER")
+            continue
+
+        if not check_rugcheck(address):
+            print("SNIPER TOKEN REJECTED")
+            del pending_sniper_tokens[address]
+            continue
+
+        result = paper.open_position(
+            address,
+            price,
+            strategy="sniper"
+        )
+
+        if isinstance(result, str) and result.startswith("PAPER BUY"):
+
+            last_prices[address] = price
+
+            save_trade(
+                address,
+                "BUY",
+                price,
+                paper.TRADE_SIZE
+            )
+
+            print("================================")
+            print("SNIPER PAPER BUY:", address)
+            print("ENTRY PRICE:", price)
+            print("LIQUIDITY:", liquidity, "USD")
+            print("INVESTMENT:", paper.TRADE_SIZE, "USD")
+            print("REMAINING SHARED BALANCE:", paper.balance, "USD")
+            print("================================")
+
+            del pending_sniper_tokens[address]
 
 
 def print_statistics():
@@ -277,6 +394,9 @@ def print_statistics():
 
     current_profit = 0.0
     total_invested = 0.0
+
+    main_positions = paper.position_count("main")
+    sniper_positions = paper.position_count("sniper")
 
     for address, position in paper.positions.items():
 
@@ -297,10 +417,12 @@ def print_statistics():
     print("LOSING TRADES:", stats["losing_trades"])
     print("WIN RATE:", round(win_rate, 2), "%")
     print("REALIZED PROFIT:", stats["total_profit"], "USD")
-    print("OPEN POSITIONS:", len(paper.positions))
+    print("MAIN POSITIONS:", main_positions)
+    print("SNIPER POSITIONS:", sniper_positions)
+    print("PENDING SNIPER TOKENS:", len(pending_sniper_tokens))
     print("OPEN INVESTMENT:", round(total_invested, 2), "USD")
     print("OPEN PROFIT / LOSS:", round(current_profit, 3), "USD")
-    print("PAPER BALANCE:", round(paper.balance, 2), "USD")
+    print("SHARED PAPER BALANCE:", round(paper.balance, 2), "USD")
     print("====================================")
 
 
@@ -311,14 +433,18 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 7.0")
+    print("SOLANA MEMECOIN BOT 8.0")
     print("MODE: PAPER TRADING ONLY")
-    print("POSITION CHECK:", POSITION_CHECK_INTERVAL, "SECONDS")
-    print("TOKEN SCAN:", SCAN_INTERVAL, "SECONDS")
+    print("MAIN SCANNER: ACTIVE")
+    print("LAUNCH SNIPER: STARTING")
     print("RUGCHECK: ACTIVE")
     print("LIQUIDITY MONITOR: ACTIVE")
-    print("EMERGENCY PAPER EXIT: ACTIVE")
+    print("SHARED BALANCE:", paper.balance, "USD")
+    print("MAIN POSITION LIMIT: 10")
+    print("SNIPER POSITION LIMIT: 10")
     print("================================")
+
+    sniper.start_sniper_listener()
 
     while True:
 
@@ -327,6 +453,7 @@ def run_bot():
         try:
 
             monitor_positions()
+            process_sniper_tokens()
 
             if cycle_start - last_scan_time >= SCAN_INTERVAL:
 
@@ -337,7 +464,6 @@ def run_bot():
 
             print("DAILY REALIZED P/L:", round(daily_realized_pnl, 2), "USD")
             print("DAILY LOSSES:", round(daily_loss, 2), "USD")
-            print("NEXT POSITION CHECK IN:", POSITION_CHECK_INTERVAL, "SECONDS")
 
         except Exception as error:
 
