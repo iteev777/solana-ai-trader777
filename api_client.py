@@ -1,13 +1,18 @@
+# ==========================================
+# TROJAN V2 - API CLIENT
+# ==========================================
+
 import time
 import json
 import copy
+import hashlib
 import threading
 import requests
 
 from urllib.parse import urlparse
+from email.utils import parsedate_to_datetime
 
 
-# Minimum time between requests to each service.
 HOST_INTERVALS = {
     "api.dexscreener.com": 1.5,
     "public-api.birdeye.so": 3.0,
@@ -32,9 +37,7 @@ locks_lock = threading.Lock()
 
 
 def get_host_lock(host):
-
     with locks_lock:
-
         if host not in host_locks:
             host_locks[host] = threading.Lock()
 
@@ -42,14 +45,14 @@ def get_host_lock(host):
 
 
 def cache_key(url, params, headers):
-
     safe_headers = {}
 
     for key, value in (headers or {}).items():
+        value_hash = hashlib.sha256(
+            str(value).encode("utf-8")
+        ).hexdigest()
 
-        # Authentication headers are included in the key
-        # so different API accounts never share cached responses.
-        safe_headers[str(key).lower()] = str(value)
+        safe_headers[str(key).lower()] = value_hash
 
     return json.dumps(
         {
@@ -63,12 +66,10 @@ def cache_key(url, params, headers):
 
 
 def get_cached(key):
-
     with cache_lock:
-
         cached = cache.get(key)
 
-        if not cached:
+        if cached is None:
             return None
 
         if time.time() >= cached["expires"]:
@@ -79,15 +80,12 @@ def get_cached(key):
 
 
 def save_cache(key, data, cache_ttl):
-
     if cache_ttl <= 0:
         return
 
     with cache_lock:
-
         now = time.time()
 
-        # Remove expired entries.
         expired = [
             item_key
             for item_key, item in cache.items()
@@ -97,7 +95,6 @@ def save_cache(key, data, cache_ttl):
         for item_key in expired:
             cache.pop(item_key, None)
 
-        # Keep memory usage bounded.
         while len(cache) >= MAX_CACHE_ENTRIES:
             oldest_key = next(iter(cache))
             cache.pop(oldest_key, None)
@@ -109,19 +106,23 @@ def save_cache(key, data, cache_ttl):
 
 
 def get_retry_delay(response, attempt):
-
     retry_after = response.headers.get("Retry-After")
 
-    try:
-        delay = float(retry_after)
+    if retry_after:
+        try:
+            delay = float(retry_after)
 
-    except (ValueError, TypeError):
+        except (ValueError, TypeError):
+            try:
+                retry_date = parsedate_to_datetime(retry_after)
+                delay = retry_date.timestamp() - time.time()
+
+            except (ValueError, TypeError, OverflowError):
+                delay = DEFAULT_429_COOLDOWN * (2 ** attempt)
+    else:
         delay = DEFAULT_429_COOLDOWN * (2 ** attempt)
 
-    return min(
-        max(delay, 1),
-        MAX_429_COOLDOWN
-    )
+    return min(max(delay, 1), MAX_429_COOLDOWN)
 
 
 def get_json(
@@ -132,22 +133,20 @@ def get_json(
     cache_ttl=0,
     max_retries=1
 ):
-
     host = urlparse(url).hostname
 
     if not host:
         raise ValueError("Invalid API URL")
 
-    if max_retries < 0:
-        max_retries = 0
+    host = host.lower()
+
+    max_retries = max(0, int(max_retries))
 
     interval = HOST_INTERVALS.get(host, 2.0)
 
     key = cache_key(url, params, headers)
 
-    # Check cache before making a request.
     if cache_ttl > 0:
-
         cached_data = get_cached(key)
 
         if cached_data is not None:
@@ -157,9 +156,7 @@ def get_json(
 
     with lock:
 
-        # Check cache again after acquiring the lock.
         if cache_ttl > 0:
-
             cached_data = get_cached(key)
 
             if cached_data is not None:
@@ -168,7 +165,6 @@ def get_json(
         attempt = 0
 
         while True:
-
             now = time.time()
 
             blocked_until = host_blocked_until.get(host, 0)
@@ -181,7 +177,6 @@ def get_json(
             )
 
             if wait_time > 0:
-
                 print(
                     "API WAIT:",
                     host,
@@ -193,8 +188,8 @@ def get_json(
 
             host_next_request[host] = time.time() + interval
 
+            # Network request.
             try:
-
                 response = requests.get(
                     url,
                     params=params,
@@ -202,122 +197,117 @@ def get_json(
                     timeout=timeout
                 )
 
-                if response.status_code == 429:
+            except requests.RequestException as error:
 
-                    cooldown = get_retry_delay(
-                        response,
-                        attempt
-                    )
+                if attempt >= max_retries:
+                    raise
 
-                    host_blocked_until[host] = (
-                        time.time() + cooldown
-                    )
+                delay = min(
+                    2 ** (attempt + 1),
+                    MAX_429_COOLDOWN
+                )
 
-                    print(
-                        "API RATE LIMIT:",
-                        host,
-                        "| WAIT:",
-                        cooldown,
-                        "seconds"
-                    )
+                print(
+                    "API CONNECTION ERROR:",
+                    host,
+                    "| RETRY IN:",
+                    delay,
+                    "SECONDS",
+                    "| ERROR:",
+                    repr(error)
+                )
 
-                    if attempt < max_retries:
-                        attempt += 1
-                        continue
+                attempt += 1
+                time.sleep(delay)
+                continue
 
-                    response.raise_for_status()
+            # Rate limit handling.
+            if response.status_code == 429:
+                cooldown = get_retry_delay(response, attempt)
 
-                # Retry temporary server errors.
-                if response.status_code in (500, 502, 503, 504):
+                host_blocked_until[host] = (
+                    time.time() + cooldown
+                )
 
-                    if attempt < max_retries:
+                print(
+                    "API RATE LIMIT:",
+                    host,
+                    "| WAIT:",
+                    cooldown,
+                    "seconds"
+                )
 
-                        delay = min(
-                            2 ** (attempt + 1),
-                            MAX_429_COOLDOWN
-                        )
-
-                        print(
-                            "API SERVER ERROR:",
-                            host,
-                            "| RETRY IN:",
-                            delay,
-                            "seconds"
-                        )
-
-                        attempt += 1
-                        time.sleep(delay)
-                        continue
+                if attempt < max_retries:
+                    attempt += 1
+                    continue
 
                 response.raise_for_status()
 
-                data = response.json()
-
-                save_cache(key, data, cache_ttl)
-
-                return data
-
-            except requests.RequestException as error:
+            # Temporary server errors.
+            if response.status_code in (500, 502, 503, 504):
 
                 if attempt < max_retries:
-
                     delay = min(
                         2 ** (attempt + 1),
                         MAX_429_COOLDOWN
                     )
 
                     print(
-                        "API REQUEST ERROR:",
+                        "API SERVER ERROR:",
                         host,
                         "| RETRY IN:",
                         delay,
-                        "seconds",
-                        "| ERROR:",
-                        repr(error)
+                        "seconds"
                     )
 
                     attempt += 1
                     time.sleep(delay)
                     continue
 
-                raise
+            # Permanent HTTP errors are not retried.
+            response.raise_for_status()
+
+            try:
+                data = response.json()
 
             except ValueError:
-
                 print("API JSON ERROR:", host)
                 raise
 
+            save_cache(key, data, cache_ttl)
+
+            return data
+
 
 def clear_cache():
-
     with cache_lock:
         cache.clear()
 
-    print("API CACHE CLEARED")
+    print("TROJAN V2 API CACHE CLEARED")
 
 
 def get_api_status():
-
     now = time.time()
 
     with locks_lock:
-
         hosts = list(host_locks.keys())
 
     status = {}
 
     for host in hosts:
+        lock = get_host_lock(host)
 
-        status[host] = {
-            "next_request_in": round(
-                max(host_next_request.get(host, 0) - now, 0),
-                1
-            ),
-            "blocked_for": round(
-                max(host_blocked_until.get(host, 0) - now, 0),
-                1
-            )
-        }
+        with lock:
+            status[host] = {
+                "next_request_in": round(
+                    max(host_next_request.get(host, 0) - now, 0),
+                    1
+                ),
+                "blocked_for": round(
+                    max(host_blocked_until.get(host, 0) - now, 0),
+                    1
+                )
+            }
 
     with cache_lock:
         cache_entries = len(cache)
@@ -329,8 +319,9 @@ def get_api_status():
 
 
 if __name__ == "__main__":
-
-    print("TROJAN API CLIENT V2 READY")
+    print("================================")
+    print("TROJAN V2 API CLIENT READY")
+    print("================================")
 
     for host, interval in HOST_INTERVALS.items():
         print("API INTERVAL:", host, interval)
