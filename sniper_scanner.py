@@ -13,6 +13,10 @@ API_KEY = os.getenv("PUMPPORTAL_API_KEY")
 BASE_URL = "wss://pumpportal.fun/api/data"
 
 new_token_queue = queue.Queue(maxsize=1000)
+
+# Yhteensopivuus main.py:n kanssa
+token_queue = new_token_queue
+
 seen_tokens = OrderedDict()
 MAX_SEEN_TOKENS = 10000
 
@@ -55,13 +59,9 @@ def on_message(ws, message):
         if not address or address in seen_tokens:
             return
 
-        seen_tokens[address] = True
-
-        if len(seen_tokens) > MAX_SEEN_TOKENS:
-            seen_tokens.popitem(last=False)
-
         token = {
             "address": address,
+            "mint": address,
             "name": data.get("name", "Unknown"),
             "symbol": data.get("symbol", "Unknown"),
             "creator": data.get("traderPublicKey", "Unknown"),
@@ -73,6 +73,11 @@ def on_message(ws, message):
         except queue.Full:
             print("SNIPER QUEUE FULL - TOKEN SKIPPED:", address)
             return
+
+        seen_tokens[address] = True
+
+        if len(seen_tokens) > MAX_SEEN_TOKENS:
+            seen_tokens.popitem(last=False)
 
         print("================================")
         print("NEW TOKEN DETECTED")
@@ -133,6 +138,11 @@ def start_sniper_listener():
 
     thread.start()
     print("SNIPER THREAD STARTED")
+
+
+# Yhteensopivuus main.py:n kutsun kanssa
+def start_listener():
+    return start_sniper_listener()
 
 
 if __name__ == "__main__":
