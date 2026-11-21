@@ -1,5 +1,6 @@
 # ==========================================
 # TROJAN V2 - MAIN TRADING ENGINE
+# DIAGNOSTICS UPDATE
 # ==========================================
 
 import time
@@ -27,10 +28,10 @@ from database import (
 
 
 # ==========================================
-# TROJAN V2 CONFIGURATION
+# CONFIGURATION
 # ==========================================
 
-API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
+API_URL = "https://api.dexscreener.com/token-pairs/v1/"
 
 WORKERS = 4
 MAX_PENDING_TASKS = 100
@@ -64,8 +65,21 @@ last_prices = {}
 
 
 # ==========================================
-# DATA HELPERS
+# HELPERS
 # ==========================================
+
+def log_event(event, address=None, reason=None):
+
+    message = "[TROJAN V2] " + str(event)
+
+    if address:
+        message += " | TOKEN: " + str(address)
+
+    if reason:
+        message += " | REASON: " + str(reason)
+
+    print(message, flush=True)
+
 
 def safe_float(value):
 
@@ -73,6 +87,7 @@ def safe_float(value):
         return None
 
     try:
+
         number = float(value)
 
         if not math.isfinite(number):
@@ -134,14 +149,16 @@ def queue_retry(
     token,
     first_seen,
     attempts,
-    delay
+    delay,
+    reason
 ):
 
     if attempts >= MAX_ANALYSIS_RETRIES:
 
-        print(
-            "ANALYSIS RETRIES EXHAUSTED:",
-            address
+        log_event(
+            "ANALYSIS RETRIES EXHAUSTED",
+            address,
+            reason
         )
 
         seen_tokens.discard(address)
@@ -168,6 +185,12 @@ def queue_retry(
 
     seen_tokens.discard(address)
 
+    log_event(
+        "ANALYSIS RETRY SCHEDULED",
+        address,
+        str(reason) + " | ATTEMPT: " + str(attempts + 1)
+    )
+
 
 # ==========================================
 # MARKET DATA
@@ -176,6 +199,7 @@ def queue_retry(
 def get_market_data(token_address):
 
     if not isinstance(token_address, str) or not token_address:
+        log_event("MARKET DATA ERROR", token_address, "INVALID ADDRESS")
         return None
 
     try:
@@ -188,6 +212,13 @@ def get_market_data(token_address):
         )
 
         if not isinstance(pairs, list) or not pairs:
+
+            log_event(
+                "MARKET DATA WAIT",
+                token_address,
+                "NO PAIRS RETURNED"
+            )
+
             return None
 
         valid_pairs = []
@@ -211,6 +242,13 @@ def get_market_data(token_address):
             valid_pairs.append((liquidity_rank, pair))
 
         if not valid_pairs:
+
+            log_event(
+                "MARKET DATA WAIT",
+                token_address,
+                "NO VALID PRICE PAIR"
+            )
+
             return None
 
         return max(
@@ -220,26 +258,17 @@ def get_market_data(token_address):
 
     except Exception as error:
 
-        print(
-            "TROJAN V2 MARKET DATA ERROR:",
+        log_event(
+            "MARKET DATA EXCEPTION",
+            token_address,
             repr(error)
         )
 
         return None
 
 
-def get_token_price(token_address):
-
-    pair = get_market_data(token_address)
-
-    if not pair:
-        return None
-
-    return safe_float(pair.get("priceUsd"))
-
-
 # ==========================================
-# TROJAN V2 RUGCHECK
+# RUGCHECK
 # ==========================================
 
 def check_rugcheck(token_address):
@@ -249,16 +278,23 @@ def check_rugcheck(token_address):
         result = get_rugcheck_report(token_address)
 
         if not isinstance(result, dict):
-            print("RUGCHECK UNKNOWN:", token_address)
+
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "EMPTY OR INVALID RESPONSE"
+            )
+
             return False
 
         analysis = result.get("analysis")
 
         if not isinstance(analysis, dict):
 
-            print(
-                "RUGCHECK INVALID ANALYSIS:",
-                token_address
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "ANALYSIS MISSING"
             )
 
             return False
@@ -267,39 +303,62 @@ def check_rugcheck(token_address):
         score = safe_float(analysis.get("score"))
         high_risks = safe_float(analysis.get("high_risks"))
 
-        print(
-            "RUGCHECK DECISION:",
-            token_address,
-            "| STATUS:",
-            status,
-            "| SCORE:",
-            score
-        )
-
         if status != "PASS":
+
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "STATUS: " + str(status)
+            )
+
             return False
 
         if analysis.get("safe") is not True:
+
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "TOKEN NOT SAFE"
+            )
+
             return False
 
         if score is None or score >= MAX_RUGCHECK_SCORE:
+
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "INVALID OR HIGH SCORE: " + str(score)
+            )
+
             return False
 
         if high_risks is None or high_risks < 0:
+
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "INVALID HIGH RISK COUNT"
+            )
+
             return False
 
-        if not high_risks.is_integer():
-            return False
+        if not high_risks.is_integer() or high_risks > 0:
 
-        if high_risks > 0:
+            log_event(
+                "RUGCHECK FAILED",
+                token_address,
+                "HIGH RISKS: " + str(high_risks)
+            )
+
             return False
 
         return True
 
     except Exception as error:
 
-        print(
-            "RUGCHECK ERROR:",
+        log_event(
+            "RUGCHECK EXCEPTION",
             token_address,
             repr(error)
         )
@@ -308,7 +367,7 @@ def check_rugcheck(token_address):
 
 
 # ==========================================
-# TOKEN ANALYSIS WORKER
+# TOKEN ANALYSIS
 # ==========================================
 
 def analyze_token_task(address, strategy_name, token):
@@ -319,8 +378,8 @@ def analyze_token_task(address, strategy_name, token):
 
         return {
             "status": "waiting",
-            "address": address,
-            "strategy": strategy_name
+            "reason": "MARKET_DATA_MISSING",
+            "address": address
         }
 
     try:
@@ -332,16 +391,16 @@ def analyze_token_task(address, strategy_name, token):
 
             return {
                 "status": "rejected",
-                "address": address,
-                "reason": "INVALID PRICE"
+                "reason": "INVALID_PRICE",
+                "address": address
             }
 
         if liquidity is None:
 
             return {
                 "status": "waiting",
-                "address": address,
-                "strategy": strategy_name
+                "reason": "LIQUIDITY_MISSING",
+                "address": address
             }
 
         if strategy_name == "sniper":
@@ -350,12 +409,11 @@ def analyze_token_task(address, strategy_name, token):
 
                 return {
                     "status": "waiting",
-                    "address": address,
-                    "strategy": strategy_name
+                    "reason": "SNIPER_LIQUIDITY_TOO_LOW",
+                    "address": address
                 }
 
         token_data = dict(pair)
-
         token_data["address"] = address
 
         sources = token.get(
@@ -394,29 +452,28 @@ def analyze_token_task(address, strategy_name, token):
 
             return {
                 "status": "rejected",
-                "address": address,
-                "reason": "INVALID STRATEGY RESULT"
+                "reason": "INVALID_STRATEGY_RESULT",
+                "address": address
             }
 
         if trade_decision.get("action") != "BUY_SIGNAL":
 
             return {
                 "status": "rejected",
-                "address": address,
-                "score": trade_decision.get("score", 0),
                 "reason": trade_decision.get(
                     "reason",
-                    "STRATEGY REJECTED"
-                )
+                    "STRATEGY_REJECTED"
+                ),
+                "score": trade_decision.get("score", 0),
+                "address": address
             }
 
         if not check_rugcheck(address):
 
             return {
                 "status": "rejected",
-                "address": address,
-                "score": trade_decision.get("score", 0),
-                "reason": "RUGCHECK FAILED"
+                "reason": "RUGCHECK_FAILED",
+                "address": address
             }
 
         score = safe_float(trade_decision.get("score"))
@@ -425,8 +482,8 @@ def analyze_token_task(address, strategy_name, token):
 
             return {
                 "status": "rejected",
-                "address": address,
-                "reason": "INVALID APPROVED SCORE"
+                "reason": "INVALID_APPROVED_SCORE",
+                "address": address
             }
 
         return {
@@ -441,20 +498,21 @@ def analyze_token_task(address, strategy_name, token):
 
     except Exception as error:
 
-        print(
-            "TROJAN V2 ANALYSIS ERROR:",
+        log_event(
+            "ANALYSIS EXCEPTION",
             address,
             repr(error)
         )
 
         return {
             "status": "error",
+            "reason": "ANALYSIS_EXCEPTION",
             "address": address
         }
 
 
 # ==========================================
-# TASK SCHEDULER
+# SCHEDULER
 # ==========================================
 
 def schedule_token(
@@ -471,16 +529,11 @@ def schedule_token(
     if strategy_name not in ("main", "sniper"):
         return False
 
-    if address in seen_tokens:
-        return False
-
-    if address in pending_tasks:
+    if address in seen_tokens or address in pending_tasks:
         return False
 
     if len(pending_tasks) >= MAX_PENDING_TASKS:
-
-        print("TASK LIMIT REACHED:", address)
-
+        log_event("TASK LIMIT REACHED", address)
         return False
 
     if address in paper.get_positions():
@@ -491,35 +544,48 @@ def schedule_token(
 
     seen_tokens.add(address)
 
-    future = executor.submit(
-        analyze_token_task,
-        address,
-        strategy_name,
-        token
-    )
+    try:
 
-    pending_tasks[address] = {
-        "future": future,
-        "strategy": strategy_name,
-        "first_seen": (
-            first_seen if first_seen is not None else time.time()
-        ),
-        "token": token,
-        "attempts": attempts
-    }
+        future = executor.submit(
+            analyze_token_task,
+            address,
+            strategy_name,
+            token
+        )
 
-    print(
-        "TOKEN QUEUED:",
-        address,
-        "| STRATEGY:",
-        strategy_name
-    )
+        pending_tasks[address] = {
+            "future": future,
+            "strategy": strategy_name,
+            "first_seen": (
+                first_seen if first_seen is not None else time.time()
+            ),
+            "token": token,
+            "attempts": attempts
+        }
 
-    return True
+        log_event(
+            "TOKEN QUEUED",
+            address,
+            strategy_name
+        )
+
+        return True
+
+    except Exception as error:
+
+        seen_tokens.discard(address)
+
+        log_event(
+            "TASK SUBMISSION ERROR",
+            address,
+            repr(error)
+        )
+
+        return False
 
 
 # ==========================================
-# COMPLETED ANALYSIS TASKS
+# COMPLETED TASKS
 # ==========================================
 
 def process_completed_tasks():
@@ -538,19 +604,14 @@ def process_completed_tasks():
 
         except Exception as error:
 
-            print(
-                "TASK FAILED:",
-                address,
-                repr(error)
-            )
-
             queue_retry(
                 address,
                 task["strategy"],
                 task["token"],
                 task["first_seen"],
                 task["attempts"],
-                ERROR_RETRY_INTERVAL
+                ERROR_RETRY_INTERVAL,
+                "FUTURE_EXCEPTION: " + repr(error)
             )
 
             continue
@@ -563,12 +624,14 @@ def process_completed_tasks():
                 task["token"],
                 task["first_seen"],
                 task["attempts"],
-                ERROR_RETRY_INTERVAL
+                ERROR_RETRY_INTERVAL,
+                "INVALID_RESULT"
             )
 
             continue
 
         status = result.get("status")
+        reason = result.get("reason", "NO_REASON")
 
         if status == "waiting":
 
@@ -578,7 +641,8 @@ def process_completed_tasks():
                 task["token"],
                 task["first_seen"],
                 task["attempts"],
-                WAIT_RETRY_INTERVAL
+                WAIT_RETRY_INTERVAL,
+                reason
             )
 
             continue
@@ -591,7 +655,8 @@ def process_completed_tasks():
                 task["token"],
                 task["first_seen"],
                 task["attempts"],
-                ERROR_RETRY_INTERVAL
+                ERROR_RETRY_INTERVAL,
+                reason
             )
 
             continue
@@ -600,13 +665,10 @@ def process_completed_tasks():
 
             remove_pending_duplicates(address)
 
-            print(
-                "TOKEN REJECTED:",
+            log_event(
+                "TOKEN REJECTED",
                 address,
-                "| REASON:",
-                result.get("reason", status),
-                "| SCORE:",
-                result.get("score", "N/A")
+                reason
             )
 
             continue
@@ -624,13 +686,15 @@ def process_completed_tasks():
             or not isinstance(analysis, dict)
         ):
 
-            print("INVALID APPROVED RESULT:", address)
+            log_event(
+                "INVALID APPROVED RESULT",
+                address
+            )
 
             remove_pending_duplicates(address)
 
             continue
 
-        # Save the actual decision, not the whole dictionary.
         try:
 
             save_analysis(
@@ -642,26 +706,39 @@ def process_completed_tasks():
 
         except Exception as error:
 
-            print(
-                "ANALYSIS SAVE ERROR:",
+            log_event(
+                "ANALYSIS SAVE ERROR",
                 address,
                 repr(error)
             )
 
-        trade_result = manager.process_approved_signal(
-            address,
-            price,
-            strategy=strategy_name
-        )
+        try:
 
-        print("APPROVED SIGNAL:", address)
-        print("SIGNAL RESULTS:", trade_result)
+            trade_result = manager.process_approved_signal(
+                address,
+                price,
+                strategy=strategy_name
+            )
+
+            log_event(
+                "APPROVED SIGNAL",
+                address,
+                str(trade_result)
+            )
+
+        except Exception as error:
+
+            log_event(
+                "TRADE MANAGER ERROR",
+                address,
+                repr(error)
+            )
 
         remove_pending_duplicates(address)
 
 
 # ==========================================
-# DISCOVERY SCANNERS
+# DISCOVERY
 # ==========================================
 
 def add_discovery_tokens():
@@ -677,7 +754,7 @@ def add_discovery_tokens():
 
     except Exception as error:
 
-        print("SCANNER ERROR:", repr(error))
+        log_event("SCANNER ERROR", reason=repr(error))
 
     try:
 
@@ -688,7 +765,7 @@ def add_discovery_tokens():
 
     except Exception as error:
 
-        print("AGGREGATOR ERROR:", repr(error))
+        log_event("AGGREGATOR ERROR", reason=repr(error))
 
     added = 0
 
@@ -705,7 +782,7 @@ def add_discovery_tokens():
         if schedule_token(address, "main", token):
             added += 1
 
-    print("DISCOVERY TOKENS QUEUED:", added)
+    log_event("DISCOVERY TOKENS QUEUED", reason=str(added))
 
 
 # ==========================================
@@ -726,11 +803,7 @@ def receive_sniper_tokens():
 
         except Exception as error:
 
-            print(
-                "SNIPER QUEUE ERROR:",
-                repr(error)
-            )
-
+            log_event("SNIPER QUEUE ERROR", reason=repr(error))
             break
 
         if not isinstance(token, dict):
@@ -741,13 +814,9 @@ def receive_sniper_tokens():
         if not address:
             continue
 
-        if address in seen_tokens:
+        if address in seen_tokens or address in pending_tasks:
             continue
 
-        if address in pending_tasks:
-            continue
-
-        # Sniper takes priority over a waiting discovery retry.
         pending_discovery_tokens.pop(address, None)
 
         pending_sniper_tokens[address] = {
@@ -760,7 +829,7 @@ def receive_sniper_tokens():
         received += 1
 
     if received:
-        print("SNIPER TOKENS RECEIVED:", received)
+        log_event("SNIPER TOKENS RECEIVED", reason=str(received))
 
 
 def process_sniper_tokens():
@@ -771,7 +840,7 @@ def process_sniper_tokens():
 
         if current_time - item["first_seen"] > SNIPER_TOKEN_TIMEOUT:
 
-            print("SNIPER TOKEN EXPIRED:", address)
+            log_event("SNIPER TOKEN EXPIRED", address)
 
             del pending_sniper_tokens[address]
             seen_tokens.add(address)
@@ -787,7 +856,6 @@ def process_sniper_tokens():
         if address in paper.get_positions():
 
             del pending_sniper_tokens[address]
-
             continue
 
         schedule_token(
@@ -811,7 +879,7 @@ def process_discovery_pending():
 
         if current_time - item["first_seen"] > DISCOVERY_TOKEN_TIMEOUT:
 
-            print("DISCOVERY TOKEN EXPIRED:", address)
+            log_event("DISCOVERY TOKEN EXPIRED", address)
 
             del pending_discovery_tokens[address]
             seen_tokens.add(address)
@@ -821,16 +889,12 @@ def process_discovery_pending():
         if current_time < item.get("retry_after", 0):
             continue
 
-        if address in pending_tasks:
-            continue
-
-        if address in pending_sniper_tokens:
+        if address in pending_tasks or address in pending_sniper_tokens:
             continue
 
         if address in paper.get_positions():
 
             del pending_discovery_tokens[address]
-
             continue
 
         schedule_token(
@@ -851,13 +915,13 @@ def record_sale(address, result):
     if not isinstance(result, dict):
         return
 
-    print(
-        "PAPER SALE:",
+    log_event(
+        "PAPER SALE",
         address,
-        "| P/L:",
-        result.get("profit_loss", "N/A"),
-        "| BALANCE:",
-        result.get("balance", "N/A")
+        "P/L: "
+        + str(result.get("profit_loss", "N/A"))
+        + " | BALANCE: "
+        + str(result.get("balance", "N/A"))
     )
 
 
@@ -867,9 +931,7 @@ def record_sale(address, result):
 
 def monitor_positions():
 
-    positions = list(
-        paper.get_positions().items()
-    )
+    positions = list(paper.get_positions().items())
 
     for address, position in positions:
 
@@ -896,8 +958,8 @@ def monitor_positions():
 
             if liquidity_status == "COLLAPSE":
 
-                print(
-                    "EMERGENCY LIQUIDITY EXIT:",
+                log_event(
+                    "EMERGENCY LIQUIDITY EXIT",
                     address
                 )
 
@@ -907,22 +969,20 @@ def monitor_positions():
                 )
 
                 record_sale(address, result)
-
                 continue
 
             if liquidity_status in ("UNKNOWN", "WARNING"):
 
-                print(
-                    "LIQUIDITY STATUS:",
+                log_event(
+                    "LIQUIDITY STATUS",
                     address,
-                    "|",
                     liquidity_status
                 )
 
         except Exception as error:
 
-            print(
-                "LIQUIDITY MONITOR ERROR:",
+            log_event(
+                "LIQUIDITY MONITOR ERROR",
                 address,
                 repr(error)
             )
@@ -938,15 +998,15 @@ def monitor_positions():
 
         except Exception as error:
 
-            print(
-                "POSITION UPDATE ERROR:",
+            log_event(
+                "POSITION UPDATE ERROR",
                 address,
                 repr(error)
             )
 
 
 # ==========================================
-# TROJAN V2 STATISTICS
+# STATISTICS
 # ==========================================
 
 def print_statistics():
@@ -954,7 +1014,6 @@ def print_statistics():
     try:
 
         stats = get_trade_stats("paper")
-
         account = paper.get_account_summary()
 
         print("\n========== TROJAN V2 ==========")
@@ -981,14 +1040,11 @@ def print_statistics():
 
     except Exception as error:
 
-        print(
-            "STATISTICS ERROR:",
-            repr(error)
-        )
+        log_event("STATISTICS ERROR", reason=repr(error))
 
 
 # ==========================================
-# TROJAN V2 MAIN LOOP
+# MAIN LOOP
 # ==========================================
 
 def run_bot():
@@ -999,25 +1055,17 @@ def run_bot():
     print("====================================")
     print("TROJAN V2 - SOLANA AI TRADING BOT")
     print("====================================")
-
-    print("WORKERS:", WORKERS)
-    print("MAX PENDING TASKS:", MAX_PENDING_TASKS)
     print("PAPER TRADING: ENABLED")
-    print("MAIN STRATEGY: ENABLED")
-    print("SNIPER STRATEGY: ENABLED")
-    print("LIVE SHADOW SIGNALS: ENABLED")
     print("LIVE EXECUTION: LOCKED")
-
     print("====================================")
 
     initialize_database()
-
     paper.refresh_account()
 
     sniper.start_listener()
 
-    print("SNIPER THREAD STARTED")
-    print("TROJAN V2 STARTED")
+    log_event("SNIPER THREAD STARTED")
+    log_event("BOT STARTED")
 
     while True:
 
@@ -1026,17 +1074,13 @@ def run_bot():
         try:
 
             receive_sniper_tokens()
-
             process_sniper_tokens()
-
             process_discovery_pending()
-
             process_completed_tasks()
 
             if time.time() - last_scan_time >= SCAN_INTERVAL:
 
                 add_discovery_tokens()
-
                 last_scan_time = time.time()
 
             monitor_positions()
@@ -1044,15 +1088,11 @@ def run_bot():
             if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
 
                 print_statistics()
-
                 last_statistics_time = time.time()
 
         except Exception as error:
 
-            print(
-                "MAIN LOOP ERROR:",
-                repr(error)
-            )
+            log_event("MAIN LOOP ERROR", reason=repr(error))
 
         elapsed = time.time() - loop_start
 
@@ -1062,7 +1102,7 @@ def run_bot():
 
 
 # ==========================================
-# TROJAN V2 STARTUP
+# STARTUP
 # ==========================================
 
 if __name__ == "__main__":
@@ -1073,7 +1113,7 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
 
-        print("TROJAN V2 SHUTTING DOWN")
+        log_event("BOT SHUTTING DOWN")
 
         executor.shutdown(
             wait=False,
