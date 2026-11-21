@@ -1,5 +1,10 @@
-import requests
+# ==========================================
+# TROJAN V2 - DEXSCREENER MULTI-SOURCE SCANNER
+# ==========================================
+
 import time
+import threading
+import requests
 
 from api_client import get_json
 
@@ -23,14 +28,13 @@ CACHE_TTL = 25
 MAX_RETRIES = 1
 
 MAX_RESULTS = 200
-
 SCAN_COOLDOWN = 5
 
 _last_scan_time = 0
+_scan_lock = threading.Lock()
 
 
 def fetch_source(name, url):
-
     try:
         data = get_json(
             url,
@@ -53,16 +57,23 @@ def fetch_source(name, url):
         return data
 
     except requests.RequestException as error:
-        print("SOURCE REQUEST ERROR:", name, repr(error))
+        print(
+            "SOURCE REQUEST ERROR:",
+            name,
+            repr(error)
+        )
         return []
 
     except Exception as error:
-        print("SOURCE ERROR:", name, repr(error))
+        print(
+            "SOURCE ERROR:",
+            name,
+            repr(error)
+        )
         return []
 
 
 def normalize_token(token):
-
     if not isinstance(token, dict):
         return None
 
@@ -85,80 +96,90 @@ def normalize_token(token):
 
 
 def scan_tokens():
-
     global _last_scan_time
 
-    current_time = time.time()
-
-    if current_time - _last_scan_time < SCAN_COOLDOWN:
-        print("SCANNER COOLDOWN ACTIVE")
+    # Prevent simultaneous scans.
+    if not _scan_lock.acquire(blocking=False):
+        print("SCANNER ALREADY RUNNING")
         return []
 
-    _last_scan_time = current_time
+    try:
+        current_time = time.time()
 
-    discovered = {}
+        if current_time - _last_scan_time < SCAN_COOLDOWN:
+            print("SCANNER COOLDOWN ACTIVE")
+            return []
 
-    source_stats = {}
+        _last_scan_time = current_time
 
-    for source_name, url in SOURCES.items():
+        discovered = {}
+        source_stats = {}
 
-        tokens = fetch_source(source_name, url)
+        for source_name, url in SOURCES.items():
+            tokens = fetch_source(source_name, url)
 
-        source_stats[source_name] = len(tokens)
+            source_stats[source_name] = len(tokens)
 
-        for token in tokens:
+            for token in tokens:
+                address = normalize_token(token)
 
-            address = normalize_token(token)
+                if not address:
+                    continue
 
-            if not address:
-                continue
+                if address not in discovered:
+                    discovered[address] = {
+                        "tokenAddress": address,
+                        "chainId": "solana",
+                        "discovery_sources": [],
+                        "discovery_timestamp": current_time
+                    }
 
-            if address not in discovered:
+                candidate = discovered[address]
 
-                discovered[address] = {
-                    "tokenAddress": address,
-                    "chainId": "solana",
-                    "discovery_sources": [],
-                    "discovery_timestamp": current_time
-                }
+                if source_name not in candidate["discovery_sources"]:
+                    candidate["discovery_sources"].append(source_name)
 
-            candidate = discovered[address]
+                # Preserve useful original DexScreener fields.
+                for key, value in token.items():
+                    if key not in candidate:
+                        candidate[key] = value
 
-            if source_name not in candidate["discovery_sources"]:
-                candidate["discovery_sources"].append(source_name)
+        results = list(discovered.values())
 
-    results = list(discovered.values())
-
-    results.sort(
-        key=lambda token: (
-            len(token["discovery_sources"]),
-            token["discovery_timestamp"]
-        ),
-        reverse=True
-    )
-
-    results = results[:MAX_RESULTS]
-
-    print("================================")
-    print("MULTI-SOURCE SCANNER V2")
-    print("UNIQUE TOKENS:", len(results))
-    print("================================")
-
-    for source_name, count in source_stats.items():
-        print("SOURCE RESULT:", source_name, count)
-
-    for token in results[:10]:
-
-        print(
-            "CANDIDATE:",
-            token["tokenAddress"],
-            "| SOURCES:",
-            len(token["discovery_sources"]),
-            "|",
-            token["discovery_sources"]
+        results.sort(
+            key=lambda token: (
+                len(token["discovery_sources"]),
+                token["discovery_timestamp"]
+            ),
+            reverse=True
         )
 
-    return results
+        results = results[:MAX_RESULTS]
+
+        print("================================")
+        print("TROJAN V2 MULTI-SOURCE SCANNER")
+        print("UNIQUE TOKENS:", len(results))
+        print("================================")
+
+        for source_name, count in source_stats.items():
+            print(
+                "SOURCE RESULT:",
+                source_name,
+                count
+            )
+
+        for token in results[:10]:
+            print(
+                "CANDIDATE:",
+                token["tokenAddress"],
+                "| SOURCES:",
+                token["discovery_sources"]
+            )
+
+        return results
+
+    finally:
+        _scan_lock.release()
 
 
 if __name__ == "__main__":
