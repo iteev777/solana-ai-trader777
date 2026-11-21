@@ -72,8 +72,9 @@ def run_bot():
                 market = get_market_data(address)
 
                 if not market:
-                    print("PRICE DATA UNAVAILABLE:", address)
-                    continue
+    print("PRICE DATA UNAVAILABLE:", address)
+    print("CHECKING TOKEN:", address)
+    continue
 
                 price = float(market.get("priceUsd") or 0)
 
