@@ -4,16 +4,33 @@ TRADE_SIZE = 5.00
 STOP_LOSS = 0.20
 TAKE_PROFIT = 0.30
 
+MAX_POSITIONS_PER_STRATEGY = 10
+
 balance = STARTING_BALANCE
 positions = {}
 
 
-def open_position(token_address, entry_price):
+def position_count(strategy):
+
+    return sum(
+        1
+        for position in positions.values()
+        if position.get("strategy", "main") == strategy
+    )
+
+
+def open_position(token_address, entry_price, strategy="main"):
 
     global balance
 
     if token_address in positions:
         return "Position already exists"
+
+    if strategy not in ["main", "sniper"]:
+        return "Invalid strategy"
+
+    if position_count(strategy) >= MAX_POSITIONS_PER_STRATEGY:
+        return "Strategy position limit reached"
 
     if balance < TRADE_SIZE:
         return "Insufficient balance"
@@ -25,7 +42,8 @@ def open_position(token_address, entry_price):
 
     positions[token_address] = {
         "entry_price": entry_price,
-        "invested": TRADE_SIZE
+        "invested": TRADE_SIZE,
+        "strategy": strategy
     }
 
     return "PAPER BUY: " + token_address
@@ -52,12 +70,15 @@ def close_position(token_address, current_price, reason):
 
     profit_loss = round(returned_amount - invested, 2)
 
+    strategy = position.get("strategy", "main")
+
     del positions[token_address]
 
     return {
         "result": reason,
         "profit_loss": profit_loss,
-        "balance": round(balance, 2)
+        "balance": round(balance, 2),
+        "strategy": strategy
     }
 
 
@@ -105,5 +126,7 @@ def update_position(token_address, current_price):
 
 if __name__ == "__main__":
 
-    print("PAPER TRADING 3.0 READY")
-    print("Emergency sell enabled")
+    print("PAPER TRADING 4.0 READY")
+    print("SHARED BALANCE:", balance)
+    print("MAIN POSITION LIMIT:", MAX_POSITIONS_PER_STRATEGY)
+    print("SNIPER POSITION LIMIT:", MAX_POSITIONS_PER_STRATEGY)
