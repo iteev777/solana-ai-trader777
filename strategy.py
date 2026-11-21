@@ -1,7 +1,11 @@
+# ==========================================
 # TROJAN V2 - STRATEGY ENGINE
+# ==========================================
 
 from ai_analyzer import analyze_token
 from risk_manager import check_trade_risk
+import paper_trading as paper
+
 
 TRADE_SIZE = 5.00
 
@@ -20,6 +24,7 @@ def evaluate_trade(
     daily_loss,
     strategy="main"
 ):
+
     if strategy not in VALID_STRATEGIES:
         return {
             "action": "REJECT",
@@ -36,13 +41,26 @@ def evaluate_trade(
 
     try:
         analysis = analyze_token(token)
+
+        if not isinstance(analysis, dict):
+            raise ValueError("Invalid AI analysis")
+
         score = float(analysis.get("score", 0))
+
     except Exception as error:
         print("TROJAN V2 STRATEGY ERROR:", repr(error))
+
         return {
             "action": "REJECT",
             "score": 0,
             "reason": "AI analysis failed"
+        }
+
+    if not 0 <= score <= 100:
+        return {
+            "action": "REJECT",
+            "score": 0,
+            "reason": "Invalid AI score"
         }
 
     if analysis.get("decision") != "APPROVE":
@@ -59,25 +77,26 @@ def evaluate_trade(
             "reason": "Score below strategy threshold"
         }
 
-    risk_result = check_trade_risk(
+    # Get separate strategy position counts.
+    main_positions = paper.position_count("main")
+    sniper_positions = paper.position_count("sniper")
+
+    # TROJAN V2 centralized risk validation.
+    allowed, risk_reason = check_trade_risk(
         balance,
         open_positions,
         daily_loss,
         TRADE_SIZE,
-        strategy=strategy
+        strategy=strategy,
+        main_positions=main_positions,
+        sniper_positions=sniper_positions
     )
-
-    if isinstance(risk_result, tuple):
-        allowed, reason = risk_result
-    else:
-        allowed = bool(risk_result)
-        reason = "Risk check rejected trade"
 
     if not allowed:
         return {
             "action": "REJECT",
             "score": score,
-            "reason": reason
+            "reason": risk_reason
         }
 
     return {
