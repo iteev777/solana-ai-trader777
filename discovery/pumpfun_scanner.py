@@ -1,6 +1,10 @@
+import os
+import time
 import requests
 
-API_URL = "https://frontend-api-v3.pump.fun/coins"
+API_KEY = os.getenv("BIRDEYE_API_KEY")
+
+API_URL = "https://public-api.birdeye.so/defi/v2/tokens/new_listing"
 
 seen_tokens = set()
 
@@ -9,33 +13,35 @@ def scan_pumpfun():
 
     found_tokens = []
 
+    if not API_KEY:
+        print("PUMPFUN SKIPPED: BIRDEYE API KEY MISSING")
+        return found_tokens
+
     try:
         response = requests.get(
             API_URL,
             params={
-                "offset": 0,
+                "time_to": int(time.time()),
                 "limit": 50,
-                "sort": "created_timestamp",
-                "order": "DESC",
-                "includeNsfw": "false"
+                "meme_platform_enabled": "true"
             },
             headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json"
+                "X-API-KEY": API_KEY,
+                "x-chain": "solana",
+                "accept": "application/json"
             },
             timeout=15
         )
 
         response.raise_for_status()
 
-        coins = response.json()
+        result = response.json()
+        data = result.get("data", {})
+        tokens = data.get("items", [])
 
-        if not isinstance(coins, list):
-            return found_tokens
+        for token in tokens:
 
-        for coin in coins:
-
-            address = coin.get("mint")
+            address = token.get("address")
 
             if not address or address in seen_tokens:
                 continue
@@ -44,12 +50,12 @@ def scan_pumpfun():
 
             found_tokens.append({
                 "tokenAddress": address,
-                "name": coin.get("name", "Unknown"),
-                "symbol": coin.get("symbol", "Unknown"),
+                "name": token.get("name", "Unknown"),
+                "symbol": token.get("symbol", "Unknown"),
                 "discovery_sources": ["pumpfun"]
             })
 
-        print("PUMPFUN NEW TOKENS:", len(found_tokens))
+        print("PUMPFUN/BIRDEYE NEW TOKENS:", len(found_tokens))
 
     except Exception as error:
         print("PUMPFUN SCANNER ERROR:", repr(error))
