@@ -1,3 +1,7 @@
+# ==========================================
+# TROJAN V2 - SNIPER SCANNER
+# ==========================================
+
 import json
 import time
 import queue
@@ -33,14 +37,11 @@ listener_started = False
 
 
 def get_new_tokens():
-
     tokens = []
 
     while True:
-
         try:
             tokens.append(new_token_queue.get_nowait())
-
         except queue.Empty:
             break
 
@@ -48,9 +49,7 @@ def get_new_tokens():
 
 
 def remember_token(address):
-
     with seen_lock:
-
         if address in seen_tokens:
             return False
 
@@ -63,15 +62,13 @@ def remember_token(address):
 
 
 def on_open(ws):
-
     print("================================")
-    print("LAUNCH SNIPER CONNECTED")
+    print("TROJAN V2 - LAUNCH SNIPER CONNECTED")
     print("MODE: PAPER TRADING ONLY")
     print("SUBSCRIPTION: NEW TOKENS")
     print("================================")
 
     try:
-
         ws.send(json.dumps({
             "method": "subscribeNewToken"
         }))
@@ -79,15 +76,12 @@ def on_open(ws):
         print("NEW TOKEN LISTENER ACTIVE")
 
     except Exception as error:
-
         print("SNIPER SUBSCRIPTION ERROR:", repr(error))
         ws.close()
 
 
 def on_message(ws, message):
-
     try:
-
         data = json.loads(message)
 
         if not isinstance(data, dict):
@@ -103,9 +97,6 @@ def on_message(ws, message):
         if not address:
             return
 
-        if address in seen_tokens:
-            return
-
         token = {
             "address": address,
             "mint": address,
@@ -118,20 +109,24 @@ def on_message(ws, message):
             "detected_at": time.time()
         }
 
-        try:
+        # Atomically reject duplicates and reserve the token.
+        if not remember_token(address):
+            return
 
+        try:
             new_token_queue.put_nowait(token)
 
         except queue.Full:
-
             print(
                 "SNIPER QUEUE FULL - TOKEN SKIPPED:",
                 address
             )
 
-            return
+            # Allow the token to be detected again later.
+            with seen_lock:
+                seen_tokens.pop(address, None)
 
-        remember_token(address)
+            return
 
         print("================================")
         print("NEW TOKEN DETECTED")
@@ -149,28 +144,23 @@ def on_message(ws, message):
 
 
 def on_error(ws, error):
-
     print("SNIPER CONNECTION ERROR:", repr(error))
 
 
 def on_close(ws, close_status_code, close_message):
-
     print("SNIPER CONNECTION CLOSED")
     print("STATUS:", close_status_code, close_message)
 
 
 def run_sniper_listener():
-
     if API_KEY:
         url = BASE_URL + "?api-key=" + quote(API_KEY, safe="")
     else:
         url = BASE_URL
 
     while True:
-
         try:
-
-            print("CONNECTING TO PUMPPORTAL...")
+            print("TROJAN V2 CONNECTING TO PUMPPORTAL...")
 
             ws = websocket.WebSocketApp(
                 url,
@@ -186,7 +176,6 @@ def run_sniper_listener():
             )
 
         except Exception as error:
-
             print("SNIPER ERROR:", repr(error))
 
         print(
@@ -199,26 +188,40 @@ def run_sniper_listener():
 
 
 def start_sniper_listener():
-
     global listener_started
 
     with listener_lock:
-
         if listener_started:
             print("SNIPER LISTENER ALREADY STARTED")
             return
 
         listener_started = True
 
-    thread = threading.Thread(
-        target=run_sniper_listener,
-        daemon=True,
-        name="TrojanSniperListener"
-    )
+    def start_thread():
+        global listener_started
 
-    thread.start()
+        try:
+            run_sniper_listener()
+        finally:
+            with listener_lock:
+                listener_started = False
 
-    print("SNIPER THREAD STARTED")
+    try:
+        thread = threading.Thread(
+            target=start_thread,
+            daemon=True,
+            name="TrojanV2SniperListener"
+        )
+
+        thread.start()
+
+        print("TROJAN V2 SNIPER THREAD STARTED")
+
+    except Exception as error:
+        with listener_lock:
+            listener_started = False
+
+        print("SNIPER THREAD START ERROR:", repr(error))
 
 
 # Compatibility with main.py
