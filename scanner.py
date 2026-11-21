@@ -1,5 +1,8 @@
 import requests
 
+from api_client import get_json
+
+
 SOURCES = {
     "LATEST PROFILES":
         "https://api.dexscreener.com/token-profiles/latest/v1",
@@ -18,14 +21,13 @@ SOURCES = {
 def fetch_source(name, url):
 
     try:
-        response = requests.get(
+
+        data = get_json(
             url,
-            timeout=15
+            timeout=15,
+            cache_ttl=25,
+            max_retries=1
         )
-
-        response.raise_for_status()
-
-        data = response.json()
 
         if not isinstance(data, list):
             print("INVALID SOURCE DATA:", name)
@@ -37,7 +39,7 @@ def fetch_source(name, url):
 
     except (requests.RequestException, ValueError) as error:
 
-        print("SOURCE ERROR:", name, error)
+        print("SOURCE ERROR:", name, repr(error))
         return []
 
 
@@ -50,6 +52,9 @@ def scan_tokens():
         tokens = fetch_source(source_name, url)
 
         for token in tokens:
+
+            if not isinstance(token, dict):
+                continue
 
             if token.get("chainId") != "solana":
                 continue
@@ -81,7 +86,7 @@ def scan_tokens():
     )
 
     print("================================")
-    print("MULTI-SOURCE SCANNER 4.0")
+    print("MULTI-SOURCE SCANNER 5.0")
     print("TOTAL UNIQUE TOKENS:", len(results))
     print("================================")
 
@@ -100,5 +105,4 @@ def scan_tokens():
 
 
 if __name__ == "__main__":
-
     scan_tokens()
