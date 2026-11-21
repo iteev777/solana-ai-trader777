@@ -1,3 +1,7 @@
+# ==========================================
+# TROJAN V2 - BIRDEYE TOKEN SCANNER
+# ==========================================
+
 import os
 import requests
 import math
@@ -15,6 +19,10 @@ MAX_RETRIES = 1
 TOKEN_LIMIT = 50
 
 
+# ==========================================
+# VALIDATION
+# ==========================================
+
 def valid_token(token):
 
     if not isinstance(token, dict):
@@ -25,17 +33,35 @@ def valid_token(token):
     if not isinstance(address, str):
         return False
 
-    if not address.strip():
-        return False
+    return bool(address.strip())
 
-    return True
 
+def safe_volume(value):
+
+    try:
+
+        volume = float(value)
+
+        if not math.isfinite(volume) or volume < 0:
+            return None
+
+        return volume
+
+    except (TypeError, ValueError):
+
+        return None
+
+
+# ==========================================
+# BIRDEYE TOKEN SCANNER
+# ==========================================
 
 def scan_birdeye():
 
     found_tokens = []
 
     if not API_KEY:
+
         print("BIRDEYE SKIPPED: API KEY MISSING")
         return found_tokens
 
@@ -51,7 +77,8 @@ def scan_birdeye():
             },
             headers={
                 "X-API-KEY": API_KEY,
-                "x-chain": "solana"
+                "x-chain": "solana",
+                "accept": "application/json"
             },
             timeout=REQUEST_TIMEOUT,
             cache_ttl=CACHE_TTL,
@@ -59,18 +86,26 @@ def scan_birdeye():
         )
 
         if not isinstance(data, dict):
+
             print("BIRDEYE INVALID RESPONSE")
+            return found_tokens
+
+        if data.get("success") is False:
+
+            print("BIRDEYE API REPORTED FAILURE")
             return found_tokens
 
         result = data.get("data")
 
         if not isinstance(result, dict):
+
             print("BIRDEYE INVALID DATA")
             return found_tokens
 
-        tokens = result.get("tokens", [])
+        tokens = result.get("tokens")
 
         if not isinstance(tokens, list):
+
             print("BIRDEYE INVALID TOKEN LIST")
             return found_tokens
 
@@ -88,16 +123,9 @@ def scan_birdeye():
 
             seen_in_scan.add(address)
 
-            volume = token.get("v24hUSD")
-
-            try:
-                volume = float(volume)
-
-                if not math.isfinite(volume) or volume < 0:
-                    volume = None
-
-            except (TypeError, ValueError):
-                volume = None
+            volume = safe_volume(
+                token.get("v24hUSD")
+            )
 
             found_tokens.append({
                 "tokenAddress": address,
@@ -108,19 +136,32 @@ def scan_birdeye():
                 "discovery_sources": ["birdeye"]
             })
 
-        print("BIRDEYE TOKENS:", len(found_tokens))
+        print("================================")
+        print("TROJAN V2 BIRDEYE SCANNER")
+        print("TOKENS FOUND:", len(found_tokens))
+        print("================================")
 
     except requests.RequestException as error:
+
         print("BIRDEYE REQUEST ERROR:", repr(error))
 
     except (ValueError, TypeError, AttributeError) as error:
+
         print("BIRDEYE DATA ERROR:", repr(error))
 
     except Exception as error:
+
         print("BIRDEYE SCANNER ERROR:", repr(error))
 
     return found_tokens
 
 
+# ==========================================
+# STARTUP
+# ==========================================
+
 if __name__ == "__main__":
+
+    print("TROJAN V2 BIRDEYE SCANNER READY")
+
     scan_birdeye()
