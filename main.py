@@ -76,16 +76,30 @@ def monitor_positions():
             continue
 
         position = paper.positions[address]
+
         entry = position["entry_price"]
+        invested = position["invested"]
 
         change = ((price / entry) - 1) * 100
+        profit = invested * (price / entry - 1)
 
-        print(
-            "POSITION:", address,
-            "| ENTRY:", entry,
-            "| CURRENT:", price,
-            "| CHANGE:", round(change, 2), "%"
-        )
+        take_profit_distance = 30 - change
+        stop_loss_distance = change + 20
+
+        print("--------------------------------")
+        print("TOKEN:", address)
+        print("ENTRY PRICE:", entry)
+        print("CURRENT PRICE:", price)
+        print("CHANGE:", round(change, 2), "%")
+        print("PROFIT / LOSS:", round(profit, 3), "USD")
+        print("TAKE PROFIT DISTANCE:", round(take_profit_distance, 2), "percentage points")
+        print("STOP LOSS DISTANCE:", round(stop_loss_distance, 2), "percentage points")
+
+        if take_profit_distance <= 5 and change < 30:
+            print("WARNING: APPROACHING TAKE PROFIT")
+
+        if stop_loss_distance <= 5 and change > -20:
+            print("WARNING: APPROACHING STOP LOSS")
 
         result = paper.update_position(address, price)
 
@@ -222,7 +236,7 @@ def print_statistics():
     print("REALIZED PROFIT:", stats["total_profit"], "USD")
     print("OPEN POSITIONS:", len(paper.positions))
     print("OPEN INVESTMENT:", round(total_invested, 2), "USD")
-    print("OPEN PROFIT / LOSS:", round(current_profit, 2), "USD")
+    print("OPEN PROFIT / LOSS:", round(current_profit, 3), "USD")
     print("PAPER BALANCE:", round(paper.balance, 2), "USD")
     print("====================================")
 
@@ -234,7 +248,7 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA PAPER TRADING BOT 3.0")
+    print("SOLANA PAPER TRADING BOT 3.1")
     print("MODE: PAPER TRADING ONLY")
     print("STARTING BALANCE:", paper.STARTING_BALANCE, "USD")
     print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
