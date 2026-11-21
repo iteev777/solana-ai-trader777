@@ -2,6 +2,8 @@ import os
 import time
 import requests
 
+from api_client import get_json
+
 API_KEY = os.getenv("BIRDEYE_API_KEY")
 API_URL = "https://public-api.birdeye.so/defi/v2/tokens/new_listing"
 
@@ -17,7 +19,7 @@ def scan_pumpfun():
         return found_tokens
 
     try:
-        response = requests.get(
+        data = get_json(
             API_URL,
             params={
                 "time_to": int(time.time()),
@@ -29,15 +31,16 @@ def scan_pumpfun():
                 "x-chain": "solana",
                 "accept": "application/json"
             },
-            timeout=15
+            timeout=15,
+            cache_ttl=30,
+            max_retries=1
         )
 
-        response.raise_for_status()
-
-        data = response.json().get("data", {})
-        tokens = data.get("items", [])
+        result = data.get("data", {})
+        tokens = result.get("items", [])
 
         for token in tokens:
+
             address = token.get("address")
 
             if not address or address in seen_tokens:
@@ -54,7 +57,7 @@ def scan_pumpfun():
 
         print("PUMPFUN/BIRDEYE NEW TOKENS:", len(found_tokens))
 
-    except Exception as error:
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
         print("PUMPFUN SCANNER ERROR:", repr(error))
 
     return found_tokens
