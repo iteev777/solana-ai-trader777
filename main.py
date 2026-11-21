@@ -19,13 +19,16 @@ from risk_manager import can_open_trade
 
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
+POSITION_CHECK_INTERVAL = 5
 SCAN_INTERVAL = 30
 MINIMUM_SCORE = 70
 MAX_RUGCHECK_SCORE = 40
 
-
 daily_loss = 0.0
 daily_realized_pnl = 0.0
+
+last_scan_time = 0
+last_prices = {}
 
 
 def get_market_data(token_address):
@@ -45,8 +48,7 @@ def get_market_data(token_address):
 
         valid_pairs = [
             pair for pair in pairs
-            if float(pair.get("liquidity", {}).get("usd") or 0) > 0
-            and float(pair.get("priceUsd") or 0) > 0
+            if float(pair.get("priceUsd") or 0) > 0
         ]
 
         if not valid_pairs:
@@ -112,9 +114,8 @@ def monitor_positions():
         )
 
         if price <= 0:
+            print("INVALID PRICE:", address)
             continue
-
-        # LIQUIDITY COLLAPSE CHECK
 
         liquidity_status = check_liquidity(
             address,
@@ -131,30 +132,24 @@ def monitor_positions():
             )
 
             record_sale(address, price, result)
-
             continue
-
-        if liquidity_status == "UNKNOWN":
-
-            print("LIQUIDITY DATA UNKNOWN:", address)
 
         position = paper.positions[address]
 
         entry = position["entry_price"]
-        invested = position["invested"]
 
         change = ((price / entry) - 1) * 100
-        profit = invested * ((price / entry) - 1)
+
+        last_prices[address] = price
 
         print("--------------------------------")
         print("POSITION:", address)
         print("CHANGE:", round(change, 2), "%")
-        print("PROFIT / LOSS:", round(profit, 3), "USD")
+        print("LIQUIDITY STATUS:", liquidity_status)
 
         result = paper.update_position(address, price)
 
         if isinstance(result, dict):
-
             record_sale(address, price, result)
 
 
@@ -168,10 +163,7 @@ def scan_and_trade():
 
         address = token.get("tokenAddress")
 
-        if not address:
-            continue
-
-        if address in paper.positions:
+        if not address or address in paper.positions:
             continue
 
         market = get_market_data(address)
@@ -194,16 +186,10 @@ def scan_and_trade():
         print("DECISION:", analysis["decision"])
         print("REASONS:", analysis["reasons"])
 
-        save_analysis(
-            address,
-            score,
-            analysis["decision"]
-        )
+        save_analysis(address, score, analysis["decision"])
 
         if score < MINIMUM_SCORE:
             continue
-
-        # RUGCHECK
 
         print("RUGCHECK CHECK:", address)
 
@@ -213,10 +199,8 @@ def scan_and_trade():
             print("TRADE BLOCKED: RugCheck report unavailable")
             continue
 
-        rug_score = report.get("score_normalised")
-
         try:
-            rug_score = float(rug_score)
+            rug_score = float(report.get("score_normalised"))
         except (ValueError, TypeError):
             print("TRADE BLOCKED: Invalid RugCheck score")
             continue
@@ -232,17 +216,11 @@ def scan_and_trade():
 
         print("RUGCHECK SCORE:", rug_score)
 
-        if rug_score >= MAX_RUGCHECK_SCORE:
-            print("TRADE BLOCKED: High RugCheck risk")
-            continue
-
-        if critical_risk:
-            print("TRADE BLOCKED: Critical security warning")
+        if rug_score >= MAX_RUGCHECK_SCORE or critical_risk:
+            print("TRADE BLOCKED: RugCheck risk")
             continue
 
         print("RUGCHECK PASSED")
-
-        # RISK MANAGER
 
         allowed = can_open_trade(
             paper.balance,
@@ -256,7 +234,6 @@ def scan_and_trade():
             continue
 
         price = float(market.get("priceUsd") or 0)
-
         liquidity = float(
             market.get("liquidity", {}).get("usd") or 0
         )
@@ -268,9 +245,8 @@ def scan_and_trade():
 
         if isinstance(result, str) and result.startswith("PAPER BUY"):
 
-            # Save initial liquidity baseline
-
             check_liquidity(address, liquidity)
+            last_prices[address] = price
 
             save_trade(
                 address,
@@ -297,24 +273,16 @@ def print_statistics():
     total = stats["total_trades"]
     wins = stats["winning_trades"]
 
-    win_rate = (
-        wins / total * 100
-        if total > 0 else 0
-    )
+    win_rate = wins / total * 100 if total else 0
 
     current_profit = 0.0
     total_invested = 0.0
 
     for address, position in paper.positions.items():
 
-        market = get_market_data(address)
+        price = last_prices.get(address)
 
-        if not market:
-            continue
-
-        price = float(market.get("priceUsd") or 0)
-
-        if price <= 0:
+        if not price:
             continue
 
         invested = position["invested"]
@@ -338,51 +306,46 @@ def print_statistics():
 
 def run_bot():
 
+    global last_scan_time
+
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 6.0")
+    print("SOLANA MEMECOIN BOT 7.0")
     print("MODE: PAPER TRADING ONLY")
-    print("STARTING BALANCE:", paper.STARTING_BALANCE, "USD")
-    print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
-    print("TAKE PROFIT:", paper.TAKE_PROFIT * 100, "%")
-    print("STOP LOSS:", paper.STOP_LOSS * 100, "%")
-    print("SCAN INTERVAL:", SCAN_INTERVAL, "SECONDS")
-    print("SECURITY: RUGCHECK")
+    print("POSITION CHECK:", POSITION_CHECK_INTERVAL, "SECONDS")
+    print("TOKEN SCAN:", SCAN_INTERVAL, "SECONDS")
+    print("RUGCHECK: ACTIVE")
     print("LIQUIDITY MONITOR: ACTIVE")
     print("EMERGENCY PAPER EXIT: ACTIVE")
     print("================================")
 
     while True:
 
+        cycle_start = time.time()
+
         try:
 
             monitor_positions()
 
-            scan_and_trade()
+            if cycle_start - last_scan_time >= SCAN_INTERVAL:
+
+                scan_and_trade()
+                last_scan_time = time.time()
 
             print_statistics()
 
-            print(
-                "DAILY REALIZED P/L:",
-                round(daily_realized_pnl, 2),
-                "USD"
-            )
-
-            print(
-                "DAILY LOSSES:",
-                round(daily_loss, 2),
-                "USD"
-            )
-
-            print("SCAN COMPLETED. WAITING...")
-            print("--------------------------------")
+            print("DAILY REALIZED P/L:", round(daily_realized_pnl, 2), "USD")
+            print("DAILY LOSSES:", round(daily_loss, 2), "USD")
+            print("NEXT POSITION CHECK IN:", POSITION_CHECK_INTERVAL, "SECONDS")
 
         except Exception as error:
 
             print("BOT ERROR:", repr(error))
 
-        time.sleep(SCAN_INTERVAL)
+        elapsed = time.time() - cycle_start
+
+        time.sleep(max(1, POSITION_CHECK_INTERVAL - elapsed))
 
 
 if __name__ == "__main__":
