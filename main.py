@@ -26,7 +26,6 @@ def get_market_data(token_address):
         pairs = response.json()
 
         if not isinstance(pairs, list) or not pairs:
-            print("NO MARKET PAIRS:", token_address)
             return None
 
         valid_pairs = [
@@ -36,7 +35,6 @@ def get_market_data(token_address):
         ]
 
         if not valid_pairs:
-            print("NO VALID PRICE DATA:", token_address)
             return None
 
         return max(
@@ -54,6 +52,9 @@ def get_market_data(token_address):
 def monitor_positions():
     global daily_loss
 
+    total_profit = 0.0
+    total_invested = 0.0
+
     for address in list(paper.positions.keys()):
 
         market = get_market_data(address)
@@ -65,13 +66,14 @@ def monitor_positions():
         price = float(market.get("priceUsd") or 0)
 
         if price <= 0:
-            print("INVALID CURRENT PRICE:", address)
             continue
 
         position = paper.positions[address]
         entry = position["entry_price"]
+        invested = position["invested"]
 
         change = ((price / entry) - 1) * 100
+        profit = invested * (change / 100)
 
         print(
             "POSITION:", address,
@@ -79,6 +81,9 @@ def monitor_positions():
             "| CURRENT:", price,
             "| PROFIT:", round(change, 2), "%"
         )
+
+        total_profit += profit
+        total_invested += invested
 
         result = paper.update_position(address, price)
 
@@ -98,6 +103,8 @@ def monitor_positions():
             print("PAPER SELL:", address)
             print("SELL RESULT:", result)
 
+    return total_profit, total_invested
+
 
 def scan_and_trade():
 
@@ -107,10 +114,7 @@ def scan_and_trade():
 
         address = token.get("tokenAddress")
 
-        if not address:
-            continue
-
-        if address in paper.positions:
+        if not address or address in paper.positions:
             continue
 
         market = get_market_data(address)
@@ -172,7 +176,7 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA PAPER TRADING BOT 2.0")
+    print("SOLANA PAPER TRADING BOT 2.1")
     print("MODE: PAPER TRADING ONLY")
     print("STARTING BALANCE: 100 USD")
     print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
@@ -182,13 +186,26 @@ def run_bot():
     while True:
 
         try:
-            monitor_positions()
+            total_profit, total_invested = monitor_positions()
+
             scan_and_trade()
+
+            profit_percent = (
+                total_profit / total_invested * 100
+                if total_invested > 0 else 0
+            )
 
             print("--------------------------------")
             print("OPEN POSITIONS:", len(paper.positions))
             print("PAPER BALANCE:", round(paper.balance, 2), "USD")
             print("DAILY LOSSES:", round(daily_loss, 2), "USD")
+            print(
+                "CURRENT PROFIT:",
+                round(total_profit, 2),
+                "USD (",
+                round(profit_percent, 2),
+                "%)"
+            )
             print("SCAN COMPLETED. WAITING...")
             print("--------------------------------")
 
