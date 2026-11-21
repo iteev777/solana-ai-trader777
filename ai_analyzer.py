@@ -1,179 +1,365 @@
 import time
+import math
 
+
+# ==========================================
+# TROJAN V2 - AI TOKEN ANALYZER
+# ==========================================
+
+MIN_LIQUIDITY = 10000
+
+MIN_SCORE = 50
+
+MAX_HOURLY_GAIN = 50
+
+MAX_VOLUME_LIQUIDITY_RATIO = 10
+
+MIN_TRANSACTIONS = 5
+
+
+# ==========================================
+# DATA VALIDATION
+# ==========================================
 
 def get_number(value):
-    try:
-        return float(value or 0)
-    except (ValueError, TypeError):
-        return 0.0
 
+    try:
+
+        number = float(value)
+
+        if not math.isfinite(number):
+            return None
+
+        return number
+
+    except (ValueError, TypeError):
+        return None
+
+
+def get_nested_number(data, *keys):
+
+    current = data
+
+    for key in keys:
+
+        if not isinstance(current, dict):
+            return None
+
+        current = current.get(key)
+
+    return get_number(current)
+
+
+def reject(reason):
+
+    return {
+        "score": 0,
+        "decision": "REJECT",
+        "reasons": [reason],
+        "source_count": 0
+    }
+
+
+# ==========================================
+# MAIN ANALYSIS
+# ==========================================
 
 def analyze_token(token):
+
+    if not isinstance(token, dict):
+        return reject("Invalid token data")
 
     score = 0
     reasons = []
 
-    liquidity = get_number(
-        token.get("liquidity", {}).get("usd")
+    # MARKET DATA
+
+    liquidity = get_nested_number(
+        token,
+        "liquidity",
+        "usd"
     )
 
-    volume = get_number(
-        token.get("volume", {}).get("h24")
+    volume = get_nested_number(
+        token,
+        "volume",
+        "h24"
     )
 
-    price_h1 = get_number(
-        token.get("priceChange", {}).get("h1")
+    price_h1 = get_nested_number(
+        token,
+        "priceChange",
+        "h1"
     )
 
-    price_h24 = get_number(
-        token.get("priceChange", {}).get("h24")
+    price_h24 = get_nested_number(
+        token,
+        "priceChange",
+        "h24"
     )
 
-    transactions = token.get("txns", {})
-    hourly = transactions.get("h1", {})
+    buys = get_nested_number(
+        token,
+        "txns",
+        "h1",
+        "buys"
+    )
 
-    buys = get_number(hourly.get("buys"))
-    sells = get_number(hourly.get("sells"))
+    sells = get_nested_number(
+        token,
+        "txns",
+        "h1",
+        "sells"
+    )
+
+    # Required market data must exist.
+    if liquidity is None or volume is None:
+        return reject("Missing liquidity or volume data")
+
+    if liquidity < 0 or volume < 0:
+        return reject("Invalid market data")
+
+    if liquidity < MIN_LIQUIDITY:
+        return reject("Liquidity below minimum requirement")
+
+    if price_h1 is None:
+        return reject("Missing hourly price data")
+
+    if price_h24 is None:
+        return reject("Missing daily price data")
+
+    # TRANSACTION DATA
+
+    if buys is None or sells is None:
+        buys = 0
+        sells = 0
+
+    if buys < 0 or sells < 0:
+        return reject("Invalid transaction data")
 
     total_transactions = buys + sells
 
+    # DISCOVERY SOURCES
+
     sources = token.get("discovery_sources", [])
-    source_count = len(sources)
 
+    if not isinstance(sources, list):
+        sources = []
+
+    source_count = len(set(sources))
+
+    # ======================================
     # SAFETY CHECKS
-
-    if liquidity < 10000:
-        return {
-            "score": 0,
-            "decision": "REJECT",
-            "reasons": ["Liquidity below 10000 USD"]
-        }
+    # ======================================
 
     pair_created = get_number(
         token.get("pairCreatedAt")
     )
 
-    if pair_created > 0:
+    if pair_created is not None and pair_created > 0:
 
         age_minutes = (
             time.time() * 1000 - pair_created
         ) / 60000
 
         if age_minutes < 10:
-            return {
-                "score": 0,
-                "decision": "REJECT",
-                "reasons": ["Trading pair too new"]
-            }
+            return reject("Trading pair too new")
 
-    if price_h1 > 50:
-        return {
-            "score": 0,
-            "decision": "REJECT",
-            "reasons": ["Extreme hourly price increase"]
-        }
+    if price_h1 > MAX_HOURLY_GAIN:
+        return reject("Extreme hourly price increase")
 
-    if liquidity > 0 and volume / liquidity > 10:
-        return {
-            "score": 0,
-            "decision": "REJECT",
-            "reasons": ["Suspicious volume to liquidity ratio"]
-        }
+    if liquidity <= 0:
+        return reject("Invalid liquidity")
+
+    volume_ratio = volume / liquidity
+
+    if volume_ratio > MAX_VOLUME_LIQUIDITY_RATIO:
+        return reject("Suspicious volume to liquidity ratio")
 
     if total_transactions >= 10 and sells > buys * 1.5:
-        return {
-            "score": 0,
-            "decision": "REJECT",
-            "reasons": ["Excessive selling pressure"]
-        }
+        return reject("Excessive selling pressure")
 
-    # LIQUIDITY SCORE
+    # ======================================
+    # LIQUIDITY SCORE: MAX 25
+    # ======================================
 
-    if liquidity >= 50000:
-        score += 30
-        reasons.append("Excellent liquidity")
+    if liquidity >= 100000:
+        score += 25
+        reasons.append("Very strong liquidity")
+
+    elif liquidity >= 50000:
+        score += 22
+        reasons.append("Strong liquidity")
 
     elif liquidity >= 25000:
-        score += 25
+        score += 18
         reasons.append("Good liquidity")
 
     else:
-        score += 15
+        score += 12
         reasons.append("Acceptable liquidity")
 
-    # VOLUME SCORE
+    # ======================================
+    # VOLUME SCORE: MAX 20
+    # ======================================
 
-    if volume >= 50000:
-        score += 25
-        reasons.append("Very high volume")
+    if volume >= 100000:
+        score += 20
+        reasons.append("Very high trading volume")
+
+    elif volume >= 50000:
+        score += 17
+        reasons.append("High trading volume")
 
     elif volume >= 10000:
-        score += 20
+        score += 13
         reasons.append("Good trading volume")
 
     elif volume >= 5000:
-        score += 10
-        reasons.append("Moderate volume")
+        score += 8
+        reasons.append("Moderate trading volume")
 
-    # BUYING PRESSURE
+    else:
+        score += 3
+        reasons.append("Low trading volume")
+
+    # ======================================
+    # BUYING PRESSURE: MAX 20
+    # ======================================
 
     if total_transactions >= 20:
-        score += 10
+
+        score += 5
         reasons.append("Active trading")
 
-    elif total_transactions >= 5:
-        score += 5
+    elif total_transactions >= MIN_TRANSACTIONS:
+
+        score += 3
+        reasons.append("Some trading activity")
+
+    else:
+
+        reasons.append("Low transaction activity")
 
     if total_transactions > 0:
 
         buy_ratio = buys / total_transactions
 
-        if buy_ratio >= 0.65:
+        if buy_ratio >= 0.70:
             score += 15
+            reasons.append("Very strong buying pressure")
+
+        elif buy_ratio >= 0.60:
+            score += 12
             reasons.append("Strong buying pressure")
 
         elif buy_ratio >= 0.52:
-            score += 10
-            reasons.append("More buyers than sellers")
+            score += 8
+            reasons.append("Positive buying pressure")
 
-    # MOMENTUM
+        elif buy_ratio <= 0.35:
+            score -= 10
+            reasons.append("Strong selling pressure")
 
-    if 0 < price_h1 <= 15:
-        score += 10
-        reasons.append("Positive short-term momentum")
+        elif buy_ratio < 0.45:
+            score -= 5
+            reasons.append("Selling pressure detected")
 
-    elif price_h1 > 15:
-        score += 5
+    # ======================================
+    # SHORT-TERM MOMENTUM: MAX 15
+    # ======================================
+
+    if 0 < price_h1 <= 10:
+
+        score += 15
+        reasons.append("Healthy positive momentum")
+
+    elif 10 < price_h1 <= 20:
+
+        score += 8
         reasons.append("Strong short-term movement")
 
+    elif price_h1 < -10:
+
+        score -= 10
+        reasons.append("Significant negative momentum")
+
     elif price_h1 < 0:
+
         score -= 5
-        reasons.append("Negative short-term movement")
+        reasons.append("Negative short-term momentum")
 
-    if price_h24 > 0:
+    elif price_h1 == 0:
+
+        reasons.append("No hourly price movement")
+
+    # ======================================
+    # DAILY MOMENTUM: MAX 10
+    # ======================================
+
+    if 0 < price_h24 <= 30:
+
+        score += 10
+        reasons.append("Positive daily momentum")
+
+    elif price_h24 > 30:
+
         score += 5
-        reasons.append("Positive daily movement")
+        reasons.append("Strong daily price increase")
 
-    # DISCOVERY SOURCES
+    elif price_h24 < -20:
+
+        score -= 10
+        reasons.append("Heavy daily price decline")
+
+    elif price_h24 < 0:
+
+        score -= 5
+        reasons.append("Negative daily momentum")
+
+    # ======================================
+    # DISCOVERY SOURCE SCORE: MAX 10
+    # ======================================
 
     if source_count >= 4:
-        score += 15
-        reasons.append("Found in four discovery sources")
+
+        score += 10
+        reasons.append("Detected by multiple discovery sources")
 
     elif source_count == 3:
-        score += 10
-        reasons.append("Found in three discovery sources")
+
+        score += 7
+        reasons.append("Detected by three discovery sources")
 
     elif source_count == 2:
-        score += 5
-        reasons.append("Found in two discovery sources")
+
+        score += 4
+        reasons.append("Detected by two discovery sources")
 
     else:
-        reasons.append("Found in one discovery source")
 
-    score = max(0, min(100, score))
+        reasons.append("Limited discovery confirmation")
 
-    decision = "WATCH" if score >= 50 else "REJECT"
+    # ======================================
+    # FINAL SCORE
+    # ======================================
+
+    score = max(0, min(100, round(score)))
+
+    if score >= 70:
+
+        decision = "APPROVE"
+        reasons.append("High quality candidate")
+
+    elif score >= MIN_SCORE:
+
+        decision = "WATCH"
+        reasons.append("Candidate requires further monitoring")
+
+    else:
+
+        decision = "REJECT"
+        reasons.append("Insufficient quality score")
 
     return {
         "score": score,
@@ -183,5 +369,18 @@ def analyze_token(token):
     }
 
 
+# ==========================================
+# STARTUP
+# ==========================================
+
 if __name__ == "__main__":
-    print("TOKEN ANALYZER 3.0 READY")
+
+    print("================================")
+    print("TROJAN V2 AI ANALYZER")
+    print("================================")
+
+    print("MINIMUM LIQUIDITY:", MIN_LIQUIDITY)
+    print("MINIMUM SCORE:", MIN_SCORE)
+    print("MAX HOURLY GAIN:", MAX_HOURLY_GAIN)
+
+    print("AI ANALYZER READY")
