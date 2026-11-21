@@ -26,7 +26,6 @@ _cache_lock = threading.RLock()
 def get_number(value):
 
     try:
-
         number = float(value)
 
         if not math.isfinite(number):
@@ -40,15 +39,23 @@ def get_number(value):
 
 def get_authority_status(data, authority_name):
 
-    value = data.get(authority_name)
-
-    if value is None:
+    if not isinstance(data, dict):
         return "UNKNOWN"
 
-    if value is False or value == "":
+    if authority_name not in data:
+        return "UNKNOWN"
+
+    value = data[authority_name]
+
+    # RugCheck API: null means authority revoked.
+    if value is None or value is False or value == "":
         return "DISABLED"
 
+    # Active authority may be returned as a public key string.
     if value is True:
+        return "ACTIVE"
+
+    if isinstance(value, str):
         return "ACTIVE"
 
     return "UNKNOWN"
@@ -59,9 +66,7 @@ def get_risk_level(risk):
     if not isinstance(risk, dict):
         return "UNKNOWN"
 
-    level = str(
-        risk.get("level", "")
-    ).lower()
+    level = str(risk.get("level", "")).lower()
 
     if level in ("danger", "critical", "high"):
         return "HIGH"
@@ -91,20 +96,17 @@ def analyze_rugcheck_report(data):
             "high_risks": 0,
             "medium_risks": 0,
             "low_risks": 0,
+            "mint_authority": "UNKNOWN",
+            "freeze_authority": "UNKNOWN",
             "reasons": ["Missing RugCheck report"]
         }
 
     reasons = []
 
-    raw_score = get_number(
-        data.get("score_normalised")
-    )
+    raw_score = get_number(data.get("score_normalised"))
 
     if raw_score is None:
-
-        raw_score = get_number(
-            data.get("score")
-        )
+        raw_score = get_number(data.get("score"))
 
     risks = data.get("risks", [])
 
@@ -121,61 +123,53 @@ def analyze_rugcheck_report(data):
             continue
 
         level = get_risk_level(risk)
-
-        name = risk.get(
-            "name",
-            "Unknown risk"
-        )
+        name = str(risk.get("name", "Unknown risk"))
 
         if level == "HIGH":
-
             high_risks += 1
-            reasons.append("HIGH RISK: " + str(name))
+            reasons.append("HIGH RISK: " + name)
 
         elif level == "MEDIUM":
-
             medium_risks += 1
-            reasons.append("MEDIUM RISK: " + str(name))
+            reasons.append("MEDIUM RISK: " + name)
 
         elif level == "LOW":
-
             low_risks += 1
 
-    # Authority checks.
+    # RugCheck places authorities inside the token object.
+    token_data = data.get("token")
+
+    if not isinstance(token_data, dict):
+        token_data = {}
+
     mint_authority = get_authority_status(
-        data,
+        token_data,
         "mintAuthority"
     )
 
     freeze_authority = get_authority_status(
-        data,
+        token_data,
         "freezeAuthority"
     )
 
     if mint_authority == "ACTIVE":
-
         high_risks += 1
         reasons.append("Mint authority is active")
 
     elif mint_authority == "DISABLED":
-
         reasons.append("Mint authority disabled")
 
     else:
-
         reasons.append("Mint authority status unknown")
 
     if freeze_authority == "ACTIVE":
-
         high_risks += 1
         reasons.append("Freeze authority is active")
 
     elif freeze_authority == "DISABLED":
-
         reasons.append("Freeze authority disabled")
 
     else:
-
         reasons.append("Freeze authority status unknown")
 
     # Top holder concentration.
@@ -190,9 +184,7 @@ def analyze_rugcheck_report(data):
             if not isinstance(holder, dict):
                 continue
 
-            percentage = get_number(
-                holder.get("pct")
-            )
+            percentage = get_number(holder.get("pct"))
 
             if percentage is not None:
                 holder_percentages.append(percentage)
@@ -202,24 +194,23 @@ def analyze_rugcheck_report(data):
             top_holder = max(holder_percentages)
 
             if top_holder >= 50:
-
                 high_risks += 1
                 reasons.append("Extreme top holder concentration")
 
             elif top_holder >= 30:
-
                 medium_risks += 1
                 reasons.append("High top holder concentration")
 
             else:
-
                 reasons.append("Top holder concentration acceptable")
 
-    else:
+        else:
+            reasons.append("Top holder percentages unavailable")
 
+    else:
         reasons.append("Top holder data unavailable")
 
-    # Missing score means report cannot be fully evaluated.
+    # Missing score or authority data means no approval.
     if raw_score is None:
 
         return {
@@ -230,12 +221,20 @@ def analyze_rugcheck_report(data):
             "high_risks": high_risks,
             "medium_risks": medium_risks,
             "low_risks": low_risks,
-            "reasons": reasons
+            "mint_authority": mint_authority,
+            "freeze_authority": freeze_authority,
+            "reasons": reasons + ["Risk score unavailable"]
         }
 
-    # RugCheck normalized score is generally a risk score:
-    # lower is better.
-    if raw_score > MAX_SAFE_SCORE:
+    if (
+        mint_authority == "UNKNOWN"
+        or freeze_authority == "UNKNOWN"
+    ):
+
+        status = "UNKNOWN"
+        reasons.append("Authority information incomplete")
+
+    elif raw_score >= MAX_SAFE_SCORE:
 
         status = "REJECT"
         reasons.append("RugCheck risk score too high")
@@ -249,11 +248,6 @@ def analyze_rugcheck_report(data):
 
         status = "REJECT"
         reasons.append("Multiple medium severity risks")
-
-    elif mint_authority == "UNKNOWN" or freeze_authority == "UNKNOWN":
-
-        status = "UNKNOWN"
-        reasons.append("Authority information incomplete")
 
     else:
 
@@ -281,9 +275,7 @@ def analyze_rugcheck_report(data):
 def get_rugcheck_report(token_address):
 
     if not token_address:
-
         print("RUGCHECK ERROR: Missing token address")
-
         return None
 
     now = time.time()
@@ -297,7 +289,6 @@ def get_rugcheck_report(token_address):
             cached_time, cached_data = cached
 
             if now - cached_time < CACHE_SECONDS:
-
                 return cached_data
 
     url = API_URL + str(token_address) + "/report"
@@ -306,16 +297,12 @@ def get_rugcheck_report(token_address):
 
         response = requests.get(
             url,
-            headers={
-                "Accept": "application/json"
-            },
+            headers={"Accept": "application/json"},
             timeout=REQUEST_TIMEOUT
         )
 
         if response.status_code == 429:
-
             print("RUGCHECK: Rate limit reached")
-
             return None
 
         response.raise_for_status()
@@ -323,9 +310,7 @@ def get_rugcheck_report(token_address):
         data = response.json()
 
         if not isinstance(data, dict):
-
             print("RUGCHECK ERROR: Invalid response")
-
             return None
 
         analysis = analyze_rugcheck_report(data)
@@ -337,11 +322,7 @@ def get_rugcheck_report(token_address):
         }
 
         with _cache_lock:
-
-            _cache[token_address] = (
-                now,
-                result
-            )
+            _cache[token_address] = (now, result)
 
         print("================================")
         print("TROJAN V2 RUGCHECK")
@@ -351,6 +332,8 @@ def get_rugcheck_report(token_address):
         print("HIGH RISKS:", analysis["high_risks"])
         print("MEDIUM RISKS:", analysis["medium_risks"])
         print("LOW RISKS:", analysis["low_risks"])
+        print("MINT AUTHORITY:", analysis["mint_authority"])
+        print("FREEZE AUTHORITY:", analysis["freeze_authority"])
 
         for reason in analysis["reasons"]:
             print("RISK:", reason)
@@ -360,15 +343,11 @@ def get_rugcheck_report(token_address):
         return result
 
     except requests.RequestException as error:
-
         print("RUGCHECK CONNECTION ERROR:", error)
-
         return None
 
     except ValueError as error:
-
         print("RUGCHECK DATA ERROR:", error)
-
         return None
 
 
@@ -381,11 +360,9 @@ def clear_rugcheck_cache(token_address=None):
     with _cache_lock:
 
         if token_address:
-
             _cache.pop(token_address, None)
 
         else:
-
             _cache.clear()
 
 
