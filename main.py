@@ -1,5 +1,6 @@
 import time
 import queue
+import math
 from concurrent.futures import ThreadPoolExecutor
 
 import paper_trading as paper
@@ -55,7 +56,36 @@ last_statistics_time = 0
 
 last_prices = {}
 
-shutdown_event = False
+
+# ==========================================
+# DATA HELPERS
+# ==========================================
+
+def safe_float(value):
+
+    try:
+        number = float(value)
+
+        if not math.isfinite(number):
+            return None
+
+        return number
+
+    except (ValueError, TypeError):
+        return None
+
+
+def get_liquidity(pair):
+
+    if not isinstance(pair, dict):
+        return None
+
+    liquidity_data = pair.get("liquidity")
+
+    if not isinstance(liquidity_data, dict):
+        return None
+
+    return safe_float(liquidity_data.get("usd"))
 
 
 # ==========================================
@@ -65,6 +95,7 @@ shutdown_event = False
 def get_market_data(token_address):
 
     try:
+
         pairs = get_json(
             API_URL + token_address,
             timeout=15,
@@ -79,18 +110,22 @@ def get_market_data(token_address):
 
         for pair in pairs:
 
-            try:
-                price = float(pair.get("priceUsd") or 0)
-
-                liquidity = float(
-                    pair.get("liquidity", {}).get("usd", 0) or 0
-                )
-
-                if price > 0:
-                    valid_pairs.append((liquidity, pair))
-
-            except (ValueError, TypeError, AttributeError):
+            if not isinstance(pair, dict):
                 continue
+
+            price = safe_float(pair.get("priceUsd"))
+
+            if price is None or price <= 0:
+                continue
+
+            liquidity = get_liquidity(pair)
+
+            # Missing liquidity is not treated as zero data.
+            liquidity_rank = (
+                liquidity if liquidity is not None else -1
+            )
+
+            valid_pairs.append((liquidity_rank, pair))
 
         if not valid_pairs:
             return None
@@ -101,7 +136,9 @@ def get_market_data(token_address):
         )[1]
 
     except Exception as error:
+
         print("MARKET DATA ERROR:", repr(error))
+
         return None
 
 
@@ -112,46 +149,75 @@ def get_token_price(token_address):
     if not pair:
         return None
 
-    try:
-        return float(pair["priceUsd"])
-
-    except (ValueError, TypeError, KeyError):
-        return None
+    return safe_float(pair.get("priceUsd"))
 
 
 # ==========================================
-# RUGCHECK
+# RUGCHECK V2
 # ==========================================
 
 def check_rugcheck(token_address):
 
     try:
-        report = get_rugcheck_report(token_address)
 
-        if not report:
+        result = get_rugcheck_report(token_address)
+
+        if not isinstance(result, dict):
+            print("RUGCHECK UNKNOWN:", token_address)
             return False
 
-        score = report.get("score_normalised")
+        # V2 response contains the original report
+        # and the separate security analysis.
+        analysis = result.get("analysis")
+
+        if not isinstance(analysis, dict):
+
+            print(
+                "RUGCHECK INVALID ANALYSIS:",
+                token_address
+            )
+
+            return False
+
+        status = analysis.get("status")
+
+        score = safe_float(analysis.get("score"))
+
+        print(
+            "RUGCHECK DECISION:",
+            token_address,
+            "| STATUS:",
+            status,
+            "| SCORE:",
+            score
+        )
+
+        # Missing or incomplete security data is rejected.
+        if status != "PASS":
+            return False
+
+        if analysis.get("safe") is not True:
+            return False
 
         if score is None:
             return False
 
-        if float(score) >= MAX_RUGCHECK_SCORE:
+        if score >= MAX_RUGCHECK_SCORE:
             return False
 
-        for item in report.get("risks", []):
-
-            level = str(
-                item.get("level", "")
-            ).lower()
-
-            if level in ("danger", "critical"):
-                return False
+        if analysis.get("high_risks", 0) > 0:
+            return False
 
         return True
 
     except Exception as error:
-        print("RUGCHECK ERROR:", repr(error))
+
+        print(
+            "RUGCHECK ERROR:",
+            token_address,
+            repr(error)
+        )
+
         return False
 
 
@@ -164,6 +230,7 @@ def analyze_token_task(address, strategy, token):
     pair = get_market_data(address)
 
     if not pair:
+
         return {
             "status": "waiting",
             "address": address,
@@ -172,57 +239,83 @@ def analyze_token_task(address, strategy, token):
 
     try:
 
-        price = float(pair.get("priceUsd") or 0)
+        price = safe_float(pair.get("priceUsd"))
+        liquidity = get_liquidity(pair)
 
-        liquidity = float(
-            pair.get("liquidity", {}).get("usd", 0) or 0
-        )
+        if price is None or price <= 0:
 
-        if price <= 0:
             return {
                 "status": "rejected",
                 "address": address,
                 "reason": "INVALID PRICE"
             }
 
+        if liquidity is None:
+
+            return {
+                "status": "waiting",
+                "address": address,
+                "strategy": strategy
+            }
+
         if strategy == "sniper":
+
             if liquidity < SNIPER_MIN_LIQUIDITY:
+
                 return {
                     "status": "waiting",
                     "address": address,
                     "strategy": strategy
                 }
 
-        token_data = {
-            "address": address,
-            "price": price,
-            "liquidity": liquidity,
-            "volume": pair.get("volume", {}),
-            "priceChange": pair.get("priceChange", {}),
-            "pair": pair,
-            "sources": token.get("sources", [strategy])
-        }
+        # Build the data structure expected by AI Analyzer V2.
+        token_data = dict(pair)
+
+        token_data["address"] = address
+
+        sources = token.get(
+            "sources",
+            token.get("discovery_sources", [strategy])
+        )
+
+        if not isinstance(sources, list):
+            sources = [strategy]
+
+        token_data["discovery_sources"] = sources
+
+        # Ensure expected market-data structures exist.
+        if not isinstance(token_data.get("liquidity"), dict):
+            token_data["liquidity"] = {"usd": liquidity}
 
         analysis = analyze_token(token_data)
 
-        if not analysis:
+        if not isinstance(analysis, dict):
+
             return {
                 "status": "rejected",
                 "address": address,
                 "reason": "AI ANALYSIS FAILED"
             }
 
-        score = float(analysis.get("score", 0))
+        score = safe_float(analysis.get("score"))
 
-        if score < MINIMUM_SCORE:
+        if score is None:
+            score = 0
+
+        decision = analysis.get("decision")
+
+        if score < MINIMUM_SCORE or decision != "APPROVE":
+
             return {
                 "status": "rejected",
                 "address": address,
                 "score": score,
-                "reason": "LOW AI SCORE"
+                "reason": "AI SCORE OR DECISION FAILED"
             }
 
+        # RugCheck must pass before paper trading.
         if not check_rugcheck(address):
+
             return {
                 "status": "rejected",
                 "address": address,
@@ -270,7 +363,9 @@ def schedule_token(address, strategy, token=None):
         return False
 
     if len(pending_tasks) >= MAX_PENDING_TASKS:
+
         print("TASK LIMIT REACHED:", address)
+
         return False
 
     if address in paper.get_positions():
@@ -343,6 +438,7 @@ def process_completed_tasks():
 
             if task["strategy"] == "sniper":
                 pending_sniper_tokens[address] = pending_item
+
             else:
                 pending_discovery_tokens[address] = pending_item
 
@@ -397,6 +493,7 @@ def add_discovery_tokens():
             tokens.extend(result)
 
     except Exception as error:
+
         print("SCANNER ERROR:", repr(error))
 
     try:
@@ -407,6 +504,7 @@ def add_discovery_tokens():
             tokens.extend(result)
 
     except Exception as error:
+
         print("AGGREGATOR ERROR:", repr(error))
 
     added = 0
@@ -448,7 +546,9 @@ def receive_sniper_tokens():
             break
 
         except Exception as error:
+
             print("SNIPER QUEUE ERROR:", repr(error))
+
             break
 
         if not isinstance(token, dict):
@@ -501,6 +601,7 @@ def process_sniper_tokens():
         if address in paper.get_positions():
 
             del pending_sniper_tokens[address]
+
             continue
 
         schedule_token(
@@ -535,6 +636,7 @@ def process_discovery_pending():
         if address in paper.get_positions():
 
             del pending_discovery_tokens[address]
+
             continue
 
         schedule_token(
@@ -577,19 +679,12 @@ def monitor_positions():
         if not pair:
             continue
 
-        try:
+        price = safe_float(pair.get("priceUsd"))
 
-            price = float(pair.get("priceUsd") or 0)
-
-            liquidity = float(
-                pair.get("liquidity", {}).get("usd", 0) or 0
-            )
-
-            if price <= 0:
-                continue
-
-        except (ValueError, TypeError, AttributeError):
+        if price is None or price <= 0:
             continue
+
+        liquidity = get_liquidity(pair)
 
         last_prices[address] = price
 
@@ -618,10 +713,13 @@ def monitor_positions():
 
                 continue
 
-            if liquidity_status == "UNKNOWN":
+            if liquidity_status in ("UNKNOWN", "WARNING"):
+
                 print(
-                    "LIQUIDITY CHECK UNKNOWN:",
-                    address
+                    "LIQUIDITY STATUS:",
+                    address,
+                    "|",
+                    liquidity_status
                 )
 
         except Exception as error:
@@ -752,9 +850,14 @@ def run_bot():
         )
 
 
+# ==========================================
+# STARTUP
+# ==========================================
+
 if __name__ == "__main__":
 
     try:
+
         run_bot()
 
     except KeyboardInterrupt:
