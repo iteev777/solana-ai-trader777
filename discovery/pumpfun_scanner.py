@@ -1,6 +1,9 @@
+# ==========================================
+# TROJAN V2 - BIRDEYE MEME LISTING SCANNER
+# ==========================================
+
 import os
 import time
-import math
 import requests
 
 from api_client import get_json
@@ -16,6 +19,10 @@ MAX_RETRIES = 1
 TOKEN_LIMIT = 20
 
 
+# ==========================================
+# TOKEN VALIDATION
+# ==========================================
+
 def valid_token(token):
 
     if not isinstance(token, dict):
@@ -23,15 +30,23 @@ def valid_token(token):
 
     address = token.get("address")
 
-    return isinstance(address, str) and bool(address.strip())
+    return (
+        isinstance(address, str)
+        and bool(address.strip())
+    )
 
+
+# ==========================================
+# SCAN BIRDEYE MEME LISTINGS
+# ==========================================
 
 def scan_pumpfun():
 
     found_tokens = []
 
     if not API_KEY:
-        print("PUMPFUN SKIPPED: API KEY MISSING")
+
+        print("BIRDEYE MEME LISTING SKIPPED: API KEY MISSING")
         return found_tokens
 
     try:
@@ -54,19 +69,22 @@ def scan_pumpfun():
         )
 
         if not isinstance(data, dict):
-            print("PUMPFUN INVALID RESPONSE")
+
+            print("BIRDEYE MEME LISTING INVALID RESPONSE")
             return found_tokens
 
         result = data.get("data")
 
         if not isinstance(result, dict):
-            print("PUMPFUN INVALID DATA")
+
+            print("BIRDEYE MEME LISTING INVALID DATA")
             return found_tokens
 
-        tokens = result.get("items", [])
+        tokens = result.get("items")
 
         if not isinstance(tokens, list):
-            print("PUMPFUN INVALID TOKEN LIST")
+
+            print("BIRDEYE MEME LISTING INVALID TOKEN LIST")
             return found_tokens
 
         seen_in_scan = set()
@@ -88,25 +106,35 @@ def scan_pumpfun():
                 "chainId": "solana",
                 "name": token.get("name") or "Unknown",
                 "symbol": token.get("symbol") or "Unknown",
-                "discovery_sources": ["pumpfun"]
+                "discovery_sources": ["birdeye_meme_listing"]
             })
 
         print(
-            "PUMPFUN/BIRDEYE NEW TOKENS:",
+            "TROJAN V2 BIRDEYE MEME LISTINGS:",
             len(found_tokens)
         )
 
     except requests.RequestException as error:
-        print("PUMPFUN REQUEST ERROR:", repr(error))
+
+        print("BIRDEYE MEME LISTING REQUEST ERROR:", repr(error))
 
     except (ValueError, TypeError, AttributeError) as error:
-        print("PUMPFUN DATA ERROR:", repr(error))
+
+        print("BIRDEYE MEME LISTING DATA ERROR:", repr(error))
 
     except Exception as error:
-        print("PUMPFUN SCANNER ERROR:", repr(error))
+
+        print("BIRDEYE MEME LISTING ERROR:", repr(error))
 
     return found_tokens
 
 
+# ==========================================
+# STARTUP
+# ==========================================
+
 if __name__ == "__main__":
+
+    print("TROJAN V2 BIRDEYE MEME LISTING READY")
+
     scan_pumpfun()
