@@ -37,7 +37,10 @@ def analyze_token(token):
 
     total_transactions = buys + sells
 
-    # SAFETY CHECK 1: LIQUIDITY
+    sources = token.get("discovery_sources", [])
+    source_count = len(sources)
+
+    # SAFETY CHECKS
 
     if liquidity < 10000:
         return {
@@ -45,8 +48,6 @@ def analyze_token(token):
             "decision": "REJECT",
             "reasons": ["Liquidity below 10000 USD"]
         }
-
-    # SAFETY CHECK 2: TOKEN AGE
 
     pair_created = get_number(
         token.get("pairCreatedAt")
@@ -65,16 +66,12 @@ def analyze_token(token):
                 "reasons": ["Trading pair too new"]
             }
 
-    # SAFETY CHECK 3: EXTREME PRICE PUMP
-
     if price_h1 > 50:
         return {
             "score": 0,
             "decision": "REJECT",
             "reasons": ["Extreme hourly price increase"]
         }
-
-    # SAFETY CHECK 4: SUSPICIOUS VOLUME
 
     if liquidity > 0 and volume / liquidity > 10:
         return {
@@ -83,8 +80,6 @@ def analyze_token(token):
             "reasons": ["Suspicious volume to liquidity ratio"]
         }
 
-    # SAFETY CHECK 5: SELLING PRESSURE
-
     if total_transactions >= 10 and sells > buys * 1.5:
         return {
             "score": 0,
@@ -92,7 +87,7 @@ def analyze_token(token):
             "reasons": ["Excessive selling pressure"]
         }
 
-    # SCORING: LIQUIDITY
+    # LIQUIDITY SCORE
 
     if liquidity >= 50000:
         score += 30
@@ -106,7 +101,7 @@ def analyze_token(token):
         score += 15
         reasons.append("Acceptable liquidity")
 
-    # SCORING: VOLUME
+    # VOLUME SCORE
 
     if volume >= 50000:
         score += 25
@@ -120,7 +115,7 @@ def analyze_token(token):
         score += 10
         reasons.append("Moderate volume")
 
-    # SCORING: BUYING PRESSURE
+    # BUYING PRESSURE
 
     if total_transactions >= 20:
         score += 10
@@ -141,7 +136,7 @@ def analyze_token(token):
             score += 10
             reasons.append("More buyers than sellers")
 
-    # SCORING: MOMENTUM
+    # MOMENTUM
 
     if 0 < price_h1 <= 15:
         score += 10
@@ -159,6 +154,23 @@ def analyze_token(token):
         score += 5
         reasons.append("Positive daily movement")
 
+    # DISCOVERY SOURCES
+
+    if source_count >= 4:
+        score += 15
+        reasons.append("Found in four discovery sources")
+
+    elif source_count == 3:
+        score += 10
+        reasons.append("Found in three discovery sources")
+
+    elif source_count == 2:
+        score += 5
+        reasons.append("Found in two discovery sources")
+
+    else:
+        reasons.append("Found in one discovery source")
+
     score = max(0, min(100, score))
 
     decision = "WATCH" if score >= 50 else "REJECT"
@@ -166,9 +178,10 @@ def analyze_token(token):
     return {
         "score": score,
         "decision": decision,
-        "reasons": reasons
+        "reasons": reasons,
+        "source_count": source_count
     }
 
 
 if __name__ == "__main__":
-    print("ADVANCED TOKEN ANALYZER 2.0 READY")
+    print("TOKEN ANALYZER 3.0 READY")
