@@ -5,12 +5,15 @@ import paper_trading as paper
 from scanner import scan_tokens
 from ai_analyzer import analyze_token
 from rugcheck import get_rugcheck_report
+from liquidity_monitor import check_liquidity
+
 from database import (
     initialize_database,
     save_analysis,
     save_trade,
     get_trade_stats
 )
+
 from risk_manager import can_open_trade
 
 
@@ -63,10 +66,36 @@ def get_market_data(token_address):
         return None
 
 
-def monitor_positions():
+def record_sale(address, price, result):
 
     global daily_loss
     global daily_realized_pnl
+
+    if not isinstance(result, dict):
+        return
+
+    pnl = result["profit_loss"]
+
+    daily_realized_pnl += pnl
+    daily_loss += max(0, -pnl)
+
+    save_trade(
+        address,
+        "SELL",
+        price,
+        paper.TRADE_SIZE + pnl,
+        pnl
+    )
+
+    print("================================")
+    print("PAPER SELL:", address)
+    print("SELL REASON:", result["result"])
+    print("PROFIT / LOSS:", pnl, "USD")
+    print("NEW BALANCE:", result["balance"], "USD")
+    print("================================")
+
+
+def monitor_positions():
 
     for address in list(paper.positions.keys()):
 
@@ -78,8 +107,36 @@ def monitor_positions():
 
         price = float(market.get("priceUsd") or 0)
 
+        liquidity = float(
+            market.get("liquidity", {}).get("usd") or 0
+        )
+
         if price <= 0:
             continue
+
+        # LIQUIDITY COLLAPSE CHECK
+
+        liquidity_status = check_liquidity(
+            address,
+            liquidity
+        )
+
+        if liquidity_status == "COLLAPSE":
+
+            print("EMERGENCY LIQUIDITY EXIT:", address)
+
+            result = paper.emergency_sell(
+                address,
+                price
+            )
+
+            record_sale(address, price, result)
+
+            continue
+
+        if liquidity_status == "UNKNOWN":
+
+            print("LIQUIDITY DATA UNKNOWN:", address)
 
         position = paper.positions[address]
 
@@ -98,25 +155,7 @@ def monitor_positions():
 
         if isinstance(result, dict):
 
-            pnl = result["profit_loss"]
-
-            daily_realized_pnl += pnl
-            daily_loss += max(0, -pnl)
-
-            save_trade(
-                address,
-                "SELL",
-                price,
-                paper.TRADE_SIZE + pnl,
-                pnl
-            )
-
-            print("================================")
-            print("PAPER SELL:", address)
-            print("SELL REASON:", result["result"])
-            print("PROFIT / LOSS:", pnl, "USD")
-            print("NEW BALANCE:", result["balance"], "USD")
-            print("================================")
+            record_sale(address, price, result)
 
 
 def scan_and_trade():
@@ -164,7 +203,7 @@ def scan_and_trade():
         if score < MINIMUM_SCORE:
             continue
 
-        # RUGCHECK SECURITY CHECK
+        # RUGCHECK
 
         print("RUGCHECK CHECK:", address)
 
@@ -176,8 +215,10 @@ def scan_and_trade():
 
         rug_score = report.get("score_normalised")
 
-        if rug_score is None:
-            print("TRADE BLOCKED: RugCheck score missing")
+        try:
+            rug_score = float(rug_score)
+        except (ValueError, TypeError):
+            print("TRADE BLOCKED: Invalid RugCheck score")
             continue
 
         risks = report.get("risks", [])
@@ -201,7 +242,7 @@ def scan_and_trade():
 
         print("RUGCHECK PASSED")
 
-        # PAPER TRADING RISK CHECK
+        # RISK MANAGER
 
         allowed = can_open_trade(
             paper.balance,
@@ -216,12 +257,20 @@ def scan_and_trade():
 
         price = float(market.get("priceUsd") or 0)
 
-        if price <= 0:
+        liquidity = float(
+            market.get("liquidity", {}).get("usd") or 0
+        )
+
+        if price <= 0 or liquidity <= 0:
             continue
 
         result = paper.open_position(address, price)
 
         if isinstance(result, str) and result.startswith("PAPER BUY"):
+
+            # Save initial liquidity baseline
+
+            check_liquidity(address, liquidity)
 
             save_trade(
                 address,
@@ -234,6 +283,7 @@ def scan_and_trade():
             print("PAPER BUY:", address)
             print("ENTRY PRICE:", price)
             print("INVESTMENT:", paper.TRADE_SIZE, "USD")
+            print("INITIAL LIQUIDITY:", liquidity, "USD")
             print("REMAINING BALANCE:", paper.balance, "USD")
             print("================================")
 
@@ -288,20 +338,19 @@ def print_statistics():
 
 def run_bot():
 
-    global daily_realized_pnl
-
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 5.0")
+    print("SOLANA MEMECOIN BOT 6.0")
     print("MODE: PAPER TRADING ONLY")
     print("STARTING BALANCE:", paper.STARTING_BALANCE, "USD")
     print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
     print("TAKE PROFIT:", paper.TAKE_PROFIT * 100, "%")
     print("STOP LOSS:", paper.STOP_LOSS * 100, "%")
     print("SCAN INTERVAL:", SCAN_INTERVAL, "SECONDS")
-    print("SCANNER: MULTI-SOURCE")
     print("SECURITY: RUGCHECK")
+    print("LIQUIDITY MONITOR: ACTIVE")
+    print("EMERGENCY PAPER EXIT: ACTIVE")
     print("================================")
 
     while True:
