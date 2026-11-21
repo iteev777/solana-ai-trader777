@@ -1,5 +1,6 @@
 from discovery.gecko_scanner import scan_new_pools
 from discovery.pumpfun_scanner import scan_pumpfun
+from discovery.birdeye_scanner import scan_birdeye
 
 
 seen_tokens = set()
@@ -11,7 +12,8 @@ def collect_tokens():
 
     scanners = [
         scan_new_pools,
-        scan_pumpfun
+        scan_pumpfun,
+        scan_birdeye
     ]
 
     for scanner in scanners:
