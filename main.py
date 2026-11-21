@@ -31,6 +31,8 @@ MAX_RUGCHECK_SCORE = 40
 SNIPER_MIN_LIQUIDITY = 2500
 SNIPER_TOKEN_TIMEOUT = 120
 
+DISCOVERY_TOKEN_TIMEOUT = 600
+
 daily_loss = 0.0
 daily_realized_pnl = 0.0
 
@@ -38,6 +40,8 @@ last_scan_time = 0
 last_prices = {}
 
 pending_sniper_tokens = {}
+pending_discovery_tokens = {}
+
 seen_discovery_tokens = set()
 
 
@@ -204,9 +208,14 @@ def get_all_discovery_tokens():
         tokens = scan_tokens()
 
         for token in tokens:
+
+            if not isinstance(token, dict):
+                continue
+
             token["discovery_sources"] = (
                 token.get("discovery_sources", ["main_scanner"])
             )
+
             all_tokens.append(token)
 
     except Exception as error:
@@ -216,7 +225,9 @@ def get_all_discovery_tokens():
         tokens = collect_tokens()
 
         for token in tokens:
-            all_tokens.append(token)
+
+            if isinstance(token, dict):
+                all_tokens.append(token)
 
     except Exception as error:
         print("DISCOVERY ERROR:", repr(error))
@@ -234,6 +245,7 @@ def get_all_discovery_tokens():
             unique_tokens[address] = token
 
         else:
+
             existing = unique_tokens[address]
 
             sources = set(
@@ -259,27 +271,72 @@ def scan_and_trade():
 
     print("CANDIDATES RECEIVED:", len(tokens))
 
-    for token in tokens[:50]:
+    for token in tokens:
 
         address = token.get("tokenAddress")
 
-        if not address or address in paper.positions:
+        if not address:
+            continue
+
+        if address in paper.positions:
             continue
 
         if address in seen_discovery_tokens:
             continue
 
-        seen_discovery_tokens.add(address)
+        if address in pending_discovery_tokens:
+            continue
+
+        pending_discovery_tokens[address] = {
+            "token": token,
+            "first_seen": time.time()
+        }
+
+        print("DISCOVERY TOKEN QUEUED:", address)
+
+    for address in list(pending_discovery_tokens.keys()):
+
+        pending = pending_discovery_tokens[address]
+
+        age = time.time() - pending["first_seen"]
+
+        if age > DISCOVERY_TOKEN_TIMEOUT:
+
+            print("DISCOVERY TOKEN EXPIRED:", address)
+
+            del pending_discovery_tokens[address]
+            continue
+
+        if address in paper.positions:
+
+            del pending_discovery_tokens[address]
+            continue
 
         market = get_market_data(address)
 
         if not market:
-            print("NO VALID PRICE DATA:", address)
+
+            print("DISCOVERY WAITING FOR PRICE:", address)
             continue
+
+        price = float(market.get("priceUsd") or 0)
+
+        liquidity = float(
+            market.get("liquidity", {}).get("usd") or 0
+        )
+
+        if price <= 0 or liquidity <= 0:
+            print("DISCOVERY WAITING FOR VALID MARKET:", address)
+            continue
+
+        token = pending["token"]
 
         market["discovery_sources"] = token.get(
             "discovery_sources", []
         )
+
+        del pending_discovery_tokens[address]
+        seen_discovery_tokens.add(address)
 
         analysis = analyze_token(market)
 
@@ -288,11 +345,17 @@ def scan_and_trade():
         print("--------------------------------")
         print("TOKEN:", address)
         print("SOURCES:", market["discovery_sources"])
+        print("PRICE:", price)
+        print("LIQUIDITY:", liquidity)
         print("SCORE:", score)
         print("DECISION:", analysis["decision"])
         print("REASONS:", analysis["reasons"])
 
-        save_analysis(address, score, analysis["decision"])
+        save_analysis(
+            address,
+            score,
+            analysis["decision"]
+        )
 
         if score < MINIMUM_SCORE:
             continue
@@ -310,15 +373,6 @@ def scan_and_trade():
 
         if not allowed:
             print("MAIN TRADE BLOCKED BY RISK MANAGER")
-            continue
-
-        price = float(market.get("priceUsd") or 0)
-
-        liquidity = float(
-            market.get("liquidity", {}).get("usd") or 0
-        )
-
-        if price <= 0 or liquidity <= 0:
             continue
 
         result = paper.open_position(
@@ -489,6 +543,7 @@ def print_statistics():
     print("MAIN POSITIONS:", main_positions)
     print("SNIPER POSITIONS:", sniper_positions)
     print("PENDING SNIPER TOKENS:", len(pending_sniper_tokens))
+    print("PENDING DISCOVERY TOKENS:", len(pending_discovery_tokens))
     print("OPEN INVESTMENT:", round(total_invested, 2), "USD")
     print("OPEN PROFIT / LOSS:", round(current_profit, 3), "USD")
     print("SHARED PAPER BALANCE:", round(paper.balance, 2), "USD")
@@ -502,7 +557,7 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 9.0")
+    print("SOLANA MEMECOIN BOT 9.1")
     print("MODE: PAPER TRADING ONLY")
     print("MAIN SCANNER: ACTIVE")
     print("DISCOVERY AGGREGATOR: ACTIVE")
