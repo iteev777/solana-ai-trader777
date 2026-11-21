@@ -1,6 +1,8 @@
 import os
 import requests
 
+from api_client import get_json
+
 API_KEY = os.getenv("BIRDEYE_API_KEY")
 
 API_URL = "https://public-api.birdeye.so/defi/tokenlist"
@@ -17,7 +19,7 @@ def scan_birdeye():
         return found_tokens
 
     try:
-        response = requests.get(
+        data = get_json(
             API_URL,
             params={
                 "sort_by": "v24hUSD",
@@ -29,12 +31,12 @@ def scan_birdeye():
                 "X-API-KEY": API_KEY,
                 "x-chain": "solana"
             },
-            timeout=15
+            timeout=15,
+            cache_ttl=60,
+            max_retries=1
         )
 
-        response.raise_for_status()
-
-        result = response.json().get("data", {})
+        result = data.get("data", {})
         tokens = result.get("tokens", [])
 
         for token in tokens:
@@ -55,7 +57,7 @@ def scan_birdeye():
 
         print("BIRDEYE TOKENS:", len(found_tokens))
 
-    except Exception as error:
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
         print("BIRDEYE SCANNER ERROR:", repr(error))
 
     return found_tokens
