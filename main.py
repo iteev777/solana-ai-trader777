@@ -31,7 +31,7 @@ from database import (
 # CONFIGURATION
 # ==========================================
 
-API_URL = "https://api.dexscreener.com/token-pairs/v1/"
+API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 WORKERS = 4
 MAX_PENDING_TASKS = 100
