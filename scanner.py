@@ -1,33 +1,49 @@
 import requests
 
-API_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
+API_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
+
 
 def scan_tokens():
     try:
-        response = requests.get(API_URL, timeout=15)
+        response = requests.get(
+            API_URL,
+            timeout=15
+        )
         response.raise_for_status()
 
         tokens = response.json()
-        solana_tokens = [
-            token for token in tokens
-            if token.get("chainId") == "solana"
-        ]
 
-        print(f"Found {len(solana_tokens)} Solana tokens")
+        if not isinstance(tokens, list):
+            print("INVALID SCANNER RESPONSE")
+            return []
 
-        for token in solana_tokens[:10]:
-            print(
-                "Token:",
-                token.get("tokenAddress"),
-                "| URL:",
-                token.get("url")
-            )
+        solana_tokens = []
+        seen = set()
 
-        return solana_tokens
+        for token in tokens:
 
-    except requests.RequestException as error:
-        print("Scanner error:", error)
+            if token.get("chainId") != "solana":
+                continue
+
+            address = token.get("tokenAddress")
+
+            if not address or address in seen:
+                continue
+
+            seen.add(address)
+            solana_tokens.append(token)
+
+        print(
+            "FOUND SOLANA BOOSTED TOKENS:",
+            len(solana_tokens)
+        )
+
+        return solana_tokens[:20]
+
+    except (requests.RequestException, ValueError) as error:
+        print("SCANNER ERROR:", error)
         return []
+
 
 if __name__ == "__main__":
     scan_tokens()
