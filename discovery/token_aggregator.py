@@ -1,46 +1,150 @@
+import time
+
 from discovery.gecko_scanner import scan_new_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 
 
-seen_tokens = set()
+SCANNERS = [
+    ("GECKO", scan_new_pools),
+    ("PUMPFUN", scan_pumpfun),
+    ("BIRDEYE", scan_birdeye)
+]
+
+MAX_RESULTS = 300
+
+
+def normalize_token(token):
+
+    if not isinstance(token, dict):
+        return None
+
+    address = token.get("tokenAddress")
+
+    if not isinstance(address, str):
+        return None
+
+    address = address.strip()
+
+    if not address:
+        return None
+
+    return address
 
 
 def collect_tokens():
 
-    all_tokens = []
+    discovered = {}
 
-    scanners = [
-        scan_new_pools,
-        scan_pumpfun,
-        scan_birdeye
-    ]
+    source_stats = {}
 
-    for scanner in scanners:
+    current_time = time.time()
+
+    for source_name, scanner in SCANNERS:
 
         try:
             tokens = scanner()
 
+            if not isinstance(tokens, list):
+                print(
+                    "INVALID SCANNER RESULT:",
+                    source_name
+                )
+                source_stats[source_name] = 0
+                continue
+
+            source_stats[source_name] = len(tokens)
+
             for token in tokens:
 
-                address = token.get("tokenAddress")
+                address = normalize_token(token)
 
                 if not address:
                     continue
 
-                if address in seen_tokens:
-                    continue
+                if address not in discovered:
 
-                seen_tokens.add(address)
+                    discovered[address] = {
+                        "tokenAddress": address,
+                        "chainId": token.get(
+                            "chainId",
+                            "solana"
+                        ),
+                        "discovery_sources": [],
+                        "discovery_timestamp": current_time
+                    }
 
-                all_tokens.append(token)
+                candidate = discovered[address]
+
+                sources = token.get(
+                    "discovery_sources",
+                    []
+                )
+
+                if isinstance(sources, str):
+                    sources = [sources]
+
+                if not isinstance(sources, list):
+                    sources = []
+
+                sources = sources + [source_name]
+
+                for source in sources:
+
+                    if (
+                        isinstance(source, str)
+                        and source not in candidate["discovery_sources"]
+                    ):
+                        candidate["discovery_sources"].append(source)
+
+                # Preserve additional scanner information.
+                for key, value in token.items():
+
+                    if key not in candidate:
+                        candidate[key] = value
 
         except Exception as error:
+
             print(
                 "TOKEN AGGREGATOR ERROR:",
+                source_name,
                 repr(error)
             )
 
-    print("AGGREGATED NEW TOKENS:", len(all_tokens))
+            source_stats[source_name] = 0
 
-    return all_tokens
+    results = list(discovered.values())
+
+    results.sort(
+        key=lambda token: len(
+            token["discovery_sources"]
+        ),
+        reverse=True
+    )
+
+    results = results[:MAX_RESULTS]
+
+    print("================================")
+    print("TOKEN AGGREGATOR V2")
+    print("UNIQUE TOKENS:", len(results))
+    print("================================")
+
+    for source_name, count in source_stats.items():
+
+        print(
+            "SCANNER:",
+            source_name,
+            "| FOUND:",
+            count
+        )
+
+    for token in results[:10]:
+
+        print(
+            "AGGREGATED TOKEN:",
+            token["tokenAddress"],
+            "| SOURCES:",
+            token["discovery_sources"]
+        )
+
+    return results
