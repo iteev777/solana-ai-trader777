@@ -1,6 +1,7 @@
+# TROJAN V2 - STRATEGY ENGINE
+
 from ai_analyzer import analyze_token
 from risk_manager import check_trade_risk
-
 
 TRADE_SIZE = 5.00
 
@@ -19,7 +20,6 @@ def evaluate_trade(
     daily_loss,
     strategy="main"
 ):
-
     if strategy not in VALID_STRATEGIES:
         return {
             "action": "REJECT",
@@ -36,33 +36,19 @@ def evaluate_trade(
 
     try:
         analysis = analyze_token(token)
-
-        if not isinstance(analysis, dict):
-            raise ValueError("Invalid AI analysis")
-
         score = float(analysis.get("score", 0))
-
     except Exception as error:
-        print("STRATEGY ANALYSIS ERROR:", repr(error))
-
+        print("TROJAN V2 STRATEGY ERROR:", repr(error))
         return {
             "action": "REJECT",
             "score": 0,
             "reason": "AI analysis failed"
         }
 
-    if not 0 <= score <= 100:
-        return {
-            "action": "REJECT",
-            "score": 0,
-            "reason": "Invalid AI score"
-        }
-
     if analysis.get("decision") != "APPROVE":
         return {
             "action": "WAIT",
             "score": score,
-            "strategy": strategy,
             "reason": "AI did not approve token"
         }
 
@@ -70,11 +56,10 @@ def evaluate_trade(
         return {
             "action": "WAIT",
             "score": score,
-            "strategy": strategy,
             "reason": "Score below strategy threshold"
         }
 
-    allowed, risk_reason = check_trade_risk(
+    risk_result = check_trade_risk(
         balance,
         open_positions,
         daily_loss,
@@ -82,12 +67,17 @@ def evaluate_trade(
         strategy=strategy
     )
 
+    if isinstance(risk_result, tuple):
+        allowed, reason = risk_result
+    else:
+        allowed = bool(risk_result)
+        reason = "Risk check rejected trade"
+
     if not allowed:
         return {
             "action": "REJECT",
             "score": score,
-            "strategy": strategy,
-            "reason": risk_reason
+            "reason": reason
         }
 
     return {
@@ -100,5 +90,4 @@ def evaluate_trade(
 
 
 if __name__ == "__main__":
-    print("TROJAN STRATEGY ENGINE V2 READY")
-    print("MODE: SIGNALS ONLY")
+    print("TROJAN V2 STRATEGY ENGINE READY")
