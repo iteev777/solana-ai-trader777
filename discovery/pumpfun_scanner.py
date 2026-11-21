@@ -3,7 +3,6 @@ import time
 import requests
 
 API_KEY = os.getenv("BIRDEYE_API_KEY")
-
 API_URL = "https://public-api.birdeye.so/defi/v2/tokens/new_listing"
 
 seen_tokens = set()
@@ -14,7 +13,7 @@ def scan_pumpfun():
     found_tokens = []
 
     if not API_KEY:
-        print("PUMPFUN SKIPPED: BIRDEYE API KEY MISSING")
+        print("PUMPFUN SKIPPED: API KEY MISSING")
         return found_tokens
 
     try:
@@ -22,7 +21,7 @@ def scan_pumpfun():
             API_URL,
             params={
                 "time_to": int(time.time()),
-                "limit": 50,
+                "limit": 20,
                 "meme_platform_enabled": "true"
             },
             headers={
@@ -35,12 +34,10 @@ def scan_pumpfun():
 
         response.raise_for_status()
 
-        result = response.json()
-        data = result.get("data", {})
+        data = response.json().get("data", {})
         tokens = data.get("items", [])
 
         for token in tokens:
-
             address = token.get("address")
 
             if not address or address in seen_tokens:
