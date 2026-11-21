@@ -1,6 +1,5 @@
 import time
 import queue
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import paper_trading as paper
@@ -56,7 +55,7 @@ last_statistics_time = 0
 
 last_prices = {}
 
-shutdown_event = threading.Event()
+shutdown_event = False
 
 
 # ==========================================
@@ -333,7 +332,6 @@ def process_completed_tasks():
 
         status = result.get("status")
 
-        # Token needs more market data.
         if status == "waiting":
 
             seen_tokens.discard(address)
@@ -350,7 +348,6 @@ def process_completed_tasks():
 
             continue
 
-        # Rejected tokens are not retried endlessly.
         if status != "approved":
 
             print(
@@ -364,8 +361,6 @@ def process_completed_tasks():
 
             continue
 
-        # Save analysis only.
-        # BUY and SELL history is saved atomically by database.py.
         save_analysis(
             address,
             result["score"],
@@ -373,7 +368,6 @@ def process_completed_tasks():
             mode="paper"
         )
 
-        # Centralized risk check and paper execution.
         trade_result = manager.process_approved_signal(
             address,
             result["price"],
@@ -559,8 +553,6 @@ def record_sale(address, result):
     print(
         "PAPER SALE:",
         address,
-        "| REASON:",
-        result.get("result"),
         "| P/L:",
         result["profit_loss"],
         "| BALANCE:",
@@ -580,9 +572,23 @@ def monitor_positions():
 
     for address, position in positions:
 
-        price = get_token_price(address)
+        pair = get_market_data(address)
 
-        if not price:
+        if not pair:
+            continue
+
+        try:
+
+            price = float(pair.get("priceUsd") or 0)
+
+            liquidity = float(
+                pair.get("liquidity", {}).get("usd", 0) or 0
+            )
+
+            if price <= 0:
+                continue
+
+        except (ValueError, TypeError, AttributeError):
             continue
 
         last_prices[address] = price
@@ -590,12 +596,17 @@ def monitor_positions():
         # Liquidity protection.
         try:
 
-            liquidity_ok = check_liquidity(
+            liquidity_status = check_liquidity(
                 address,
-                price
+                liquidity
             )
 
-            if liquidity_ok is False:
+            if liquidity_status == "COLLAPSE":
+
+                print(
+                    "EMERGENCY LIQUIDITY EXIT:",
+                    address
+                )
 
                 result = paper.emergency_sell(
                     address,
@@ -606,6 +617,12 @@ def monitor_positions():
                     record_sale(address, result)
 
                 continue
+
+            if liquidity_status == "UNKNOWN":
+                print(
+                    "LIQUIDITY CHECK UNKNOWN:",
+                    address
+                )
 
         except Exception as error:
 
@@ -696,7 +713,7 @@ def run_bot():
     print("SNIPER THREAD STARTED")
     print("TROJAN V2 STARTED")
 
-    while not shutdown_event.is_set():
+    while True:
 
         loop_start = time.time()
 
@@ -730,28 +747,9 @@ def run_bot():
 
         elapsed = time.time() - loop_start
 
-        sleep_time = max(
-            1,
-            POSITION_CHECK_INTERVAL - elapsed
+        time.sleep(
+            max(1, POSITION_CHECK_INTERVAL - elapsed)
         )
-
-        shutdown_event.wait(sleep_time)
-
-
-# ==========================================
-# SHUTDOWN
-# ==========================================
-
-def shutdown():
-
-    print("TROJAN V2 SHUTTING DOWN")
-
-    shutdown_event.set()
-
-    executor.shutdown(
-        wait=False,
-        cancel_futures=True
-    )
 
 
 if __name__ == "__main__":
@@ -760,4 +758,10 @@ if __name__ == "__main__":
         run_bot()
 
     except KeyboardInterrupt:
-        shutdown()
+
+        print("TROJAN V2 SHUTTING DOWN")
+
+        executor.shutdown(
+            wait=False,
+            cancel_futures=True
+        )
