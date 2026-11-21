@@ -27,11 +27,24 @@ VALID_STRATEGIES = ("main", "sniper")
 # ==========================================
 
 def valid_number(value):
-    try:
-        number = float(value)
-        return math.isfinite(number)
-    except (ValueError, TypeError):
+
+    if isinstance(value, bool):
         return False
+
+    try:
+        return math.isfinite(float(value))
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
+def valid_count(value):
+
+    if not valid_number(value):
+        return False
+
+    number = float(value)
+
+    return number >= 0 and number.is_integer()
 
 
 # ==========================================
@@ -50,86 +63,7 @@ def get_position_limit(strategy):
 
 
 # ==========================================
-# TRADE APPROVAL
-# ==========================================
-
-def can_open_trade(
-    balance,
-    open_positions,
-    daily_loss,
-    trade_size,
-    strategy="main",
-    main_positions=None,
-    sniper_positions=None
-):
-
-    if not all(valid_number(value) for value in (
-        balance,
-        open_positions,
-        daily_loss,
-        trade_size
-    )):
-        return False
-
-    balance = float(balance)
-    open_positions = int(open_positions)
-    daily_loss = float(daily_loss)
-    trade_size = float(trade_size)
-
-    if balance < 0:
-        return False
-
-    if open_positions < 0:
-        return False
-
-    if daily_loss < 0:
-        return False
-
-    if strategy not in VALID_STRATEGIES:
-        return False
-
-    if trade_size < MIN_TRADE_SIZE:
-        return False
-
-    if trade_size > MAX_TRADE_SIZE:
-        return False
-
-    if balance < trade_size:
-        return False
-
-    if daily_loss >= MAX_DAILY_LOSS:
-        return False
-
-    if open_positions >= MAX_TOTAL_POSITIONS:
-        return False
-
-    position_limit = get_position_limit(strategy)
-
-    if strategy == "main" and main_positions is not None:
-        if not valid_number(main_positions):
-            return False
-
-        if int(main_positions) >= position_limit:
-            return False
-
-    elif strategy == "sniper" and sniper_positions is not None:
-        if not valid_number(sniper_positions):
-            return False
-
-        if int(sniper_positions) >= position_limit:
-            return False
-
-    elif main_positions is None and sniper_positions is None:
-        # Legacy compatibility:
-        # open_positions is interpreted as this strategy's count.
-        if open_positions >= position_limit:
-            return False
-
-    return True
-
-
-# ==========================================
-# APPROVAL WITH REASON
+# TRADE APPROVAL WITH REASON
 # ==========================================
 
 def check_trade_risk(
@@ -147,39 +81,101 @@ def check_trade_risk(
 
     if not all(valid_number(value) for value in (
         balance,
-        open_positions,
         daily_loss,
         trade_size
     )):
         return False, "INVALID NUMERIC VALUE"
 
-    if float(balance) < 0:
+    if not valid_count(open_positions):
+        return False, "INVALID OPEN POSITION COUNT"
+
+    if main_positions is not None:
+        if not valid_count(main_positions):
+            return False, "INVALID MAIN POSITION COUNT"
+
+    if sniper_positions is not None:
+        if not valid_count(sniper_positions):
+            return False, "INVALID SNIPER POSITION COUNT"
+
+    balance = float(balance)
+    daily_loss = float(daily_loss)
+    trade_size = float(trade_size)
+    open_positions = int(open_positions)
+
+    if balance < 0:
         return False, "INVALID BALANCE"
 
-    if float(trade_size) < MIN_TRADE_SIZE:
+    if daily_loss < 0:
+        return False, "INVALID DAILY LOSS"
+
+    if trade_size < MIN_TRADE_SIZE:
         return False, "TRADE SIZE BELOW MINIMUM"
 
-    if float(trade_size) > MAX_TRADE_SIZE:
+    if trade_size > MAX_TRADE_SIZE:
         return False, "TRADE SIZE ABOVE MAXIMUM"
 
-    if float(balance) < float(trade_size):
+    if balance < trade_size:
         return False, "INSUFFICIENT BALANCE"
 
-    if float(daily_loss) >= MAX_DAILY_LOSS:
+    if daily_loss >= MAX_DAILY_LOSS:
         return False, "DAILY LOSS LIMIT REACHED"
 
-    if int(open_positions) >= MAX_TOTAL_POSITIONS:
+    if open_positions >= MAX_TOTAL_POSITIONS:
         return False, "TOTAL POSITION LIMIT REACHED"
 
-    if strategy == "main" and main_positions is not None:
-        if int(main_positions) >= MAX_MAIN_POSITIONS:
+    # Legacy compatibility:
+    # If neither strategy count is supplied,
+    # open_positions is treated as this strategy's count.
+
+    if main_positions is None and sniper_positions is None:
+        strategy_positions = open_positions
+
+    elif strategy == "main":
+        if main_positions is None:
+            return False, "MAIN POSITION COUNT MISSING"
+
+        strategy_positions = int(main_positions)
+
+    else:
+        if sniper_positions is None:
+            return False, "SNIPER POSITION COUNT MISSING"
+
+        strategy_positions = int(sniper_positions)
+
+    if strategy_positions >= get_position_limit(strategy):
+        if strategy == "main":
             return False, "MAIN POSITION LIMIT REACHED"
 
-    if strategy == "sniper" and sniper_positions is not None:
-        if int(sniper_positions) >= MAX_SNIPER_POSITIONS:
-            return False, "SNIPER POSITION LIMIT REACHED"
+        return False, "SNIPER POSITION LIMIT REACHED"
 
     return True, "TRADE APPROVED"
+
+
+# ==========================================
+# TRADE APPROVAL - BOOLEAN
+# ==========================================
+
+def can_open_trade(
+    balance,
+    open_positions,
+    daily_loss,
+    trade_size,
+    strategy="main",
+    main_positions=None,
+    sniper_positions=None
+):
+
+    approved, _ = check_trade_risk(
+        balance=balance,
+        open_positions=open_positions,
+        daily_loss=daily_loss,
+        trade_size=trade_size,
+        strategy=strategy,
+        main_positions=main_positions,
+        sniper_positions=sniper_positions
+    )
+
+    return approved
 
 
 # ==========================================
@@ -271,7 +267,9 @@ if __name__ == "__main__":
         open_positions=0,
         daily_loss=0,
         trade_size=5,
-        strategy="main"
+        strategy="main",
+        main_positions=0,
+        sniper_positions=0
     )
 
     print("TEST RESULT:", approved)
