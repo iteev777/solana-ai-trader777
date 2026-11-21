@@ -1,14 +1,20 @@
 import time
 import requests
 
+import paper_trading as paper
+
 from scanner import scan_tokens
 from ai_analyzer import analyze_token
-from database import initialize_database, save_analysis
+from database import initialize_database, save_analysis, save_trade
+from risk_manager import can_open_trade
 
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 BALANCE = 100.00
 SCAN_INTERVAL = 60
+MINIMUM_SCORE = 70
+
+daily_loss = 0.00
 
 
 def get_market_data(token_address):
@@ -44,25 +50,57 @@ def get_market_data(token_address):
 
 
 def run_bot():
+    global daily_loss
 
     initialize_database()
 
     print("================================")
-    print("SOLANA AI TRADER 1.0")
-    print("MODE: ANALYSIS ONLY")
-    print("BALANCE:", BALANCE, "USD")
+    print("SOLANA PAPER TRADING BOT 1.0")
+    print("MODE: PAPER TRADING ONLY")
+    print("STARTING BALANCE:", BALANCE, "USD")
+    print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
     print("================================")
 
     while True:
-
         try:
+            # 1. Seurataan avoimia positioita
+            for address in list(paper.positions.keys()):
+
+                market = get_market_data(address)
+
+                if not market:
+                    continue
+
+                price = float(market.get("priceUsd") or 0)
+
+                if price <= 0:
+                    continue
+
+                result = paper.update_position(address, price)
+
+                if isinstance(result, dict):
+                    pnl = result["profit_loss"]
+                    daily_loss += max(0, -pnl)
+
+                    save_trade(
+                        address,
+                        "SELL",
+                        price,
+                        paper.TRADE_SIZE + pnl,
+                        pnl
+                    )
+
+                    print("PAPER SELL:", address)
+                    print("RESULT:", result)
+
+            # 2. Etsitään uusia tokeneita
             tokens = scan_tokens()
 
             for token in tokens[:10]:
 
                 address = token.get("tokenAddress")
 
-                if not address:
+                if not address or address in paper.positions:
                     continue
 
                 market = get_market_data(address)
@@ -70,23 +108,56 @@ def run_bot():
                 if not market:
                     continue
 
-                analysis = analyze_token(market)
+                price = float(market.get("priceUsd") or 0)
 
+                if price <= 0:
+                    continue
+
+                analysis = analyze_token(market)
                 score = analysis["score"]
-                decision = analysis["decision"]
 
                 save_analysis(
                     address,
                     score,
-                    decision
+                    analysis["decision"]
                 )
 
                 print(
                     "TOKEN:", address,
                     "| SCORE:", score,
-                    "| DECISION:", decision
+                    "| DECISION:", analysis["decision"]
                 )
 
+                # 3. Ostetaan vain riittävän korkean pistemäärän tokenit
+                if score < MINIMUM_SCORE:
+                    continue
+
+                allowed = can_open_trade(
+                    paper.balance,
+                    len(paper.positions),
+                    daily_loss,
+                    paper.TRADE_SIZE
+                )
+
+                if not allowed:
+                    continue
+
+                result = paper.open_position(address, price)
+
+                if result.startswith("PAPER BUY"):
+                    save_trade(
+                        address,
+                        "BUY",
+                        price,
+                        paper.TRADE_SIZE
+                    )
+
+                    print("NEW PAPER POSITION:", address)
+                    print("BALANCE:", round(paper.balance, 2), "USD")
+
+            print("Open positions:", len(paper.positions))
+            print("Paper balance:", round(paper.balance, 2), "USD")
+            print("Daily losses:", round(daily_loss, 2), "USD")
             print("Scan completed. Waiting...")
 
         except Exception as error:
