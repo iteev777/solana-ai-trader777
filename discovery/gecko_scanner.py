@@ -1,5 +1,7 @@
 import requests
 
+from api_client import get_json
+
 API_URL = (
     "https://api.geckoterminal.com/api/v2/"
     "networks/solana/new_pools"
@@ -13,17 +15,20 @@ def scan_new_pools():
     found_tokens = []
 
     try:
-        response = requests.get(
+        data = get_json(
             API_URL,
             headers={"Accept": "application/json"},
-            timeout=15
+            timeout=15,
+            cache_ttl=60,
+            max_retries=1
         )
 
-        response.raise_for_status()
-
-        pools = response.json().get("data", [])
+        pools = data.get("data", [])
 
         for pool in pools:
+
+            if not isinstance(pool, dict):
+                continue
 
             attributes = pool.get("attributes", {})
             relationships = pool.get("relationships", {})
@@ -40,7 +45,7 @@ def scan_new_pools():
             token_address = token_id.split("_")[-1]
             pool_address = attributes.get("address")
 
-            if not pool_address:
+            if not pool_address or not token_address:
                 continue
 
             if pool_address in seen_pools:
@@ -56,7 +61,7 @@ def scan_new_pools():
 
         print("GECKO NEW TOKENS:", len(found_tokens))
 
-    except Exception as error:
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as error:
         print("GECKO SCANNER ERROR:", repr(error))
 
     return found_tokens
