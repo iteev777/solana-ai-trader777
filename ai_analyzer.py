@@ -7,11 +7,9 @@ import math
 # ==========================================
 
 MIN_LIQUIDITY = 10000
-
 MIN_SCORE = 50
 
 MAX_HOURLY_GAIN = 50
-
 MAX_VOLUME_LIQUIDITY_RATIO = 10
 
 MIN_TRANSACTIONS = 5
@@ -24,7 +22,6 @@ MIN_TRANSACTIONS = 5
 def get_number(value):
 
     try:
-
         number = float(value)
 
         if not math.isfinite(number):
@@ -60,6 +57,27 @@ def reject(reason):
     }
 
 
+def get_discovery_sources(token):
+
+    sources = token.get("discovery_sources", [])
+
+    if not isinstance(sources, list):
+        return []
+
+    valid_sources = set()
+
+    for source in sources:
+
+        if isinstance(source, str):
+
+            source = source.strip().lower()
+
+            if source:
+                valid_sources.add(source)
+
+    return sorted(valid_sources)
+
+
 # ==========================================
 # MAIN ANALYSIS
 # ==========================================
@@ -72,51 +90,38 @@ def analyze_token(token):
     score = 0
     reasons = []
 
+    # ======================================
     # MARKET DATA
+    # ======================================
 
     liquidity = get_nested_number(
-        token,
-        "liquidity",
-        "usd"
+        token, "liquidity", "usd"
     )
 
     volume = get_nested_number(
-        token,
-        "volume",
-        "h24"
+        token, "volume", "h24"
     )
 
     price_h1 = get_nested_number(
-        token,
-        "priceChange",
-        "h1"
+        token, "priceChange", "h1"
     )
 
     price_h24 = get_nested_number(
-        token,
-        "priceChange",
-        "h24"
+        token, "priceChange", "h24"
     )
 
     buys = get_nested_number(
-        token,
-        "txns",
-        "h1",
-        "buys"
+        token, "txns", "h1", "buys"
     )
 
     sells = get_nested_number(
-        token,
-        "txns",
-        "h1",
-        "sells"
+        token, "txns", "h1", "sells"
     )
 
-    # Required market data must exist.
     if liquidity is None or volume is None:
         return reject("Missing liquidity or volume data")
 
-    if liquidity < 0 or volume < 0:
+    if liquidity <= 0 or volume < 0:
         return reject("Invalid market data")
 
     if liquidity < MIN_LIQUIDITY:
@@ -128,48 +133,59 @@ def analyze_token(token):
     if price_h24 is None:
         return reject("Missing daily price data")
 
-    # TRANSACTION DATA
+    # ======================================
+    # TRANSACTION VALIDATION
+    # ======================================
 
     if buys is None or sells is None:
-        buys = 0
-        sells = 0
+        return reject("Missing transaction data")
 
     if buys < 0 or sells < 0:
         return reject("Invalid transaction data")
 
     total_transactions = buys + sells
 
+    if total_transactions < MIN_TRANSACTIONS:
+        return reject("Insufficient hourly transaction activity")
+
+    # ======================================
     # DISCOVERY SOURCES
-
-    sources = token.get("discovery_sources", [])
-
-    if not isinstance(sources, list):
-        sources = []
-
-    source_count = len(set(sources))
-
-    # ======================================
-    # SAFETY CHECKS
     # ======================================
 
-    pair_created = get_number(
-        token.get("pairCreatedAt")
-    )
+    sources = get_discovery_sources(token)
+    source_count = len(sources)
 
-    if pair_created is not None and pair_created > 0:
+    # ======================================
+    # TOKEN AGE VALIDATION
+    # ======================================
+
+    if "pairCreatedAt" in token:
+
+        pair_created = get_number(
+            token.get("pairCreatedAt")
+        )
+
+        if pair_created is None or pair_created <= 0:
+            return reject("Invalid token creation timestamp")
+
+        current_time_ms = time.time() * 1000
+
+        if pair_created > current_time_ms + 300000:
+            return reject("Token creation timestamp is in the future")
 
         age_minutes = (
-            time.time() * 1000 - pair_created
+            current_time_ms - pair_created
         ) / 60000
 
         if age_minutes < 10:
             return reject("Trading pair too new")
 
+    # ======================================
+    # SAFETY CHECKS
+    # ======================================
+
     if price_h1 > MAX_HOURLY_GAIN:
         return reject("Extreme hourly price increase")
-
-    if liquidity <= 0:
-        return reject("Invalid liquidity")
 
     volume_ratio = volume / liquidity
 
@@ -232,65 +248,54 @@ def analyze_token(token):
         score += 5
         reasons.append("Active trading")
 
-    elif total_transactions >= MIN_TRANSACTIONS:
+    else:
 
         score += 3
         reasons.append("Some trading activity")
 
-    else:
+    buy_ratio = buys / total_transactions
 
-        reasons.append("Low transaction activity")
+    if buy_ratio >= 0.70:
+        score += 15
+        reasons.append("Very strong buying pressure")
 
-    if total_transactions > 0:
+    elif buy_ratio >= 0.60:
+        score += 12
+        reasons.append("Strong buying pressure")
 
-        buy_ratio = buys / total_transactions
+    elif buy_ratio >= 0.52:
+        score += 8
+        reasons.append("Positive buying pressure")
 
-        if buy_ratio >= 0.70:
-            score += 15
-            reasons.append("Very strong buying pressure")
+    elif buy_ratio <= 0.35:
+        score -= 10
+        reasons.append("Strong selling pressure")
 
-        elif buy_ratio >= 0.60:
-            score += 12
-            reasons.append("Strong buying pressure")
-
-        elif buy_ratio >= 0.52:
-            score += 8
-            reasons.append("Positive buying pressure")
-
-        elif buy_ratio <= 0.35:
-            score -= 10
-            reasons.append("Strong selling pressure")
-
-        elif buy_ratio < 0.45:
-            score -= 5
-            reasons.append("Selling pressure detected")
+    elif buy_ratio < 0.45:
+        score -= 5
+        reasons.append("Selling pressure detected")
 
     # ======================================
     # SHORT-TERM MOMENTUM: MAX 15
     # ======================================
 
     if 0 < price_h1 <= 10:
-
         score += 15
         reasons.append("Healthy positive momentum")
 
     elif 10 < price_h1 <= 20:
-
         score += 8
         reasons.append("Strong short-term movement")
 
     elif price_h1 < -10:
-
         score -= 10
         reasons.append("Significant negative momentum")
 
     elif price_h1 < 0:
-
         score -= 5
         reasons.append("Negative short-term momentum")
 
     elif price_h1 == 0:
-
         reasons.append("No hourly price movement")
 
     # ======================================
@@ -298,22 +303,18 @@ def analyze_token(token):
     # ======================================
 
     if 0 < price_h24 <= 30:
-
         score += 10
         reasons.append("Positive daily momentum")
 
     elif price_h24 > 30:
-
         score += 5
         reasons.append("Strong daily price increase")
 
     elif price_h24 < -20:
-
         score -= 10
         reasons.append("Heavy daily price decline")
 
     elif price_h24 < 0:
-
         score -= 5
         reasons.append("Negative daily momentum")
 
@@ -322,22 +323,18 @@ def analyze_token(token):
     # ======================================
 
     if source_count >= 4:
-
         score += 10
         reasons.append("Detected by multiple discovery sources")
 
     elif source_count == 3:
-
         score += 7
         reasons.append("Detected by three discovery sources")
 
     elif source_count == 2:
-
         score += 4
         reasons.append("Detected by two discovery sources")
 
     else:
-
         reasons.append("Limited discovery confirmation")
 
     # ======================================
@@ -382,5 +379,6 @@ if __name__ == "__main__":
     print("MINIMUM LIQUIDITY:", MIN_LIQUIDITY)
     print("MINIMUM SCORE:", MIN_SCORE)
     print("MAX HOURLY GAIN:", MAX_HOURLY_GAIN)
+    print("MINIMUM TRANSACTIONS:", MIN_TRANSACTIONS)
 
     print("AI ANALYZER READY")
