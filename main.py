@@ -4,6 +4,7 @@ import paper_trading as paper
 
 from scanner import scan_tokens
 from ai_analyzer import analyze_token
+from rugcheck import get_rugcheck_report
 from database import (
     initialize_database,
     save_analysis,
@@ -17,6 +18,7 @@ API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
 SCAN_INTERVAL = 30
 MINIMUM_SCORE = 70
+MAX_RUGCHECK_SCORE = 40
 
 
 daily_loss = 0.0
@@ -92,25 +94,6 @@ def monitor_positions():
         print("CHANGE:", round(change, 2), "%")
         print("PROFIT / LOSS:", round(profit, 3), "USD")
 
-        take_profit_distance = 30 - change
-        stop_loss_distance = change + 20
-
-        print(
-            "TAKE PROFIT DISTANCE:",
-            round(take_profit_distance, 2)
-        )
-
-        print(
-            "STOP LOSS DISTANCE:",
-            round(stop_loss_distance, 2)
-        )
-
-        if 0 < take_profit_distance <= 5:
-            print("WARNING: APPROACHING TAKE PROFIT")
-
-        if 0 < stop_loss_distance <= 5:
-            print("WARNING: APPROACHING STOP LOSS")
-
         result = paper.update_position(address, price)
 
         if isinstance(result, dict):
@@ -157,8 +140,6 @@ def scan_and_trade():
         if not market:
             continue
 
-        # Pass discovery source information to analyzer
-
         market["discovery_sources"] = token.get(
             "discovery_sources", []
         )
@@ -182,6 +163,45 @@ def scan_and_trade():
 
         if score < MINIMUM_SCORE:
             continue
+
+        # RUGCHECK SECURITY CHECK
+
+        print("RUGCHECK CHECK:", address)
+
+        report = get_rugcheck_report(address)
+
+        if not isinstance(report, dict):
+            print("TRADE BLOCKED: RugCheck report unavailable")
+            continue
+
+        rug_score = report.get("score_normalised")
+
+        if rug_score is None:
+            print("TRADE BLOCKED: RugCheck score missing")
+            continue
+
+        risks = report.get("risks", [])
+
+        critical_risk = any(
+            str(risk.get("level", "")).lower()
+            in ["danger", "critical"]
+            for risk in risks
+            if isinstance(risk, dict)
+        )
+
+        print("RUGCHECK SCORE:", rug_score)
+
+        if rug_score >= MAX_RUGCHECK_SCORE:
+            print("TRADE BLOCKED: High RugCheck risk")
+            continue
+
+        if critical_risk:
+            print("TRADE BLOCKED: Critical security warning")
+            continue
+
+        print("RUGCHECK PASSED")
+
+        # PAPER TRADING RISK CHECK
 
         allowed = can_open_trade(
             paper.balance,
@@ -216,6 +236,8 @@ def scan_and_trade():
             print("INVESTMENT:", paper.TRADE_SIZE, "USD")
             print("REMAINING BALANCE:", paper.balance, "USD")
             print("================================")
+
+        time.sleep(0.5)
 
 
 def print_statistics():
@@ -271,7 +293,7 @@ def run_bot():
     initialize_database()
 
     print("================================")
-    print("SOLANA MEMECOIN BOT 4.0")
+    print("SOLANA MEMECOIN BOT 5.0")
     print("MODE: PAPER TRADING ONLY")
     print("STARTING BALANCE:", paper.STARTING_BALANCE, "USD")
     print("TRADE SIZE:", paper.TRADE_SIZE, "USD")
@@ -279,6 +301,7 @@ def run_bot():
     print("STOP LOSS:", paper.STOP_LOSS * 100, "%")
     print("SCAN INTERVAL:", SCAN_INTERVAL, "SECONDS")
     print("SCANNER: MULTI-SOURCE")
+    print("SECURITY: RUGCHECK")
     print("================================")
 
     while True:
