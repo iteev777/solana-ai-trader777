@@ -1,10 +1,11 @@
+import math
 import database
 import paper_trading as paper
 import risk_manager as risk
 
 
 # ==========================================
-# TROJAN V2 TRADING MANAGER
+# TROJAN V2 - TRADING MANAGER
 # ==========================================
 
 LIVE_TRADING_ENABLED = False
@@ -22,10 +23,35 @@ TRADING_MODES = {
 
 
 # ==========================================
+# VALIDATION
+# ==========================================
+
+def valid_price(price):
+
+    if isinstance(price, bool):
+        return False
+
+    try:
+        value = float(price)
+        return math.isfinite(value) and value > 0
+    except (ValueError, TypeError, OverflowError):
+        return False
+
+
+def valid_token_address(token_address):
+
+    return (
+        isinstance(token_address, str)
+        and bool(token_address.strip())
+    )
+
+
+# ==========================================
 # MODES
 # ==========================================
 
 def get_available_modes():
+
     return {
         mode: settings.copy()
         for mode, settings in TRADING_MODES.items()
@@ -41,6 +67,7 @@ def is_mode_enabled(mode):
 
 
 def is_live_execution_enabled():
+
     return LIVE_TRADING_ENABLED
 
 
@@ -63,14 +90,9 @@ def get_engine(mode):
 
 def get_balance(mode):
 
-    if mode == "paper":
-        return paper.get_account_summary()["balance"]
+    summary = get_account_summary(mode)
 
-    if mode == "live":
-        summary = get_account_summary("live")
-        return summary["balance"]
-
-    raise ValueError("Unknown trading mode: " + str(mode))
+    return summary["balance"]
 
 
 def get_positions(mode):
@@ -94,7 +116,8 @@ def position_count(mode, strategy=None):
     return sum(
         1
         for position in positions.values()
-        if position.get("strategy", "main") == strategy
+        if isinstance(position, dict)
+        and position.get("strategy", "main") == strategy
     )
 
 
@@ -133,24 +156,27 @@ def check_trade_approval(
     strategy="main"
 ):
 
-    if not token_address:
+    if not valid_token_address(token_address):
         return False, "INVALID TOKEN ADDRESS"
 
     if strategy not in ("main", "sniper"):
         return False, "INVALID STRATEGY"
 
     account = paper.get_account_summary()
-
     positions = paper.get_positions()
 
     main_count = sum(
-        1 for p in positions.values()
-        if p.get("strategy", "main") == "main"
+        1
+        for position in positions.values()
+        if isinstance(position, dict)
+        and position.get("strategy", "main") == "main"
     )
 
     sniper_count = sum(
-        1 for p in positions.values()
-        if p.get("strategy", "main") == "sniper"
+        1
+        for position in positions.values()
+        if isinstance(position, dict)
+        and position.get("strategy", "main") == "sniper"
     )
 
     return risk.check_trade_risk(
@@ -178,6 +204,30 @@ def process_approved_signal(
     if trade_size is None:
         trade_size = paper.TRADE_SIZE
 
+    if not valid_token_address(token_address):
+        return {
+            "paper": "INVALID TOKEN ADDRESS",
+            "live": "LIVE EXECUTION LOCKED"
+        }
+
+    if not valid_price(price):
+        return {
+            "paper": "INVALID PRICE",
+            "live": "LIVE EXECUTION LOCKED"
+        }
+
+    if not risk.valid_number(trade_size):
+        return {
+            "paper": "INVALID TRADE SIZE",
+            "live": "LIVE EXECUTION LOCKED"
+        }
+
+    if float(trade_size) != paper.TRADE_SIZE:
+        return {
+            "paper": "TRADE SIZE DOES NOT MATCH PAPER ENGINE",
+            "live": "LIVE EXECUTION LOCKED"
+        }
+
     approved, reason = check_trade_approval(
         token_address,
         trade_size,
@@ -202,19 +252,11 @@ def process_approved_signal(
 
     if is_mode_enabled("paper"):
 
-        if float(trade_size) != paper.TRADE_SIZE:
-
-            results["paper"] = (
-                "TRADE SIZE DOES NOT MATCH PAPER ENGINE"
-            )
-
-        else:
-
-            results["paper"] = paper.open_position(
-                token_address,
-                price,
-                strategy=strategy
-            )
+        results["paper"] = paper.open_position(
+            token_address,
+            float(price),
+            strategy=strategy
+        )
 
     # Shadow signals never execute real trades.
     if is_mode_enabled("live"):
@@ -252,6 +294,12 @@ def open_position(
     if mode != "paper":
         return "UNKNOWN TRADING MODE"
 
+    if not valid_token_address(token_address):
+        return "INVALID TOKEN ADDRESS"
+
+    if not valid_price(price):
+        return "INVALID PRICE"
+
     approved, reason = check_trade_approval(
         token_address,
         paper.TRADE_SIZE,
@@ -263,7 +311,7 @@ def open_position(
 
     return paper.open_position(
         token_address,
-        price,
+        float(price),
         strategy=strategy
     )
 
@@ -281,9 +329,15 @@ def close_position(
     if mode != "paper":
         return "UNKNOWN TRADING MODE"
 
+    if not valid_token_address(token_address):
+        return "INVALID TOKEN ADDRESS"
+
+    if not valid_price(price):
+        return "INVALID PRICE"
+
     return paper.close_position(
         token_address,
-        price,
+        float(price),
         reason
     )
 
@@ -300,9 +354,15 @@ def update_position(
     if mode != "paper":
         return "UNKNOWN TRADING MODE"
 
+    if not valid_token_address(token_address):
+        return "INVALID TOKEN ADDRESS"
+
+    if not valid_price(price):
+        return "INVALID PRICE"
+
     return paper.update_position(
         token_address,
-        price
+        float(price)
     )
 
 
