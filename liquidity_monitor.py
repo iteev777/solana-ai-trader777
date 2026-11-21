@@ -1,4 +1,3 @@
-
 LIQUIDITY_DROP_LIMIT = 20.0
 
 previous_liquidity = {}
@@ -6,16 +5,26 @@ previous_liquidity = {}
 
 def check_liquidity(token_address, current_liquidity):
 
-    if current_liquidity <= 0:
-        print("LIQUIDITY WARNING: No liquidity data")
-        return "UNKNOWN"
-
     previous = previous_liquidity.get(token_address)
 
-    previous_liquidity[token_address] = current_liquidity
+    if current_liquidity is None:
+        print("LIQUIDITY UNKNOWN:", token_address)
+        return "UNKNOWN"
 
-    if previous is None or previous <= 0:
+    if current_liquidity < 0:
+        print("INVALID LIQUIDITY:", token_address)
+        return "UNKNOWN"
+
+    if previous is None:
+        previous_liquidity[token_address] = current_liquidity
+
+        if current_liquidity == 0:
+            return "COLLAPSE"
+
         return "NORMAL"
+
+    if previous <= 0:
+        return "COLLAPSE"
 
     drop_percent = (
         (previous - current_liquidity) / previous
@@ -26,7 +35,9 @@ def check_liquidity(token_address, current_liquidity):
     print("CURRENT:", round(current_liquidity, 2), "USD")
     print("DROP:", round(drop_percent, 2), "%")
 
-    if drop_percent >= LIQUIDITY_DROP_LIMIT:
+    previous_liquidity[token_address] = current_liquidity
+
+    if current_liquidity == 0 or drop_percent >= LIQUIDITY_DROP_LIMIT:
 
         print("CRITICAL: LIQUIDITY COLLAPSE DETECTED")
 
@@ -37,5 +48,5 @@ def check_liquidity(token_address, current_liquidity):
 
 if __name__ == "__main__":
 
-    print("LIQUIDITY MONITOR READY")
+    print("LIQUIDITY MONITOR 2.0 READY")
     print("DROP LIMIT:", LIQUIDITY_DROP_LIMIT, "%")
