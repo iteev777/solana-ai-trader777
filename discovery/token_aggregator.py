@@ -1,4 +1,5 @@
 from discovery.gecko_scanner import scan_new_pools
+from discovery.pumpfun_scanner import scan_pumpfun
 
 
 seen_tokens = set()
@@ -9,7 +10,8 @@ def collect_tokens():
     all_tokens = []
 
     scanners = [
-        scan_new_pools
+        scan_new_pools,
+        scan_pumpfun
     ]
 
     for scanner in scanners:
