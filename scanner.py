@@ -1,24 +1,53 @@
 import requests
 
-API_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
+SOURCES = {
+    "LATEST PROFILES":
+        "https://api.dexscreener.com/token-profiles/latest/v1",
+
+    "LATEST BOOSTS":
+        "https://api.dexscreener.com/token-boosts/latest/v1",
+
+    "TOP BOOSTS":
+        "https://api.dexscreener.com/token-boosts/top/v1",
+
+    "COMMUNITY TAKEOVERS":
+        "https://api.dexscreener.com/community-takeovers/latest/v1"
+}
+
+
+def fetch_source(name, url):
+
+    try:
+        response = requests.get(
+            url,
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not isinstance(data, list):
+            print("INVALID SOURCE DATA:", name)
+            return []
+
+        print(name, "FOUND:", len(data))
+
+        return data
+
+    except (requests.RequestException, ValueError) as error:
+
+        print("SOURCE ERROR:", name, error)
+        return []
 
 
 def scan_tokens():
-    try:
-        response = requests.get(
-            API_URL,
-            timeout=15
-        )
-        response.raise_for_status()
 
-        tokens = response.json()
+    discovered = {}
 
-        if not isinstance(tokens, list):
-            print("INVALID SCANNER RESPONSE")
-            return []
+    for source_name, url in SOURCES.items():
 
-        solana_tokens = []
-        seen = set()
+        tokens = fetch_source(source_name, url)
 
         for token in tokens:
 
@@ -27,23 +56,49 @@ def scan_tokens():
 
             address = token.get("tokenAddress")
 
-            if not address or address in seen:
+            if not address:
                 continue
 
-            seen.add(address)
-            solana_tokens.append(token)
+            if address not in discovered:
+
+                discovered[address] = {
+                    "tokenAddress": address,
+                    "chainId": "solana",
+                    "discovery_sources": []
+                }
+
+            if source_name not in discovered[address]["discovery_sources"]:
+
+                discovered[address]["discovery_sources"].append(
+                    source_name
+                )
+
+    results = list(discovered.values())
+
+    results.sort(
+        key=lambda token: len(token["discovery_sources"]),
+        reverse=True
+    )
+
+    print("================================")
+    print("MULTI-SOURCE SCANNER 4.0")
+    print("TOTAL UNIQUE TOKENS:", len(results))
+    print("================================")
+
+    for token in results[:10]:
 
         print(
-            "FOUND SOLANA BOOSTED TOKENS:",
-            len(solana_tokens)
+            "CANDIDATE:",
+            token["tokenAddress"],
+            "| SOURCES:",
+            len(token["discovery_sources"]),
+            "|",
+            token["discovery_sources"]
         )
 
-        return solana_tokens[:20]
-
-    except (requests.RequestException, ValueError) as error:
-        print("SCANNER ERROR:", error)
-        return []
+    return results
 
 
 if __name__ == "__main__":
+
     scan_tokens()
