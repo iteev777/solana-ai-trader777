@@ -193,9 +193,12 @@ def build_execution_plan(quote, side, max_quote_age=MAX_QUOTE_AGE_SECONDS):
         raise ValueError("Invalid swap side")
     in_amount = _amount(quote.get("in_amount", 0), "in_amount")
     out_amount = _amount(quote.get("out_amount", 0), "out_amount")
-    minimum_out = _amount(
-        quote.get("minimum_out_amount", 0), "minimum_out_amount"
-    )
+    minimum_value = quote.get("minimum_out_amount")
+    if minimum_value in (None, ""):
+        minimum_value = out_amount * (
+            10000 - _amount(quote.get("slippage_bps", MAX_SLIPPAGE_BPS), "slippage_bps", 0)
+        ) // 10000
+    minimum_out = _amount(minimum_value, "minimum_out_amount")
     if minimum_out > out_amount:
         raise ValueError("Minimum output exceeds quoted output")
     diagnostics = quote.get("route_diagnostics") or _route_diagnostics(
