@@ -6,6 +6,7 @@ from unittest.mock import patch
 import live_execution
 import position_policy
 import indicators
+import strategy_rules
 
 
 
@@ -38,6 +39,15 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
         self.assertTrue(result["timeframes"]["1m"]["ready"])
         self.assertFalse(result["timeframes"]["4h"]["ready"])
         self.assertIn(result["trend_consensus"], {"bullish", "bearish", "mixed"})
+        for key in ("macd_histogram", "bollinger_percent_b", "atr_percent",
+                    "stochastic_k", "vwap", "obv"):
+            self.assertIsInstance(result[key], (int, float))
+        strategy_rules.validate_rules_config({
+            "main": {"all": [
+                {"field": "macd_bullish", "op": "eq", "value": 1},
+                {"field": "atr_percent", "op": "lt", "value": 15}
+            ]}
+        })
 
     def test_aggregation_rejects_invalid_interval(self):
         with self.assertRaises(ValueError):
