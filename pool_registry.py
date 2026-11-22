@@ -313,6 +313,12 @@ def get_pool_registry_status():
 
 
 def clear_pool_registry_state():
+    while True:
+        try:
+            _queue.get_nowait()
+            _queue.task_done()
+        except queue.Empty:
+            break
     with _lock:
         _candidates.clear()
         _candidate_updated_at.clear()
