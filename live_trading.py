@@ -1,6 +1,7 @@
 
 import os
 import database
+import live_execution
 
 
 MODE = "live"
@@ -35,6 +36,15 @@ class LiveTrading:
         print("LIVE BALANCE:", self.balance)
         print("LIVE POSITIONS:", len(self.positions))
         print("LIVE EXECUTION: LOCKED")
+
+    def get_execution_status(self):
+        return live_execution.get_execution_status()
+
+    def prepare_swap_plan(self, quote, side):
+        return live_execution.build_execution_plan(quote, side)
+
+    def execute_swap_plan(self, plan):
+        return live_execution.execute_plan(plan)
 
     def position_count(self, strategy):
 
