@@ -25,6 +25,8 @@ from market_data import (
     get_market_data_batch,
     get_gecko_pool_data_batch
 )
+from indicators import fetch_pool_indicators
+from solana_onchain import decode_pool_snapshot, get_onchain_status
 
 from database import (
     initialize_database,
@@ -352,6 +354,30 @@ def analyze_token_task(address, strategy_name, token):
 
     try:
 
+        pool_address = (
+            token.get("poolAddress") or pair.get("pairAddress")
+            or token.get("pool_address")
+        )
+        pool_protocol = (
+            pair.get("dexId") or token.get("dexId")
+            or token.get("poolName") or token.get("pool_name") or ""
+        )
+        onchain_snapshot = None
+        if pool_address and get_onchain_status().get("rpc_configured"):
+            try:
+                onchain_snapshot = decode_pool_snapshot(
+                    pool_address, pool_protocol, address
+                )
+            except Exception as error:
+                log_event("ONCHAIN POOL READ FAILED", address, repr(error))
+        if isinstance(onchain_snapshot, dict):
+            pair = dict(pair)
+            pair.update(onchain_snapshot)
+
+        indicators = fetch_pool_indicators(pool_address) if pool_address else {
+            "ready": False, "reason": "Pool address unavailable"
+        }
+
         price = safe_float(pair.get("priceUsd"))
         liquidity = get_liquidity(pair)
 
@@ -383,6 +409,11 @@ def analyze_token_task(address, strategy_name, token):
 
         token_data = dict(pair)
         token_data["address"] = address
+        token_data["indicators"] = indicators
+        token_data["onchain_verified"] = bool(
+            isinstance(onchain_snapshot, dict)
+            and onchain_snapshot.get("onchainVerified") is True
+        )
 
         sources = token.get(
             "sources",
@@ -468,8 +499,10 @@ def analyze_token_task(address, strategy_name, token):
             "score": score,
             "strategy": strategy_name,
             "analysis": trade_decision,
-            "pool_address": token.get("poolAddress"),
-            "market_source": pair.get("marketSource") or pair.get("dexId")
+            "pool_address": pool_address,
+            "market_source": pair.get("marketSource") or pair.get("dexId"),
+            "pool_protocol": pool_protocol,
+            "onchain_verified": bool(onchain_snapshot)
         }
 
     except Exception as error:
@@ -741,7 +774,9 @@ def process_completed_tasks():
                 strategy=strategy_name,
                 metadata={
                     "pool_address": result.get("pool_address"),
-                    "market_source": result.get("market_source")
+                    "market_source": result.get("market_source"),
+                    "pool_protocol": result.get("pool_protocol"),
+                    "onchain_verified": result.get("onchain_verified")
                 }
             )
 
@@ -1032,6 +1067,25 @@ def monitor_positions():
         if missing_pool_addresses:
             gecko_fallback = get_gecko_pool_data_batch(missing_pool_addresses)
             market_data.update(gecko_fallback)
+
+        # Prefer a fresh, owner-verified pool-account price when the stored
+        # pool protocol is supported and an RPC endpoint is configured.
+        if get_onchain_status().get("rpc_configured"):
+            for address, position in positions:
+                metadata = position.get("metadata", {}) if isinstance(position, dict) else {}
+                pool_address = metadata.get("pool_address") if isinstance(metadata, dict) else None
+                protocol = metadata.get("pool_protocol") if isinstance(metadata, dict) else None
+                if not pool_address or not protocol:
+                    continue
+                try:
+                    snapshot = decode_pool_snapshot(pool_address, protocol, address)
+                    if snapshot:
+                        existing = market_data.get(address, {})
+                        merged = dict(existing) if isinstance(existing, dict) else {}
+                        merged.update(snapshot)
+                        market_data[address] = merged
+                except Exception as error:
+                    log_event("ONCHAIN POSITION PRICE UNAVAILABLE", address, repr(error))
 
     except Exception as error:
 
