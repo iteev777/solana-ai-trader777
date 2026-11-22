@@ -243,7 +243,7 @@ def get_router_status():
                 "Raydium CPMM", "Orca Whirlpool", "Meteora", "PumpSwap",
                 "Pump.fun bonding curve", "FluxBeam", "Moonit"
             ],
-            "quote_adapters": ["Raydium CPMM", "Raydium AMM v4"],
+            "quote_adapters": ["Raydium CPMM", "Raydium AMM v4", "FluxBeam"],
             "requires_pool_address": True,
         },
         "execution_locked": True,
