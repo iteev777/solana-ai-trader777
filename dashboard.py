@@ -509,6 +509,37 @@ def api_readiness():
     })
 
 
+@app.get("/api/copy-watchlist")
+def api_copy_watchlist():
+    import copy_trade
+    return jsonify(copy_trade.get_copy_watchlist())
+
+
+@app.post("/api/copy-watchlist")
+def api_add_copy_watch_wallet():
+    import copy_trade
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = copy_trade.add_copy_watch_wallet(
+            payload.get("wallet"), payload.get("label")
+        )
+        return jsonify({"wallet": item, "watchlist": copy_trade.get_copy_watchlist()})
+    except (ValueError, TypeError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@app.delete("/api/copy-watchlist/<wallet>")
+def api_remove_copy_watch_wallet(wallet):
+    import copy_trade
+    try:
+        removed = copy_trade.remove_copy_watch_wallet(wallet)
+        if not removed:
+            return jsonify({"error": "Wallet not found"}), 404
+        return jsonify({"removed": True, "watchlist": copy_trade.get_copy_watchlist()})
+    except (ValueError, TypeError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
 @app.get("/api/copy-trades")
 def api_copy_trades():
     return jsonify(database.get_recent_copy_trade_events(100))
@@ -716,6 +747,7 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>ADAPTIVE LEARNING · PAPER ONLY</h2><div class="muted" style="margin-bottom:10px">Closed paper outcomes adjust future paper position size only after the minimum sample; live execution remains locked.</div><div class="health" id="adaptive-learning"><div class="muted">Loading adaptive profile…</div></div></section>
 <section class="panel section"><h2>TOKEN DISCOVERY SOURCES</h2><div class="muted" style="margin-bottom:10px">Per-source candidate counts from the latest completed scan. A zero count can mean no matches or a provider outage; check the status.</div><div class="health" id="discovery-sources"><div class="muted">Loading discovery sources…</div></div></section>
 <section class="panel section"><h2>COPY WALLET PAPER PERFORMANCE</h2><div class="muted" style="margin-bottom:10px">Wallet-attributed realized paper P/L, win rate, open exposure and observed activity.</div><div class="health" id="copy-performance"><div class="muted">Loading wallet performance…</div></div></section>
+<section class="panel section"><h2>COPY WALLET WATCHLIST</h2><div class="muted" style="margin-bottom:10px">Manage up to 20 public wallet addresses. Changes reconnect the read-only monitor automatically; only confirmed, classified BUY/SELL events can enter paper-copy.</div><div class="actions" style="flex-wrap:wrap"><input id="copy-watch-wallet" placeholder="Solana wallet address" style="min-width:250px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><input id="copy-watch-label" placeholder="Label (optional)" style="min-width:150px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><button class="refresh" type="button" onclick="addCopyWallet()">Add wallet</button></div><div class="health" id="copy-watchlist-items" style="margin-top:12px"><div class="muted">Loading watchlist…</div></div><div class="muted" id="copy-watchlist-status" style="margin-top:8px"></div></section>
 <section class="panel section"><h2>11-PROTOCOL MAINNET VALIDATION</h2><div class="muted" style="margin-bottom:10px">Counts only confirmed on-chain pool decodes observed by this running bot; zero means not yet verified.</div><div class="health" id="protocol-validation"><div class="muted">Loading protocol validation…</div></div></section>
 <section class="panel section"><h2>COPY WALLET ACTIVITY</h2><div class="muted" style="margin-bottom:10px">Read-only wallet monitoring. No transactions are copied or signed.</div><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Wallet</th><th>Action</th><th>Mint</th><th>Token Δ</th><th>SOL Δ</th></tr></thead><tbody id="copy-trades"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section></section>
@@ -802,6 +834,39 @@ async function loadAnalytics(){
   document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
   document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
  }catch(err){document.getElementById('performance').textContent='Analytics unavailable: '+err.message;}
+}
+function renderCopyWatchlist(data){
+ const wallets=data.wallets||[];
+ document.getElementById('copy-watchlist-items').innerHTML=wallets.length?wallets.map(function(x){
+  return '<div><b class="token">'+esc(x.label||short(x.wallet))+'</b><span class="'+(x.enabled?'good':'muted')+'">'+(x.enabled?'ACTIVE':'PAUSED')+' · '+esc(x.source)+'</span><div class="muted">'+esc(x.wallet)+'</div>'+(x.source==='dashboard'?'<button class="refresh" style="margin-top:7px" type="button" onclick="removeCopyWallet(\''+esc(x.wallet)+'\')">Remove</button>':'<div class="muted">Managed by environment variable</div>')+'</div>';
+ }).join(''):'<div class="muted">No wallets configured. Add one above or set TROJAN_COPY_WALLETS.</div>';
+ document.getElementById('copy-watchlist-status').textContent=(data.active_count||0)+' / '+(data.maximum||20)+' active · monitor '+((data.monitor||{}).running?'running':'waiting for RPC / WebSocket configuration');
+}
+async function addCopyWallet(){
+ const status=document.getElementById('copy-watchlist-status');
+ const wallet=document.getElementById('copy-watch-wallet').value.trim();
+ const label=document.getElementById('copy-watch-label').value.trim();
+ status.textContent='Adding wallet…';
+ try{
+  const response=await fetch('/api/copy-watchlist',{method:'POST',headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},body:JSON.stringify({wallet:wallet,label:label})});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Could not add wallet');
+  document.getElementById('copy-watch-wallet').value='';
+  document.getElementById('copy-watch-label').value='';
+  renderCopyWatchlist(data.watchlist);
+  status.textContent='Wallet added. The monitor will reconnect to refresh subscriptions.';
+ }catch(err){status.textContent='Add failed: '+err.message;}
+}
+async function removeCopyWallet(wallet){
+ const status=document.getElementById('copy-watchlist-status');
+ status.textContent='Removing wallet…';
+ try{
+  const response=await fetch('/api/copy-watchlist/'+encodeURIComponent(wallet),{method:'DELETE',headers:{'X-Trojan-Action':'1'}});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Could not remove wallet');
+  renderCopyWatchlist(data.watchlist);
+  status.textContent='Wallet removed. The monitor will reconnect to refresh subscriptions.';
+ }catch(err){status.textContent='Remove failed: '+err.message;}
 }
 async function loadDatabaseHealth(){
  try{
