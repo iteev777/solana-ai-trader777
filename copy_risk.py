@@ -47,7 +47,7 @@ def wallet_exposure(positions, wallet):
     return {"open_positions": count, "exposure_usd": exposure, "mints": mints}
 
 
-def check_copy_buy(positions, wallet, token_mint, requested_size=None):
+def check_copy_buy(positions, wallet, token_mint, requested_size=None, daily_loss=0.0):
     if not isinstance(wallet, str) or not wallet.strip():
         return {"allowed": False, "reason": "COPY_WALLET_MISSING", "trade_size": 0.0}
     if not isinstance(token_mint, str) or not token_mint.strip():
@@ -60,6 +60,20 @@ def check_copy_buy(positions, wallet, token_mint, requested_size=None):
     # attach a second wallet's sell event to an existing position.
     if isinstance(positions, dict) and token_mint in positions:
         return {**state, "allowed": False, "reason": "TOKEN_ALREADY_OPEN_UNDER_OTHER_OWNER", "trade_size": 0.0}
+
+    max_daily_loss = _positive_float("TROJAN_COPY_MAX_DAILY_LOSS_PER_WALLET_USD", 10.0)
+    try:
+        current_daily_loss = float(daily_loss or 0)
+    except (TypeError, ValueError, OverflowError):
+        current_daily_loss = float("inf")
+    if not math.isfinite(current_daily_loss) or current_daily_loss < 0:
+        return {**state, "allowed": False, "reason": "COPY_WALLET_DAILY_LOSS_UNKNOWN", "trade_size": 0.0}
+    if current_daily_loss >= max_daily_loss:
+        return {
+            **state, "allowed": False, "reason": "COPY_WALLET_DAILY_LOSS_LIMIT",
+            "daily_loss_usd": round(current_daily_loss, 2),
+            "max_daily_loss_usd": max_daily_loss, "trade_size": 0.0
+        }
 
     max_positions = _positive_int("TROJAN_COPY_MAX_POSITIONS_PER_WALLET", 3)
     max_exposure = _positive_float("TROJAN_COPY_MAX_EXPOSURE_PER_WALLET_USD", 25.0)
@@ -84,8 +98,10 @@ def check_copy_buy(positions, wallet, token_mint, requested_size=None):
     }
 
 
-def cap_copy_trade_size(positions, wallet, token_mint, proposed_size):
-    decision = check_copy_buy(positions, wallet, token_mint, proposed_size)
+def cap_copy_trade_size(positions, wallet, token_mint, proposed_size, daily_loss=0.0):
+    decision = check_copy_buy(
+        positions, wallet, token_mint, proposed_size, daily_loss=daily_loss
+    )
     if not decision.get("allowed"):
         return 0.0, decision
     return decision["trade_size"], decision
