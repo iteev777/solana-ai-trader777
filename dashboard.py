@@ -533,7 +533,10 @@ def api_adaptive_learning():
 @app.get("/api/discovery")
 def api_discovery():
     from discovery.token_aggregator import get_discovery_status
-    return jsonify(get_discovery_status())
+    from candidate_quality import get_quality_status
+    status = get_discovery_status()
+    status["quality"] = get_quality_status()
+    return jsonify(status)
 
 
 @app.get("/api/filtering")
