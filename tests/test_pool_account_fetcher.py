@@ -54,7 +54,7 @@ class BatchedPoolRefreshTests(unittest.TestCase):
         def fake_decode(pool, protocol, mint, **kwargs):
             decoded.append((pool, kwargs.get("_prefetched_slot"),
                             set(kwargs.get("_prefetched_accounts", {}))))
-            return {"priceUsd": "1", "observedAt": 1234.5, "snapshotSlot": 987}
+            return {"priceUsd": "1", "observedAt": 1234.5, "snapshotSlot": 987, "onchainVerified": True}
 
         with patch("solana_onchain.get_pool_snapshot_accounts",
                    side_effect=lambda p, proto, m: account_sets[(p, proto, m)]), \
@@ -91,7 +91,7 @@ class BatchedPoolRefreshTests(unittest.TestCase):
              patch("solana_onchain.fetch_pool_account_batch",
                    side_effect=fetch_accounts) as batch_fetch, \
              patch("solana_onchain.decode_pool_snapshot",
-                   return_value={"priceUsd": "1", "observedAt": 1234.5}), \
+                   return_value={"priceUsd": "1", "observedAt": 1234.5, "onchainVerified": True}), \
              patch.object(onchain_stream, "store_pool_snapshot", return_value=True):
             first = fetcher.refresh_pools([key_a, key_b])
             second = fetcher.refresh_pools([key_a, key_b])
@@ -114,7 +114,7 @@ class BatchedPoolRefreshTests(unittest.TestCase):
              patch("solana_onchain.fetch_pool_account_batch",
                    return_value=({"pool-good": {}, "vault": {}, "mint": {}}, 123, 1234.0)), \
              patch("solana_onchain.decode_pool_snapshot",
-                   return_value={"priceUsd": "1", "observedAt": 1234.0}), \
+                   return_value={"priceUsd": "1", "observedAt": 1234.0, "onchainVerified": True}), \
              patch.object(onchain_stream, "store_pool_snapshot", return_value=True):
             result = fetcher.refresh_pools([good, bad])
         self.assertEqual(result["last_priced_pools"], 1)
