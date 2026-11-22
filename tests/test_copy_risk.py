@@ -55,6 +55,14 @@ class CopyWalletRiskTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertEqual(result["reason"], "COPY_WALLET_POSITION_LIMIT")
 
+    def test_wallet_daily_loss_limit_blocks_new_copy_entries(self):
+        with patch.dict("os.environ", {
+            "TROJAN_COPY_MAX_DAILY_LOSS_PER_WALLET_USD": "10"
+        }, clear=False):
+            result = check_copy_buy({}, "WalletA", "MintD", 5, daily_loss=10.25)
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "COPY_WALLET_DAILY_LOSS_LIMIT")
+
     def test_unrelated_positions_do_not_consume_wallet_budget(self):
         with patch.dict("os.environ", {
             "TROJAN_COPY_MAX_POSITIONS_PER_WALLET": "3",
