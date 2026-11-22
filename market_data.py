@@ -6,9 +6,14 @@
 import time
 import copy
 import threading
+from datetime import datetime
 from collections import OrderedDict
 
 from api_client import get_json
+
+GECKO_POOL_MULTI_URL = (
+    "https://api.geckoterminal.com/api/v2/networks/solana/pools/multi/"
+)
 
 
 # ==========================================
@@ -245,6 +250,102 @@ def select_best_pairs(pairs, requested_addresses):
             best_pairs[address] = copy.deepcopy(pair)
 
     return best_pairs
+
+
+# ==========================================
+# GECKOTERMINAL POOL NORMALIZATION + FALLBACK
+# ==========================================
+
+def normalize_gecko_pool(pool):
+    if not isinstance(pool, dict):
+        return None
+    attributes = pool.get("attributes")
+    relationships = pool.get("relationships")
+    if not isinstance(attributes, dict) or not isinstance(relationships, dict):
+        return None
+    base = relationships.get("base_token")
+    base_data = base.get("data") if isinstance(base, dict) else None
+    token_id = base_data.get("id") if isinstance(base_data, dict) else None
+    if not isinstance(token_id, str) or not token_id.startswith("solana_"):
+        return None
+    address = token_id[len("solana_"):].strip()
+    if not valid_address(address):
+        return None
+    price = safe_float(attributes.get("base_token_price_usd"))
+    reserve = safe_float(attributes.get("reserve_in_usd"))
+    if price is None or price <= 0 or reserve is None or reserve < 0:
+        return None
+    volumes = attributes.get("volume_usd")
+    changes = attributes.get("price_change_percentage")
+    transactions = attributes.get("transactions")
+    volumes = volumes if isinstance(volumes, dict) else {}
+    changes = changes if isinstance(changes, dict) else {}
+    transactions = transactions if isinstance(transactions, dict) else {}
+    txns = {}
+    for window in ("m5", "h1", "h24"):
+        item = transactions.get(window)
+        if isinstance(item, dict):
+            txns[window] = {
+                "buys": item.get("buys"),
+                "sells": item.get("sells")
+            }
+    created = attributes.get("pool_created_at")
+    created_ms = None
+    if isinstance(created, str):
+        try:
+            created_ms = int(datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp() * 1000)
+        except (ValueError, TypeError, OverflowError):
+            created_ms = None
+    return {
+        "chainId": "solana",
+        "dexId": "geckoterminal",
+        "pairAddress": attributes.get("address"),
+        "baseToken": {"address": address, "name": "Unknown", "symbol": "Unknown"},
+        "quoteToken": {},
+        "priceUsd": str(price),
+        "liquidity": {"usd": reserve},
+        "volume": {"m5": safe_float(volumes.get("m5")), "h24": safe_float(volumes.get("h24"))},
+        "priceChange": {"m5": safe_float(changes.get("m5")), "h1": safe_float(changes.get("h1")), "h24": safe_float(changes.get("h24"))},
+        "txns": txns,
+        "pairCreatedAt": created_ms,
+        "fdv": safe_float(attributes.get("fdv_usd")),
+        "marketCap": safe_float(attributes.get("market_cap_usd")),
+        "marketSource": "geckoterminal"
+    }
+
+
+def get_gecko_pool_data_batch(pool_addresses):
+    """Fetch fallback quotes for known GeckoTerminal pool addresses in batches."""
+    if not isinstance(pool_addresses, (list, tuple, set)):
+        return {}
+    unique = list(dict.fromkeys(
+        item.strip() for item in pool_addresses
+        if isinstance(item, str) and item.strip() and "," not in item
+    ))
+    results = {}
+    for start in range(0, len(unique), 30):
+        batch = unique[start:start + 30]
+        if not batch:
+            continue
+        url = GECKO_POOL_MULTI_URL + ",".join(batch)
+        try:
+            response = get_json(
+                url,
+                headers={"Accept": "application/json;version=20230203"},
+                timeout=10,
+                cache_ttl=10,
+                max_retries=1
+            )
+            pools = response.get("data") if isinstance(response, dict) else None
+            if not isinstance(pools, list):
+                continue
+            for pool in pools:
+                normalized = normalize_gecko_pool(pool)
+                if normalized:
+                    results[normalized["baseToken"]["address"]] = normalized
+        except Exception as error:
+            print("[TROJAN V2] GECKO POOL FALLBACK ERROR:", repr(error), flush=True)
+    return results
 
 
 # ==========================================
