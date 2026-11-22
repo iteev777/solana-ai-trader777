@@ -255,3 +255,22 @@ Named conditions can be nested in the existing `all`, `any`, and `not` groups. P
 ## Native direct quote adapters
 
 The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is currently implemented for Raydium CPMM and Raydium AMM v4. Raydium AMM v4 quotes read the on-chain fee numerator/denominator and subtract accrued `need_take_pnl` from vault balances before applying constant-product math. Token-2022 transfer-fee mints are refused until a dedicated adapter is implemented. Other decoded DEX protocols remain explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
+
+
+## Configurable paper exit policy
+
+The paper engine evaluates exit rules in a deterministic order: hard stop-loss, peak-armed trailing protection, optional break-even protection, take-profit, optional stagnation exit, then maximum holding time. The trailing stop is armed from the persisted peak price (not the current mark), so a pullback cannot disarm it. Missing/invalid prices never manufacture an exit.
+
+Optional environment settings (defaults preserve the previous 9% stop, 10% take-profit, 4% trailing activation, 3.5% trailing distance and 900-second max hold):
+
+- `TROJAN_STOP_LOSS_PCT`
+- `TROJAN_TAKE_PROFIT_PCT`
+- `TROJAN_TRAILING_ACTIVATION_PCT`
+- `TROJAN_TRAILING_DISTANCE_PCT`
+- `TROJAN_MAX_HOLD_SECONDS` (0 disables time exit)
+- `TROJAN_STAGNATION_SECONDS` (0 disables stagnation exit)
+- `TROJAN_STAGNATION_BAND_PCT`
+- `TROJAN_BREAK_EVEN_ACTIVATION_PCT` (0 disables break-even protection)
+- `TROJAN_BREAK_EVEN_OFFSET_PCT`
+
+These settings affect the paper engine only. They do not authorize live trading or alter the live execution lock.
