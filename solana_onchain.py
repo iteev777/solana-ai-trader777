@@ -600,7 +600,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
     if protocol == "meteora_dbc":
         if decoded["base_mint"] != token_mint:
             raise ValueError("requested mint is not the Meteora DBC base mint")
-        config_first = _account(decoded["config"])
+        config_address = decoded["config"]
+        config_first = _account(config_address)
         if config_first["owner"] != PROGRAMS["meteora_dbc"] or len(config_first["data"]) < 40:
             raise ValueError("invalid Meteora DBC PoolConfig account")
         if config_first["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
@@ -608,7 +609,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         quote_mint = _key(config_first["data"], 8)
         # Pool, config and both mints are read in one confirmed context.
         dbc_accounts, snapshot_slot = _multiple_accounts_with_context(
-            [pool_address, decoded["config"], decoded["base_mint"], quote_mint]
+            [pool_address, config_address, decoded["base_mint"], quote_mint]
         )
         pool_acc, config_acc, base_mint_acc, quote_mint_acc = dbc_accounts
         if any(item is None for item in dbc_accounts):
@@ -620,6 +621,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         decoded = _decode_pool("meteora_dbc", pool_acc["data"])
         if decoded["status"] != "active":
             raise ValueError("Meteora DBC pool is no longer active")
+        if decoded["config"] != config_address:
+            raise ValueError("Meteora DBC config relationship changed during snapshot")
         if config_acc["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
             raise ValueError("Meteora DBC config changed to an unsupported layout")
         if _key(config_acc["data"], 8) != quote_mint or decoded["base_mint"] != token_mint:
