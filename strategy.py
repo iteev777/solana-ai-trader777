@@ -63,11 +63,20 @@ def evaluate_trade(
             "reason": "Invalid AI score"
         }
 
-    if analysis.get("decision") != "APPROVE":
+    decision = analysis.get("decision")
+
+    if decision == "REJECT":
+        return {
+            "action": "REJECT",
+            "score": score,
+            "reason": "; ".join(analysis.get("reasons", [])) or "AI rejected token"
+        }
+
+    if decision != "APPROVE":
         return {
             "action": "WAIT",
             "score": score,
-            "reason": "AI did not approve token"
+            "reason": "; ".join(analysis.get("reasons", [])) or "Waiting for stronger entry"
         }
 
     if score < MINIMUM_SCORES[strategy]:
