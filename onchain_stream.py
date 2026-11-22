@@ -236,6 +236,7 @@ def _refresh_many(keys):
 
 
 def _run():
+    global _batch_refreshing
     delay = 1
     while True:
         url = _rpc_ws_url()
