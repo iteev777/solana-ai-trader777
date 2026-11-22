@@ -382,10 +382,6 @@ def analyze_token_task(address, strategy_name, token):
             pair = dict(pair)
             pair.update(onchain_snapshot)
 
-        indicators = fetch_pool_indicators(pool_address) if pool_address else {
-            "ready": False, "reason": "Pool address unavailable"
-        }
-
         price = safe_float(pair.get("priceUsd"))
         liquidity = get_liquidity(pair)
 
@@ -414,6 +410,10 @@ def analyze_token_task(address, strategy_name, token):
                     "reason": "SNIPER_LIQUIDITY_TOO_LOW",
                     "address": address
                 }
+
+        indicators = fetch_pool_indicators(pool_address) if pool_address else {
+            "ready": False, "reason": "Pool address unavailable"
+        }
 
         token_data = dict(pair)
         token_data["address"] = address
