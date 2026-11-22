@@ -45,7 +45,7 @@ class CandidatePoolWatchTests(unittest.TestCase):
              patch.object(stream.time, "time", return_value=100.0):
             for index in range(11):
                 stream.watch_pool_price("pool-" + str(index), "pumpswap", "mint-" + str(index))
-        watched = stream.get_watched_pools()
+            watched = stream.get_watched_pools()
         self.assertEqual(len(watched), 10)
         self.assertNotIn(("pool-0", "pumpswap", "mint-0"), watched)
 
