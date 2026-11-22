@@ -63,6 +63,7 @@ discovery_executor = ThreadPoolExecutor(max_workers=1)
 
 discovery_future = None
 pending_tasks = {}
+copy_signal_queue = queue.Queue(maxsize=200)
 seen_tokens = set()
 rejected_tokens_until = {}
 
@@ -504,7 +505,8 @@ def analyze_token_task(address, strategy_name, token):
             "pool_address": pool_address,
             "market_source": pair.get("marketSource") or pair.get("dexId"),
             "pool_protocol": pool_protocol,
-            "onchain_verified": bool(onchain_snapshot)
+            "onchain_verified": bool(onchain_snapshot),
+            "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None
         }
 
     except Exception as error:
@@ -603,6 +605,47 @@ def schedule_token(
         )
 
         return False
+
+
+# ==========================================
+# COPY WALLET PAPER SIGNAL QUEUE
+# ==========================================
+
+def queue_copy_signal(event):
+    if not isinstance(event, dict) or event.get("action") != "BUY":
+        return False
+    if not isinstance(event.get("token_mint"), str) or not event["token_mint"]:
+        return False
+    try:
+        copy_signal_queue.put_nowait(dict(event))
+        return True
+    except queue.Full:
+        log_event("COPY SIGNAL QUEUE FULL", event.get("token_mint"))
+        return False
+
+
+def process_copy_signals():
+    processed = 0
+    while processed < 25:
+        try:
+            event = copy_signal_queue.get_nowait()
+        except queue.Empty:
+            break
+        processed += 1
+        address = event.get("token_mint")
+        token = {
+            "tokenAddress": address,
+            "chainId": "solana",
+            "discovery_sources": ["copy_wallet"],
+            "copy_wallet": event.get("wallet"),
+            "copy_signature": event.get("signature")
+        }
+        queued = schedule_token(address, "sniper", token)
+        log_event(
+            "COPY BUY SIGNAL QUEUED" if queued else "COPY BUY SIGNAL SKIPPED",
+            address,
+            "wallet=" + str(event.get("wallet"))
+        )
 
 
 # ==========================================
@@ -778,7 +821,8 @@ def process_completed_tasks():
                     "pool_address": result.get("pool_address"),
                     "market_source": result.get("market_source"),
                     "pool_protocol": result.get("pool_protocol"),
-                    "onchain_verified": result.get("onchain_verified")
+                    "onchain_verified": result.get("onchain_verified"),
+                    "copy_wallet": result.get("copy_wallet")
                 }
             )
 
@@ -1283,6 +1327,7 @@ def run_bot():
             # Free completed task slots first.
 
             process_completed_tasks()
+            process_copy_signals()
 
             # Receive and schedule new tokens.
 
