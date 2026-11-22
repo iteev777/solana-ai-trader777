@@ -57,6 +57,24 @@ class PoolAnalysisResilienceTests(unittest.TestCase):
         pool_analysis.record_success("pool")
         self.assertFalse(pool_analysis.should_skip_pool("pool", now=11.0))
 
+    def test_protocol_validation_does_not_count_transient_rpc_failure_as_bad_pool(self):
+        from unittest.mock import patch
+        import protocol_validation
+        with patch("database.record_protocol_validation") as record:
+            result = protocol_validation.record_validation(
+                "pumpswap",
+                "pool",
+                "mint",
+                error=RuntimeError("All configured Solana RPC endpoints failed"),
+            )
+        self.assertEqual(result["failure_class"], "transient")
+        self.assertFalse(result["recorded"])
+        record.assert_not_called()
+        self.assertEqual(
+            pool_analysis.get_pool_analysis_status()["transient_backoff_pools"],
+            1,
+        )
+
     def test_status_reports_separate_transient_and_structural_states(self):
         pool_analysis.record_transient_failure("rpc-pool", RuntimeError("timeout"), now=1.0)
         pool_analysis.record_structural_failure("bad-pool", ValueError("invalid layout"), now=1.0)
