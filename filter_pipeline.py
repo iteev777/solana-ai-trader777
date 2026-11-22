@@ -73,16 +73,12 @@ def _metadata_stage(token, mint):
     reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "true").lower() == "true"
     if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
-    if name is None:
-        return _result("WAIT", "metadata", "NAME_UNKNOWN") if os.getenv(
-            "TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false"
-        ).lower() == "true" else _result("PASS", "metadata", "SYMBOL_VALID", {"symbol": symbol})
-    if not name:
-        return _result("WAIT", "metadata", "NAME_INVALID")
+    if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
+        return _result("WAIT", "metadata", "NAME_UNKNOWN" if name is None else "NAME_INVALID")
 
     info = token.get("info") if isinstance(token.get("info"), dict) else {}
     token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
-    logo = _first = (
+    logo = (
         token.get("logoURI") or token.get("logo_uri") or token.get("logo_url")
         or token.get("imageUrl") or info.get("imageUrl") or token_meta.get("image")
     )
