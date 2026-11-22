@@ -258,9 +258,21 @@ def _decode_pool(protocol, raw):
     if protocol == "fluxbeam_amm":
         if len(raw) != 324 or raw[1] != 1:
             raise ValueError("invalid FluxBeam SwapV1 layout or uninitialized pool")
+        trade_fee_numerator, trade_fee_denominator = _u64(raw, 227), _u64(raw, 235)
+        owner_fee_numerator, owner_fee_denominator = _u64(raw, 243), _u64(raw, 251)
+        if (trade_fee_denominator <= 0 or owner_fee_denominator <= 0
+                or trade_fee_numerator >= trade_fee_denominator
+                or owner_fee_numerator >= owner_fee_denominator):
+            raise ValueError("FluxBeam fee configuration is invalid")
+        curve_type = raw[291]
         return {
             "base_mint": _key(raw, 131), "quote_mint": _key(raw, 163),
             "vault_base": _key(raw, 35), "vault_quote": _key(raw, 67),
+            "trade_fee_numerator": trade_fee_numerator,
+            "trade_fee_denominator": trade_fee_denominator,
+            "owner_fee_numerator": owner_fee_numerator,
+            "owner_fee_denominator": owner_fee_denominator,
+            "curve_type": curve_type,
             "status": "active", "price_mode": "reserves"
         }
     if protocol == "pumpfun_legacy":
@@ -555,6 +567,117 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     }
 
 
+def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
+                        slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only FluxBeam constant-product quote from a confirmed account snapshot."""
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("FluxBeam pool address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+        raise ValueError("Maximum snapshot age must be positive and finite")
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["fluxbeam_amm"]:
+        raise ValueError("Pool account is not owned by the FluxBeam AMM program")
+    first = _decode_pool("fluxbeam_amm", discovered["data"])
+    if first["curve_type"] != 0:
+        raise ValueError("FluxBeam direct quotes support only verified ConstantProduct pools")
+    keys = [pool_address, first["vault_base"], first["vault_quote"],
+            first["base_mint"], first["quote_mint"]]
+    snapshot_started = time.time()
+    accounts, slot = _multiple_accounts_with_context(keys)
+    if any(item is None for item in accounts):
+        raise ValueError("FluxBeam snapshot is missing a required account")
+    pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
+    if pool_acc.get("owner") != PROGRAMS["fluxbeam_amm"]:
+        raise ValueError("FluxBeam pool owner changed during snapshot")
+    decoded = _decode_pool("fluxbeam_amm", pool_acc["data"])
+    for field in ("vault_base", "vault_quote", "base_mint", "quote_mint",
+                  "trade_fee_numerator", "trade_fee_denominator",
+                  "owner_fee_numerator", "owner_fee_denominator", "curve_type"):
+        if decoded.get(field) != first.get(field):
+            raise ValueError("FluxBeam pool relationships or fee configuration changed during snapshot")
+    if decoded["curve_type"] != 0:
+        raise ValueError("FluxBeam pool curve is not ConstantProduct")
+    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("FluxBeam Token-2022 mints are refused until transfer-fee behavior is verified")
+    if vault_base_acc.get("owner") != TOKEN_PROGRAM or vault_quote_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("FluxBeam vaults must use the legacy SPL Token program")
+
+    base_decimals = _mint_decimals(mint_base_acc)
+    quote_decimals = _mint_decimals(mint_quote_acc)
+    reserve_base = _token_amount(vault_base_acc, decoded["base_mint"])
+    reserve_quote = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    if reserve_base <= 0 or reserve_quote <= 0:
+        raise ValueError("FluxBeam reserves are empty")
+
+    if input_mint == decoded["base_mint"]:
+        reserve_in, reserve_out = reserve_base, reserve_quote
+        output_mint = decoded["quote_mint"]
+    elif input_mint == decoded["quote_mint"]:
+        reserve_in, reserve_out = reserve_quote, reserve_base
+        output_mint = decoded["base_mint"]
+    else:
+        raise ValueError("Input mint does not belong to this FluxBeam pool")
+
+    trade_fee = (amount_in * decoded["trade_fee_numerator"]
+                 + decoded["trade_fee_denominator"] - 1) // decoded["trade_fee_denominator"]
+    owner_fee = (amount_in * decoded["owner_fee_numerator"]
+                 + decoded["owner_fee_denominator"] - 1) // decoded["owner_fee_denominator"]
+    total_fee = trade_fee + owner_fee
+    net_input = amount_in - total_fee
+    if net_input <= 0:
+        raise ValueError("Input is fully consumed by FluxBeam trading fees")
+    new_source = reserve_in + net_input
+    new_destination = (reserve_out * reserve_in + new_source - 1) // new_source
+    if new_destination > reserve_out:
+        raise ValueError("FluxBeam quote arithmetic exceeded the output reserve")
+    output_amount = reserve_out - new_destination
+    if output_amount <= 0 or output_amount >= reserve_out:
+        raise ValueError("FluxBeam quote rounds to zero or drains the pool")
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    spot_price = reserve_out / reserve_in
+    execution_price = output_amount / net_input
+    impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("FluxBeam snapshot is stale")
+    if not math.isfinite(impact):
+        raise ValueError("FluxBeam price impact is invalid")
+
+    return {
+        "provider": "fluxbeam_direct",
+        "protocol": "fluxbeam_amm",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "trade_fee_numerator": decoded["trade_fee_numerator"],
+        "trade_fee_denominator": decoded["trade_fee_denominator"],
+        "owner_fee_numerator": decoded["owner_fee_numerator"],
+        "owner_fee_denominator": decoded["owner_fee_denominator"],
+        "trade_fee_amount": trade_fee,
+        "owner_fee_amount": owner_fee,
+        "total_fee_amount": total_fee,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "price_impact_percent": round(impact, 6),
+        "base_decimals": base_decimals,
+        "quote_decimals": quote_decimals,
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
+
+
 def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
     """Dispatch read-only direct quotes from the actual pool account owner."""
     discovered = _account(pool_address)
@@ -564,6 +687,8 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
         return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_amm_v4":
         return quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol == "fluxbeam_amm":
+        return quote_fluxbeam_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol is None:
         raise ValueError("Pool owner is not a supported Solana DEX program")
     raise ValueError("Direct quote adapter is not implemented for " + protocol)
