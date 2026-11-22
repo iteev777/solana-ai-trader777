@@ -42,9 +42,14 @@ def get_readiness_report():
         checks.append({"name": "solana_rpc", "ok": False, "details": str(error)[:150], "required": False})
     try:
         from api_client import get_api_status
+        from market_data import get_market_data_status
         api = get_api_status()
+        market = get_market_data_status()
         checks.append({"name": "market_api_client", "ok": True,
                        "details": str(len(api.get("hosts", {}))) + " hosts tracked", "required": True})
+        checks.append({"name": "market_data_worker", "ok": bool(market.get("worker_running")),
+                       "details": "running" if market.get("worker_running") else "waiting for first market request",
+                       "required": True})
     except Exception as error:
         checks.append({"name": "market_api_client", "ok": False, "details": str(error)[:150], "required": True})
     try:
