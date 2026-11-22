@@ -1204,6 +1204,16 @@ def monitor_positions():
     import service_health
     service_health.heartbeat("position_monitor")
     positions = list(paper.get_positions().items())
+    from onchain_stream import sync_watched_pools
+    watched_pools = []
+    for address, position in positions:
+        metadata = position.get("metadata", {}) if isinstance(position, dict) else {}
+        if isinstance(metadata, dict):
+            pool_address = metadata.get("pool_address")
+            protocol = metadata.get("pool_protocol")
+            if pool_address and protocol:
+                watched_pools.append((pool_address, protocol, address))
+    sync_watched_pools(watched_pools)
 
     if not positions:
         return
@@ -1244,8 +1254,7 @@ def monitor_positions():
                 if not pool_address or not protocol:
                     continue
                 try:
-                    from onchain_stream import watch_pool_price, get_latest_snapshot
-                    watch_pool_price(pool_address, protocol, address)
+                    from onchain_stream import get_latest_snapshot
                     snapshot = get_latest_snapshot(
                         pool_address, protocol, address, max_age=1.0
                     )
