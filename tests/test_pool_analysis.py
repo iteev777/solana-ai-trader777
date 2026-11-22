@@ -1,0 +1,69 @@
+import unittest
+
+import pool_analysis
+
+
+class PoolAnalysisResilienceTests(unittest.TestCase):
+    def setUp(self):
+        pool_analysis.clear_pool_analysis_state()
+
+    def test_rpc_and_rate_limit_errors_are_transient(self):
+        self.assertEqual(
+            pool_analysis.classify_pool_error(
+                RuntimeError("All configured Solana RPC endpoints failed")
+            ),
+            "transient",
+        )
+        self.assertEqual(
+            pool_analysis.classify_pool_error(
+                RuntimeError("HTTP 429 rate limit")
+            ),
+            "transient",
+        )
+
+    def test_missing_accounts_and_invalid_layouts_are_structural(self):
+        self.assertEqual(
+            pool_analysis.classify_pool_error(ValueError("on-chain account not found")),
+            "structural",
+        )
+        self.assertEqual(
+            pool_analysis.classify_pool_error(ValueError("invalid PumpSwap discriminator")),
+            "structural",
+        )
+
+    def test_transient_backoff_doubles_only_after_a_real_retry(self):
+        first = pool_analysis.record_transient_failure(
+            "pool", RuntimeError("RPC timeout"), now=100.0
+        )
+        duplicate = pool_analysis.record_transient_failure(
+            "pool", RuntimeError("RPC timeout"), now=101.0
+        )
+        self.assertEqual(first["retry_in_seconds"], 60.0)
+        self.assertEqual(duplicate["retry_in_seconds"], 59.0)
+        self.assertEqual(duplicate["failures"], 1)
+        self.assertTrue(pool_analysis.should_skip_pool("pool", now=159.0))
+        self.assertFalse(pool_analysis.should_skip_pool("pool", now=160.0))
+        second = pool_analysis.record_transient_failure(
+            "pool", RuntimeError("RPC timeout"), now=160.0
+        )
+        self.assertEqual(second["retry_in_seconds"], 120.0)
+
+    def test_structural_failures_are_quarantined_and_success_clears_them(self):
+        state = pool_analysis.record_structural_failure(
+            "pool", ValueError("invalid pool layout"), now=10.0
+        )
+        self.assertEqual(state["retry_in_seconds"], 3600.0)
+        self.assertTrue(pool_analysis.should_skip_pool("pool", now=11.0))
+        pool_analysis.record_success("pool")
+        self.assertFalse(pool_analysis.should_skip_pool("pool", now=11.0))
+
+    def test_status_reports_separate_transient_and_structural_states(self):
+        pool_analysis.record_transient_failure("rpc-pool", RuntimeError("timeout"), now=1.0)
+        pool_analysis.record_structural_failure("bad-pool", ValueError("invalid layout"), now=1.0)
+        status = pool_analysis.get_pool_analysis_status(now=2.0)
+        self.assertEqual(status["transient_backoff_pools"], 1)
+        self.assertEqual(status["structural_blocked_pools"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
