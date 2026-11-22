@@ -84,6 +84,67 @@ class OnchainDecoderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _decode_pool("pumpswap", bytes(400))
 
+    def test_fluxbeam_amm_layout(self):
+        raw = bytearray(324)
+        raw[1] = 1
+        put_key(raw, 35, 1)
+        put_key(raw, 67, 2)
+        put_key(raw, 131, 3)
+        put_key(raw, 163, 4)
+        result = _decode_pool("fluxbeam_amm", bytes(raw))
+        self.assertEqual(result["vault_base"], _decode_pool("fluxbeam_amm", bytes(raw))["vault_base"])
+        self.assertEqual(result["price_mode"], "reserves")
+
+    def test_meteora_damm_v2_layout(self):
+        raw = bytearray(1112)
+        raw[:8] = bytes([241, 154, 109, 4, 17, 177, 109, 188])
+        raw[456:472] = (1 << 64).to_bytes(16, "little")
+        put_key(raw, 168, 1)
+        put_key(raw, 200, 2)
+        put_key(raw, 232, 3)
+        put_key(raw, 264, 4)
+        result = _decode_pool("meteora_damm_v2", bytes(raw))
+        self.assertEqual(result["sqrt_price_x64"], 1 << 64)
+        self.assertEqual(result["price_mode"], "sqrt_price")
+
+    def test_meteora_dbc_layout(self):
+        raw = bytearray(424)
+        raw[:8] = bytes([213, 224, 5, 209, 98, 69, 119, 92])
+        put_key(raw, 72, 1)
+        put_key(raw, 136, 2)
+        put_key(raw, 168, 3)
+        put_key(raw, 200, 4)
+        struct.pack_into("<Q", raw, 232, 1000)
+        struct.pack_into("<Q", raw, 240, 2000)
+        raw[280:296] = (1 << 64).to_bytes(16, "little")
+        result = _decode_pool("meteora_dbc", bytes(raw))
+        self.assertEqual(result["base_reserve"], 1000)
+        self.assertEqual(result["price_mode"], "dbc_curve")
+
+    def test_pumpfun_legacy_bonding_curve_layout(self):
+        raw = bytearray(256)
+        raw[:8] = bytes([23, 183, 248, 55, 96, 216, 172, 96])
+        struct.pack_into("<QQQQQ", raw, 8, 10_000, 20_000, 8_000, 15_000, 1_000_000)
+        result = _decode_pool("pumpfun_legacy", bytes(raw))
+        self.assertEqual(result["virtual_quote_reserves"], 20_000)
+        self.assertEqual(result["price_mode"], "pump_curve")
+        raw[48] = 1
+        with self.assertRaises(ValueError):
+            _decode_pool("pumpfun_legacy", bytes(raw))
+
+    def test_moonit_curve_account_layout(self):
+        raw = bytearray(409)
+        raw[:8] = bytes([8, 91, 83, 28, 132, 216, 248, 22])
+        struct.pack_into("<QQ", raw, 8, 1_000_000, 900_000)
+        put_key(raw, 24, 7)
+        raw[56] = 9
+        raw[57] = 0
+        raw[58] = 1
+        result = _decode_pool("moonit_amm", bytes(raw))
+        self.assertEqual(result["base_mint"], _decode_pool("moonit_amm", bytes(raw))["base_mint"])
+        self.assertEqual(result["token_decimals"], 9)
+        self.assertEqual(result["price_mode"], "moonit_curve")
+
 
 class IndicatorTests(unittest.TestCase):
     def test_ohlcv_indicators_return_technical_confirmation(self):
