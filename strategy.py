@@ -118,6 +118,22 @@ def evaluate_trade(
                     "action": "WAIT", "score": score,
                     "reason": "Technical filter: no bullish EMA or breakout-volume confirmation"
                 }
+            # When at least two independently aggregated timeframes have
+            # enough candles, avoid entries against a bearish majority.
+            # Unavailable higher timeframes are ignored, never treated as bearish.
+            ready_frames = indicators.get("timeframe_ready_count", 0)
+            bullish_frames = indicators.get("bullish_timeframes", 0)
+            bearish_frames = indicators.get("bearish_timeframes", 0)
+            if (
+                isinstance(ready_frames, int) and ready_frames >= 2
+                and isinstance(bullish_frames, int)
+                and isinstance(bearish_frames, int)
+                and bearish_frames > bullish_frames
+            ):
+                return {
+                    "action": "WAIT", "score": score,
+                    "reason": "Multi-timeframe filter: bearish trend majority"
+                }
 
     if score < MINIMUM_SCORES[strategy]:
         return {
