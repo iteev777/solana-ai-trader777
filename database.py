@@ -1082,7 +1082,8 @@ def save_trade(
     amount,
     profit_loss=0,
     mode="paper",
-    strategy="main"
+    strategy="main",
+    copy_wallet=None
 ):
 
     validate_mode(mode)
@@ -1108,18 +1109,13 @@ def save_trade(
                 profit_loss,
                 timestamp,
                 mode,
-                strategy
+                strategy,
+                copy_wallet
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            token,
-            action,
-            price,
-            amount,
-            profit_loss,
-            now(),
-            mode,
-            strategy
+            token, action, price, amount, profit_loss, now(),
+            mode, strategy, copy_wallet
         ))
 
 
