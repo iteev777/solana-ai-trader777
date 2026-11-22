@@ -46,6 +46,14 @@ class PositionManagementTests(unittest.TestCase):
         stats = database.get_trade_stats("paper")
         self.assertEqual(stats["total_trades"], 2)
 
+        database.record_filter_decision(
+            "MINT_TEST", "STRATEGY", "REJECT", "Buy pressure too weak",
+            score=42, liquidity=1200, source_count=2
+        )
+        summary = database.get_filtering_summary()
+        self.assertEqual(summary["decisions"]["REJECT"], 1)
+        self.assertEqual(database.get_recent_filter_events(1)[0]["reason"], "Buy pressure too weak")
+
 
 if __name__ == "__main__":
     unittest.main()
