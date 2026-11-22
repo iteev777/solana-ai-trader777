@@ -289,3 +289,8 @@ FluxBeam is also available as a read-only direct quote adapter for the verified 
 The dashboard's System page exposes SQLite integrity, WAL mode, storage backend, database/WAL size and verified backup count. **Create verified backup** uses SQLite's online backup API (safe with WAL and active readers/writers), runs `PRAGMA integrity_check` on the snapshot, and retains the newest seven snapshots by default. The authenticated endpoint is `POST /api/database/backup`; `TROJAN_BACKUP_DIR` can select a separate backup directory.
 
 Railway durability still requires an attached persistent volume. The health panel reports `ephemeral_default` when neither `RAILWAY_VOLUME_MOUNT_PATH` nor `BOT_DATA_DIR` is configured. A backup stored on the same ephemeral filesystem is not disaster recovery; attach a Railway volume or configure an external backup destination before relying on long-term retention.
+
+
+## Dynamic copy-wallet watchlist
+
+The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in the environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass the existing wallet-specific risk limits and the conservative swap-event classifier.
