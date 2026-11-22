@@ -5,6 +5,7 @@
 
 import os
 import math
+import time
 import requests
 
 from api_client import get_json
@@ -19,6 +20,10 @@ REQUEST_TIMEOUT = 15
 CACHE_TTL = 60
 MAX_RETRIES = 1
 TOKEN_LIMIT = 100
+
+# Birdeye reports exhausted monthly/plan credits as HTTP 400.
+QUOTA_COOLDOWN_SECONDS = 3600
+_quota_disabled_until = 0
 
 
 # ==========================================
@@ -101,7 +106,13 @@ def normalize_token(token):
 
 def scan_birdeye():
 
+    global _quota_disabled_until
+
     found_tokens = []
+
+    if time.time() < _quota_disabled_until:
+        print("BIRDEYE SKIPPED: COMPUTE UNIT QUOTA COOLDOWN ACTIVE", flush=True)
+        return found_tokens
 
     if not API_KEY:
         print("BIRDEYE SKIPPED: API KEY MISSING", flush=True)
@@ -217,6 +228,10 @@ def scan_birdeye():
         response = getattr(error, "response", None)
         status_code = getattr(response, "status_code", None)
         response_text = getattr(response, "text", "")[:300]
+
+        if "compute units usage limit exceeded" in response_text.lower():
+            _quota_disabled_until = time.time() + QUOTA_COOLDOWN_SECONDS
+            print("BIRDEYE QUOTA EXHAUSTED; PAUSING THIS SOURCE FOR 1 HOUR", flush=True)
 
         print(
             "BIRDEYE REQUEST ERROR:",
