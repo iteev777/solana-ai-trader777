@@ -100,7 +100,8 @@ def open_position(
     token_address,
     entry_price,
     strategy="main",
-    metadata=None
+    metadata=None,
+    trade_size=None
 ):
     global balance, positions
 
@@ -118,6 +119,13 @@ def open_position(
     if strategy not in VALID_STRATEGIES:
         return "Invalid strategy"
 
+    try:
+        position_size = float(TRADE_SIZE if trade_size is None else trade_size)
+    except (TypeError, ValueError, OverflowError):
+        return "Invalid trade size"
+    if not __import__("math").isfinite(position_size) or position_size <= 0:
+        return "Invalid trade size"
+
     with _lock:
 
         refresh_account()
@@ -128,14 +136,14 @@ def open_position(
         if position_count(strategy) >= MAX_POSITIONS_PER_STRATEGY:
             return "Strategy position limit reached"
 
-        if balance < TRADE_SIZE:
-            return "Insufficient balance"
+        if balance < position_size * (1 + database.PAPER_FEE_RATE):
+            return "Insufficient balance including estimated entry fee"
 
         result = database.open_position_atomic(
             mode=MODE,
             token_address=token_address,
             entry_price=entry_price,
-            invested=TRADE_SIZE,
+            invested=position_size,
             strategy=strategy,
             metadata={
                 "engine": "trojan_v2",
