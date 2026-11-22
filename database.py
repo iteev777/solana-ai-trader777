@@ -24,6 +24,9 @@ VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
 SCHEMA_VERSION = 3
 
+# Conservative paper estimate for each swap side; actual DEX costs vary.
+PAPER_FEE_RATE = 0.0075
+
 
 # ==========================================
 # TIME AND VALIDATION
@@ -520,8 +523,9 @@ def open_position_atomic(
 
         balance = float(account["balance"])
 
-        if balance < invested:
-            return "Insufficient balance"
+        entry_fee = invested * PAPER_FEE_RATE
+        if balance < invested + entry_fee:
+            return "Insufficient balance including estimated entry fee"
 
         existing = connection.execute("""
             SELECT token_address
@@ -531,6 +535,9 @@ def open_position_atomic(
 
         if existing:
             return "Position already exists"
+
+        position_metadata = dict(metadata or {})
+        position_metadata["paper_fee_rate"] = PAPER_FEE_RATE
 
         connection.execute("""
             INSERT INTO positions
@@ -551,7 +558,7 @@ def open_position_atomic(
             invested,
             strategy,
             now(),
-            json.dumps(metadata or {})
+            json.dumps(position_metadata)
         ))
 
         connection.execute("""
@@ -560,7 +567,7 @@ def open_position_atomic(
                 updated_at = ?
             WHERE mode = ?
         """, (
-            balance - invested,
+            balance - invested - entry_fee,
             now(),
             mode
         ))
@@ -646,12 +653,28 @@ def close_position_atomic(
         invested = float(position["invested"])
         strategy = position["strategy"]
 
-        returned_amount = invested * (
+        gross_return = invested * (
             current_price / entry_price
         )
 
+        try:
+            position_metadata = json.loads(
+                position["metadata"] or "{}"
+            )
+        except (ValueError, TypeError):
+            position_metadata = {}
+
+        entry_fee_rate = validate_number(
+            position_metadata.get("paper_fee_rate", 0),
+            "paper_fee_rate"
+        )
+        exit_fee = gross_return * PAPER_FEE_RATE
+        entry_fee = invested * entry_fee_rate
+        returned_amount = gross_return - exit_fee
+
+        # Report net P/L after estimated entry and exit costs.
         profit_loss = round(
-            returned_amount - invested,
+            returned_amount - invested - entry_fee,
             2
         )
 
