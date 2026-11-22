@@ -557,8 +557,9 @@ def api_route_comparison():
     output_mint = request.args.get("output_mint", "")
     amount = request.args.get("amount", "")
     slippage = request.args.get("slippage_bps", default=None, type=int)
+    pool_address = request.args.get("pool_address", "").strip() or None
     try:
-        return jsonify(compare_quotes(input_mint, output_mint, amount, slippage))
+        return jsonify(compare_quotes(input_mint, output_mint, amount, slippage, pool_address))
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
     except Exception as error:
