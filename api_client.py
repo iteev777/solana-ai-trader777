@@ -1,5 +1,7 @@
 # ==========================================
 # TROJAN V2 - API CLIENT
+# ENDPOINT RATE LIMITS + HOST LOCKING
+# CACHE + RETRIES + COOLDOWN
 # ==========================================
 
 import time
@@ -24,8 +26,6 @@ HOST_INTERVALS = {
     "api.rugcheck.xyz": 2.0,
 }
 
-# DexScreener endpoint-specific limits.
-# Batch endpoint supports a higher request rate.
 ENDPOINT_INTERVALS = {
     ("api.dexscreener.com", "tokens_batch"): 0.25,
 }
@@ -43,9 +43,8 @@ SLOW_REQUEST_THRESHOLD = 2.0
 # SHARED STATE
 # ==========================================
 
-bucket_locks = {}
+host_locks = {}
 bucket_next_request = {}
-
 host_blocked_until = {}
 
 cache = {}
@@ -83,19 +82,17 @@ def get_rate_bucket(url):
 
 
 # ==========================================
-# RATE LIMIT LOCK
+# HOST LOCK
 # ==========================================
 
-def get_bucket_lock(host, endpoint):
-
-    key = (host, endpoint)
+def get_host_lock(host):
 
     with state_lock:
 
-        if key not in bucket_locks:
-            bucket_locks[key] = threading.Lock()
+        if host not in host_locks:
+            host_locks[host] = threading.Lock()
 
-        return bucket_locks[key]
+        return host_locks[host]
 
 
 # ==========================================
@@ -179,7 +176,9 @@ def save_cache(key, data, cache_ttl):
 
 def get_retry_delay(response, attempt):
 
-    retry_after = response.headers.get("Retry-After")
+    retry_after = response.headers.get(
+        "Retry-After"
+    )
 
     if retry_after:
 
@@ -195,7 +194,10 @@ def get_retry_delay(response, attempt):
                     retry_after
                 )
 
-                delay = retry_date.timestamp() - time.time()
+                delay = (
+                    retry_date.timestamp()
+                    - time.time()
+                )
 
             except (
                 ValueError,
@@ -203,20 +205,76 @@ def get_retry_delay(response, attempt):
                 OverflowError
             ):
 
-                delay = DEFAULT_429_COOLDOWN * (
-                    2 ** attempt
+                delay = (
+                    DEFAULT_429_COOLDOWN
+                    * (2 ** attempt)
                 )
 
     else:
 
-        delay = DEFAULT_429_COOLDOWN * (
-            2 ** attempt
+        delay = (
+            DEFAULT_429_COOLDOWN
+            * (2 ** attempt)
         )
 
     return min(
         max(delay, 1),
         MAX_429_COOLDOWN
     )
+
+
+# ==========================================
+# RATE LIMIT WAIT
+# ==========================================
+
+def wait_for_request_slot(
+    host,
+    endpoint,
+    interval
+):
+
+    while True:
+
+        with state_lock:
+
+            now = time.time()
+
+            blocked_until = host_blocked_until.get(
+                host,
+                0
+            )
+
+            next_request = bucket_next_request.get(
+                (host, endpoint),
+                0
+            )
+
+            wait_time = max(
+                blocked_until - now,
+                next_request - now,
+                0
+            )
+
+            if wait_time <= 0:
+
+                bucket_next_request[
+                    (host, endpoint)
+                ] = now + interval
+
+                return
+
+        print(
+            "API WAIT:",
+            host,
+            "| ENDPOINT:",
+            endpoint,
+            "| TIME:",
+            round(wait_time, 1),
+            "seconds",
+            flush=True
+        )
+
+        time.sleep(wait_time)
 
 
 # ==========================================
@@ -232,12 +290,17 @@ def get_json(
     max_retries=1
 ):
 
-    host, endpoint, interval = get_rate_bucket(url)
+    host, endpoint, interval = get_rate_bucket(
+        url
+    )
 
     if not host:
         raise ValueError("Invalid API URL")
 
-    max_retries = max(0, int(max_retries))
+    max_retries = max(
+        0,
+        int(max_retries)
+    )
 
     key = cache_key(
         url,
@@ -253,10 +316,10 @@ def get_json(
         if cached_data is not None:
             return cached_data
 
-    lock = get_bucket_lock(
-        host,
-        endpoint
-    )
+    # One request at a time per host.
+    # This also makes host cooldown reliable
+    # across different endpoint buckets.
+    lock = get_host_lock(host)
 
     with lock:
 
@@ -272,48 +335,13 @@ def get_json(
 
         while True:
 
-            with state_lock:
-
-                now = time.time()
-
-                blocked_until = host_blocked_until.get(
-                    host,
-                    0
-                )
-
-                next_request = bucket_next_request.get(
-                    (host, endpoint),
-                    0
-                )
-
-                wait_time = max(
-                    blocked_until - now,
-                    next_request - now,
-                    0
-                )
-
-            if wait_time > 0:
-
-                print(
-                    "API WAIT:",
-                    host,
-                    "| ENDPOINT:",
-                    endpoint,
-                    "| TIME:",
-                    round(wait_time, 1),
-                    "seconds"
-                )
-
-                time.sleep(wait_time)
-
-            # Reserve next request slot
-            with state_lock:
-
-                now = time.time()
-
-                bucket_next_request[
-                    (host, endpoint)
-                ] = now + interval
+            # Always re-check cooldown and rate
+            # limits immediately before a request.
+            wait_for_request_slot(
+                host,
+                endpoint,
+                interval
+            )
 
             request_started = time.monotonic()
 
@@ -329,7 +357,8 @@ def get_json(
             except requests.RequestException as error:
 
                 elapsed = (
-                    time.monotonic() - request_started
+                    time.monotonic()
+                    - request_started
                 )
 
                 print(
@@ -339,7 +368,8 @@ def get_json(
                     round(elapsed, 2),
                     "s",
                     "| ERROR:",
-                    repr(error)
+                    repr(error),
+                    flush=True
                 )
 
                 if attempt >= max_retries:
@@ -350,22 +380,24 @@ def get_json(
                     MAX_429_COOLDOWN
                 )
 
+                attempt += 1
+
                 print(
                     "API RETRY:",
                     host,
                     "| WAIT:",
                     delay,
-                    "seconds"
+                    "seconds",
+                    flush=True
                 )
-
-                attempt += 1
 
                 time.sleep(delay)
 
                 continue
 
             elapsed = (
-                time.monotonic() - request_started
+                time.monotonic()
+                - request_started
             )
 
             # ----------------------------------
@@ -381,7 +413,8 @@ def get_json(
 
                 with state_lock:
 
-                    host_blocked_until[host] = (
+                    host_blocked_until[host] = max(
+                        host_blocked_until.get(host, 0),
                         time.time() + cooldown
                     )
 
@@ -390,7 +423,8 @@ def get_json(
                     host,
                     "| WAIT:",
                     cooldown,
-                    "seconds"
+                    "seconds",
+                    flush=True
                 )
 
                 if attempt < max_retries:
@@ -419,7 +453,8 @@ def get_json(
                     response.status_code,
                     "| TIME:",
                     round(elapsed, 2),
-                    "s"
+                    "s",
+                    flush=True
                 )
 
                 if attempt < max_retries:
@@ -429,15 +464,16 @@ def get_json(
                         MAX_429_COOLDOWN
                     )
 
+                    attempt += 1
+
                     print(
                         "API RETRY:",
                         host,
                         "| WAIT:",
                         delay,
-                        "seconds"
+                        "seconds",
+                        flush=True
                     )
-
-                    attempt += 1
 
                     time.sleep(delay)
 
@@ -450,7 +486,7 @@ def get_json(
             response.raise_for_status()
 
             # ----------------------------------
-            # RESPONSE TIME DIAGNOSTICS
+            # RESPONSE TIME
             # ----------------------------------
 
             if elapsed >= SLOW_REQUEST_THRESHOLD:
@@ -462,7 +498,8 @@ def get_json(
                     response.status_code,
                     "| TIME:",
                     round(elapsed, 2),
-                    "s"
+                    "s",
+                    flush=True
                 )
 
             # ----------------------------------
@@ -480,7 +517,8 @@ def get_json(
                     host,
                     "| TIME:",
                     round(elapsed, 2),
-                    "s"
+                    "s",
+                    flush=True
                 )
 
                 raise
@@ -504,7 +542,8 @@ def clear_cache():
         cache.clear()
 
     print(
-        "TROJAN V2 API CACHE CLEARED"
+        "TROJAN V2 API CACHE CLEARED",
+        flush=True
     )
 
 
@@ -518,16 +557,11 @@ def get_api_status():
 
     with state_lock:
 
-        hosts = set(
-            host for host, endpoint
-            in bucket_locks.keys()
-        )
+        hosts = list(host_locks.keys())
 
-        bucket_data = {
-            key: value
-            for key, value
-            in bucket_next_request.items()
-        }
+        bucket_data = dict(
+            bucket_next_request
+        )
 
         blocked_data = dict(
             host_blocked_until
@@ -553,16 +587,14 @@ def get_api_status():
                 )
             }
 
-        next_request_in = max(
-            [
-                item["next_request_in"]
-                for item in host_buckets.values()
-            ],
-            default=0
-        )
-
         status[host] = {
-            "next_request_in": next_request_in,
+            "next_request_in": max(
+                (
+                    item["next_request_in"]
+                    for item in host_buckets.values()
+                ),
+                default=0
+            ),
             "blocked_for": round(
                 max(
                     blocked_data.get(host, 0) - now,
