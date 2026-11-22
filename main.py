@@ -615,6 +615,15 @@ def process_completed_tasks():
 
         if status == "waiting":
 
+            database_decision = getattr(__import__("database"), "record_filter_decision")
+            database_decision(
+                address, "MARKET_AND_STRATEGY", "WAIT", reason,
+                score=result.get("score"),
+                liquidity=result.get("liquidity"),
+                source_count=len(task["token"].get("discovery_sources", []))
+                if isinstance(task.get("token", {}).get("discovery_sources"), list) else 0
+            )
+
             queue_retry(
                 address,
                 task["strategy"],
@@ -630,6 +639,10 @@ def process_completed_tasks():
 
         if status == "error":
 
+            __import__("database").record_filter_decision(
+                address, "ANALYSIS", "ERROR", reason
+            )
+
             queue_retry(
                 address,
                 task["strategy"],
@@ -643,6 +656,11 @@ def process_completed_tasks():
             continue
 
         if status != "approved":
+
+            __import__("database").record_filter_decision(
+                address, "MARKET_AND_STRATEGY", "REJECT", reason,
+                score=result.get("score"), liquidity=result.get("liquidity")
+            )
 
             remove_pending_duplicates(address)
 
@@ -683,6 +701,14 @@ def process_completed_tasks():
             remove_pending_duplicates(address)
 
             continue
+
+        __import__("database").record_filter_decision(
+            address, "COMPLETE_PIPELINE", "PASS",
+            "Approved for paper entry evaluation",
+            score=score, liquidity=result.get("liquidity"),
+            source_count=len(task["token"].get("discovery_sources", []))
+            if isinstance(task.get("token", {}).get("discovery_sources"), list) else 0
+        )
 
         try:
 
