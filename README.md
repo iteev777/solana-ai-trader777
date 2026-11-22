@@ -110,6 +110,15 @@ Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address an
 
 The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, and `/api/performance`. The strategy-performance view counts closed SELL trades only and reports realized P/L and win rate separately for MAIN and SNIPER. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
 
+## RPC failover and adaptive paper learning
+
+- Configure one or more Solana RPC HTTP endpoints with `SOLANA_RPC_URL` or comma-separated `SOLANA_RPC_URLS`.
+- Optional failover endpoints: `HELIUS_RPC_URL`, `QUICKNODE_RPC_URL`, `TRITON_RPC_URL`, and `ALCHEMY_RPC_URL`.
+- RPC 429 responses trigger per-endpoint cooldown and failover; dashboard health reports endpoint hosts and counters without exposing URLs or credentials.
+- The account WebSocket coalesces repeated pool notifications to avoid redundant RPC snapshots. The default refresh floor is 500 ms per watched pool; this is a throttle, not a guaranteed end-to-end price latency.
+- Adaptive learning reads paper-mode realized sell outcomes only. After the configured minimum sample (default 30), it adjusts future paper position size between 0.80x and 1.15x. It does not alter live execution, and live execution remains locked.
+- Additional strategy fields include candle body/range size, consecutive green/red candles, volume-spike state and holding-time input.
+
 ## Automated safety tests
 
 Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. GitHub Actions runs the same suite on feature-branch pushes and pull requests.
