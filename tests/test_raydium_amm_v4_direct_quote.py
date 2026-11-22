@@ -71,6 +71,15 @@ class RaydiumAmmV4DirectQuoteTests(unittest.TestCase):
         self.assertEqual(result["output_mint"], self.base_mint)
         self.assertGreater(result["out_amount"], 0)
 
+
+    def test_dispatch_uses_pool_owner_for_raydium_v4(self):
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["raydium_amm_v4"], "data": self.pool_data
+        }), patch.object(chain, "quote_raydium_amm_v4_pool", return_value={"protocol": "raydium_amm_v4"}) as quote:
+            result = chain.quote_direct_pool(self.pool, self.base_mint, 1000, 75)
+        self.assertEqual(result["protocol"], "raydium_amm_v4")
+        quote.assert_called_once_with(self.pool, self.base_mint, 1000, 75)
+
     def test_rejects_wrong_pool_owner(self):
         with patch.object(chain, "_account", return_value={"owner": "wrong", "data": self.pool_data}):
             with self.assertRaisesRegex(ValueError, "not owned"):
