@@ -131,7 +131,9 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
     is_swap = bool(invoked & _swap_program_allowlist())
     action = "TOKEN TRANSFER / UNKNOWN"
     reason = "NO_RECOGNISED_SWAP_PROGRAM"
-    if is_swap:
+    if wallet_index != 0:
+        reason = "WATCHED_WALLET_NOT_FEE_PAYER"
+    elif is_swap:
         native_quote = Decimal(str(economic_sol_delta))
         quote_flow = quote_delta if quote_delta != 0 else native_quote
         if token_delta > 0 and quote_flow < Decimal("-0.0001"):
