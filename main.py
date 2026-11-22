@@ -363,6 +363,11 @@ def analyze_token_task(address, strategy_name, token):
             pair.get("dexId") or token.get("dexId")
             or token.get("poolName") or token.get("pool_name") or ""
         )
+        if str(pool_protocol).lower() == "geckoterminal":
+            pool_protocol = (
+                token.get("dexId") or token.get("poolName")
+                or token.get("pool_name") or ""
+            )
         onchain_snapshot = None
         if pool_address and get_onchain_status().get("rpc_configured"):
             try:
