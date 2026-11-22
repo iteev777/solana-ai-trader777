@@ -324,3 +324,10 @@ The filter pipeline supports optional metadata completeness gates: `TROJAN_FILTE
 
 Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_LIQUIDITY_USD` (maximum 0 disables the ceiling). Valuation bands are independently configurable with `TROJAN_FILTER_MIN_FDV_USD`, `TROJAN_FILTER_MAX_FDV_USD`, `TROJAN_FILTER_MIN_MARKET_CAP_USD` and `TROJAN_FILTER_MAX_MARKET_CAP_USD`. A positive floor with missing data returns WAIT; a configured ceiling only applies when the measurement exists. Invalid negative valuations are rejected. Existing default behavior remains permissive when optional metadata and floors are disabled.
 
+
+
+## PumpSwap direct quote adapter
+
+The read-only direct quote router now recognises PumpSwap pools from the on-chain program owner. It reads the pool, GlobalConfig, Pump Fees FeeConfig, both vaults and both mint accounts at one confirmed RPC slot; validates the account owners, discriminators, pool/vault/mint relationships, trade-disable flags, effective quote reserve (vault amount plus signed virtual quote reserve), and fee configuration. It calculates both quote-in buys and base-in sells, includes the separate LP/protocol/creator fee components, and returns slippage-adjusted minimum output and snapshot telemetry.
+
+The current adapter deliberately uses the highest total fee found across the on-chain flat, standard-tier, stable-tier and exotic fee entries. This conservative policy avoids assuming an unverified pool classification or a cheaper market-cap tier, but can understate the output of pools whose actual fee tier is lower. Token-2022, cashback pools and holder-reward pools remain refused until their extra token/fee behavior is independently modelled. This is a quote-only adapter: signing, transaction construction and broadcast remain disabled.
