@@ -11,6 +11,8 @@ A multi-source Solana token scanner with a dip-reversal entry model and rapid pa
 - Monitors paper positions frequently, with a 9% stop loss, 10% take-profit target, 4% trailing activation, 3.5% trailing distance, and a 15-minute rotation exit.
 - Paper P/L includes an estimated 0.75% fee on each swap side. Actual Solana execution costs and slippage vary.
 - Market prices are mapped only to the DexScreener pair's base token; a base-token USD price is never assigned to the quote token.
+- GeckoTerminal new-pool results carry normalized market snapshots into analysis; known Gecko pool addresses are retained with paper positions and used as a rate-limited fallback when DexScreener has no quote. This is an API pool-data fallback, not a direct on-chain reserve decoder.
+- Token filter decisions (pass, wait, reject, error) are stored in SQLite with reasons and exposed through the dashboard filtering analytics endpoint.
 
 ## Important limitations
 
