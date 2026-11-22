@@ -212,6 +212,7 @@ def _run():
             subscriptions = {}
             sent = {}
             account_cache = {}
+            subscription_retry_after = {}
             request_id = 1
             with _lock:
                 _status.update({"running": True, "configured": True, "last_error": None})
@@ -224,6 +225,9 @@ def _run():
                 removed_keys = set(account_cache) - current
                 for key in removed_keys:
                     account_cache.pop(key, None)
+                for pair in list(subscription_retry_after):
+                    if pair[0] not in current:
+                        subscription_retry_after.pop(pair, None)
                 for pair in list(sent):
                     if pair[0] not in current:
                         subscription_id = next(
@@ -245,22 +249,21 @@ def _run():
                 # Discover each pool's actual reserve accounts once per connection.
                 from solana_onchain import get_pool_watch_accounts
                 for key in current:
-                    if key in account_cache:
-                        continue
-                    try:
-                        accounts = get_pool_watch_accounts(key[0], key[1])
-                        if not accounts:
-                            raise ValueError("pool returned no watchable accounts")
-                        account_cache[key] = accounts
-                    except Exception as error:
-                        with _lock:
-                            _status["last_error"] = (
-                                "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
-                            )
-                        continue
-                    for account in account_cache[key]:
+                    if key not in account_cache:
+                        try:
+                            accounts = get_pool_watch_accounts(key[0], key[1])
+                            if not accounts:
+                                raise ValueError("pool returned no watchable accounts")
+                            account_cache[key] = accounts
+                        except Exception as error:
+                            with _lock:
+                                _status["last_error"] = (
+                                    "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
+                                )
+                            continue
+                    for account in account_cache.get(key, []):
                         pair = (key, account)
-                        if pair in sent:
+                        if pair in sent or time.monotonic() < subscription_retry_after.get(pair, 0.0):
                             continue
                         ws.send(json.dumps({
                             "jsonrpc": "2.0", "id": request_id,
@@ -284,8 +287,10 @@ def _run():
                     )
                     if pair and "result" in payload:
                         subscriptions[payload["result"]] = pair
+                        subscription_retry_after.pop(pair, None)
                     elif pair and "error" in payload:
                         sent.pop(pair, None)
+                        subscription_retry_after[pair] = time.monotonic() + 5.0
                         with _lock:
                             _status["last_error"] = (
                                 "ACCOUNT SUBSCRIPTION REJECTED: "

@@ -56,7 +56,7 @@ class ConfirmedPoolSnapshotTests(unittest.TestCase):
              patch.object(onchain, "_multiple_accounts_with_context",
                           return_value=(self.accounts, 987654)):
             result = onchain.decode_pool_snapshot(
-                self.pool_id, "pumpswap", self.base_mint, _force=True
+                self.pool_id, "pumpswap", self.base_mint, _force=True, _register_watch=False
             )
         self.assertEqual(result["snapshotSlot"], 987654)
         self.assertGreaterEqual(result["snapshotAgeSeconds"], 0)
@@ -71,7 +71,7 @@ class ConfirmedPoolSnapshotTests(unittest.TestCase):
                           return_value=(changed, 987655)):
             with self.assertRaisesRegex(ValueError, "owner changed"):
                 onchain.decode_pool_snapshot(
-                    self.pool_id, "pumpswap", self.base_mint, _force=True
+                    self.pool_id, "pumpswap", self.base_mint, _force=True, _register_watch=False
                 )
 
     def test_rejects_pool_relationship_change_inside_confirmed_snapshot(self):
@@ -83,7 +83,7 @@ class ConfirmedPoolSnapshotTests(unittest.TestCase):
                           return_value=(changed, 987656)):
             with self.assertRaisesRegex(ValueError, "relationships changed"):
                 onchain.decode_pool_snapshot(
-                    self.pool_id, "pumpswap", self.base_mint, _force=True
+                    self.pool_id, "pumpswap", self.base_mint, _force=True, _register_watch=False
                 )
 
     def test_cache_reports_actual_age_since_confirmed_snapshot(self):
