@@ -109,6 +109,20 @@ def calculate_indicators(candles):
             obv += volumes[index]
         elif closes[index] < closes[index - 1]:
             obv -= volumes[index]
+
+    last_candle = rows[-1]
+    candle_body_pct = (last_candle["close"] - last_candle["open"]) / last_candle["open"] * 100
+    candle_range_pct = (last_candle["high"] - last_candle["low"]) / last_candle["open"] * 100
+    consecutive_green = 0
+    consecutive_red = 0
+    for candle in reversed(rows):
+        if candle["close"] > candle["open"] and consecutive_red == 0:
+            consecutive_green += 1
+        elif candle["close"] < candle["open"] and consecutive_green == 0:
+            consecutive_red += 1
+        else:
+            break
+
     return {
         "ready": True,
         "candle_count": len(rows),
@@ -122,6 +136,10 @@ def calculate_indicators(candles):
         "previous_high_20": previous_high,
         "volume_spike_ratio": round(volume_spike, 3) if volume_spike is not None else None,
         "volume_spike": volume_spike is not None and volume_spike >= 2.0,
+        "candle_body_pct": round(candle_body_pct, 5),
+        "candle_range_pct": round(candle_range_pct, 5),
+        "consecutive_green_candles": consecutive_green,
+        "consecutive_red_candles": consecutive_red,
         "macd": round(macd_line[-1], 12),
         "macd_signal": round(macd_signal[-1], 12),
         "macd_histogram": round(macd_histogram, 12),
