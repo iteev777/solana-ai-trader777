@@ -52,6 +52,7 @@ DISCOVERY_TOKEN_TIMEOUT = 600
 WAIT_RETRY_INTERVAL = 10
 ERROR_RETRY_INTERVAL = 30
 MAX_ANALYSIS_RETRIES = 2
+REJECTED_TOKEN_RESCAN_INTERVAL = 60
 
 executor = ThreadPoolExecutor(max_workers=WORKERS)
 discovery_executor = ThreadPoolExecutor(max_workers=1)
@@ -59,6 +60,7 @@ discovery_executor = ThreadPoolExecutor(max_workers=1)
 discovery_future = None
 pending_tasks = {}
 seen_tokens = set()
+rejected_tokens_until = {}
 
 pending_sniper_tokens = {}
 pending_discovery_tokens = {}
@@ -500,6 +502,14 @@ def schedule_token(
     if address in seen_tokens or address in pending_tasks:
         return False
 
+    rejected_until = rejected_tokens_until.get(address, 0)
+
+    if time.time() < rejected_until:
+        return False
+
+    if rejected_until:
+        rejected_tokens_until.pop(address, None)
+
     if len(pending_tasks) >= MAX_PENDING_TASKS:
 
         log_event("TASK LIMIT REACHED", address)
@@ -642,6 +652,14 @@ def process_completed_tasks():
                 reason
             )
 
+            # Rejected candidates may become viable later as liquidity,
+            # volume and buyer flow change. Revisit after a short cooldown
+            # instead of blacklisting them for the entire process lifetime.
+            seen_tokens.discard(address)
+            rejected_tokens_until[address] = (
+                time.time() + REJECTED_TOKEN_RESCAN_INTERVAL
+            )
+
             continue
 
         score = safe_float(result.get("score"))
@@ -739,21 +757,59 @@ def add_discovery_tokens():
         log_event("AGGREGATOR ERROR", reason=repr(error))
 
     added = 0
+    invalid = 0
+    already_seen = 0
+    already_pending = 0
+    already_open = 0
+    cooldown = 0
+    blocked = 0
 
     for token in tokens:
 
         if not isinstance(token, dict):
+            invalid += 1
             continue
 
         address = get_token_address(token)
 
         if not address:
+            invalid += 1
+            continue
+
+        if address in pending_tasks:
+            already_pending += 1
+            continue
+
+        if address in seen_tokens:
+            already_seen += 1
+            continue
+
+        if address in paper.get_positions():
+            already_open += 1
+            continue
+
+        if time.time() < rejected_tokens_until.get(address, 0):
+            cooldown += 1
             continue
 
         if schedule_token(address, "main", token):
             added += 1
+        else:
+            blocked += 1
 
-    log_event("DISCOVERY TOKENS QUEUED", reason=str(added))
+    log_event(
+        "DISCOVERY TOKENS QUEUED",
+        reason=(
+            "queued=" + str(added)
+            + " | scanned=" + str(len(tokens))
+            + " | invalid=" + str(invalid)
+            + " | already_seen=" + str(already_seen)
+            + " | already_pending=" + str(already_pending)
+            + " | open_positions=" + str(already_open)
+            + " | reject_cooldown=" + str(cooldown)
+            + " | blocked=" + str(blocked)
+        )
+    )
 
 
 # ==========================================
