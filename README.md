@@ -205,3 +205,27 @@ Pool RPC transport failures (timeouts, provider outages and rate limits) are kep
 Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata.
 
 Before scheduling analysis, the discovery loop fills missing market-data snapshots in bounded batches and ranks candidates using liquidity, 5m/1h/6h/24h volume, buy/sell flow, source agreement, pool age, and multi-window momentum. Candidate tiers (strong/watch/weak/reject) are exposed through `/api/discovery` and the dashboard. Incomplete data remains visible as unknown and is not silently converted into a rejection. Only explicit invalid market facts (for example zero liquidity or a non-positive quoted price) are hard-rejected by this ranking stage. Scores are prioritisation signals, not buy signals, and do not unlock live trading.
+
+
+## Ordered candidate filtering
+
+Before strategy evaluation, Trojan runs an auditable filter pipeline in this order: metadata and symbol integrity, market price/liquidity integrity, pool age, valuation, transaction/volume activity, short-window momentum, discovery-source provenance, and optional candidate-quality score. Each stage returns a distinct `PASS`, `WAIT`, or `REJECT` result with a reason and measured inputs. Missing optional data is not fabricated as zero.
+
+Optional Railway variables (unset defaults preserve the current strategy behavior):
+
+- `TROJAN_FILTER_MIN_LIQUIDITY_USD` (default: $2,500 for sniper; $0 additional floor for main)
+- `TROJAN_FILTER_MIN_POOL_AGE_MINUTES` (default: 0)
+- `TROJAN_FILTER_MAX_POOL_AGE_MINUTES` (default: no practical upper bound)
+- `TROJAN_FILTER_REQUIRE_POOL_AGE` (default: false)
+- `TROJAN_FILTER_MAX_FDV_USD` (default: no practical cap)
+- `TROJAN_FILTER_MIN_LIQUIDITY_FDV_RATIO` (default: 0, disabled)
+- `TROJAN_FILTER_MIN_VOLUME_5M_USD` (default: 0, disabled)
+- `TROJAN_FILTER_MIN_TXNS_5M` (default: 0, disabled)
+- `TROJAN_FILTER_MIN_BUY_RATIO` (default: 0, disabled; range 0–1)
+- `TROJAN_FILTER_MIN_CHANGE_5M_PCT` (default: -100)
+- `TROJAN_FILTER_MAX_CHANGE_5M_PCT` (default: 10,000)
+- `TROJAN_FILTER_REQUIRE_M5_CHANGE` (default: false)
+- `TROJAN_FILTER_MIN_DISCOVERY_SOURCES` (default: 0, disabled)
+- `TROJAN_FILTER_MIN_QUALITY_SCORE` (default: 0, disabled; range 0–100)
+
+Thresholds should be calibrated from paper-trading evidence before being tightened. A filter pass is not a buy signal; strategy, RugCheck, on-chain security, route quality and risk checks remain separate gates.

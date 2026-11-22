@@ -511,6 +511,28 @@ def analyze_token_task(address, strategy_name, token):
         if not isinstance(token_data.get("liquidity"), dict):
             token_data["liquidity"] = {"usd": liquidity}
 
+        # Ordered, auditable filtering before strategy evaluation.
+        # Optional activity/momentum thresholds are environment-configurable;
+        # absent optional provider data is not silently converted to zero.
+        import filter_pipeline
+        filter_report = filter_pipeline.evaluate_token(
+            token_data, address, strategy=strategy_name
+        )
+        if filter_report.get("status") == "WAIT":
+            return {
+                "status": "waiting",
+                "reason": filter_report.get("reason", "FILTER_DATA_WAIT"),
+                "filter_report": filter_report,
+                "address": address,
+            }
+        if filter_report.get("status") != "PASS":
+            return {
+                "status": "rejected",
+                "reason": filter_report.get("reason", "FILTER_REJECTED"),
+                "filter_report": filter_report,
+                "address": address,
+            }
+
         account = paper.get_account_summary()
 
         open_positions = len(paper.get_positions())
@@ -623,6 +645,7 @@ def analyze_token_task(address, strategy_name, token):
             "score": score,
             "strategy": strategy_name,
             "analysis": trade_decision,
+            "filter_report": filter_report,
             "pool_address": pool_address,
             "market_source": pair.get("marketSource") or pair.get("dexId"),
             "pool_protocol": pool_protocol,
