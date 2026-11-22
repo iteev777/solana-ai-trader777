@@ -88,7 +88,7 @@ def add_copy_watch_wallet(wallet, label=None):
 def remove_copy_watch_wallet(wallet):
     address = _validate_wallet_address(wallet)
     if address in _environment_wallets():
-        raise ValueError("Environment-configured wallets must be removed from TROJAN_COPY_WALLETS")
+        raise ValueError("environment-configured wallets must be removed from TROJAN_COPY_WALLETS")
     return database.delete_copy_watch_wallet(address)
 
 
