@@ -839,6 +839,26 @@ def get_positions(mode):
     return positions
 
 
+
+def update_position_metadata(mode, token_address, metadata):
+    """Persist strategy state such as a trailing-stop high-water price."""
+    validate_mode(mode)
+    if not token_address or not isinstance(metadata, dict):
+        return False
+
+    with connect() as connection:
+        cursor = connection.execute("""
+            UPDATE positions
+            SET metadata = ?
+            WHERE mode = ? AND token_address = ?
+        """, (
+            json.dumps(metadata),
+            mode,
+            token_address
+        ))
+        return cursor.rowcount > 0
+
+
 # ==========================================
 # TRADES
 # ==========================================
