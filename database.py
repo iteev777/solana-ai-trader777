@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -330,6 +330,16 @@ def initialize_database():
                 updated_at TEXT NOT NULL
             )
         """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch (
+                wallet TEXT PRIMARY KEY,
+                label TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
         connection.execute("""
             CREATE TABLE IF NOT EXISTS copy_trade_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1545,6 +1555,76 @@ def get_strategy_configs():
         except (ValueError, TypeError):
             continue
     return result
+
+
+def list_copy_watch_wallets():
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch (
+                wallet TEXT PRIMARY KEY,
+                label TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        rows = connection.execute("""
+            SELECT wallet, label, enabled, created_at, updated_at
+            FROM copy_wallet_watch
+            ORDER BY created_at, wallet
+        """).fetchall()
+    return [
+        {**dict(row), "enabled": bool(row["enabled"])}
+        for row in rows
+    ]
+
+
+def upsert_copy_watch_wallet(wallet, label=None, enabled=True):
+    if not isinstance(wallet, str) or not wallet.strip() or len(wallet.strip()) > 64:
+        raise ValueError("wallet address is invalid")
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled must be a boolean")
+    clean_label = str(label or "").strip()[:80] or None
+    address = wallet.strip()
+    timestamp = now()
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch (
+                wallet TEXT PRIMARY KEY,
+                label TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            INSERT INTO copy_wallet_watch (wallet, label, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                label=excluded.label,
+                enabled=excluded.enabled,
+                updated_at=excluded.updated_at
+        """, (address, clean_label, 1 if enabled else 0, timestamp, timestamp))
+    return next((item for item in list_copy_watch_wallets() if item["wallet"] == address), None)
+
+
+def delete_copy_watch_wallet(wallet):
+    if not isinstance(wallet, str) or not wallet.strip():
+        return False
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch (
+                wallet TEXT PRIMARY KEY,
+                label TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute(
+            "DELETE FROM copy_wallet_watch WHERE wallet = ?", (wallet.strip(),)
+        )
+        return connection.total_changes > 0
 
 
 def record_copy_trade_event(wallet, signature, action=None, token_mint=None,
