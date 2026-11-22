@@ -24,9 +24,9 @@ class RpcTransportTests(unittest.TestCase):
             "SOLANA_RPC_URLS": "https://secret-primary.example/rpc?token=hidden,https://secondary.example/rpc",
         }, clear=True), patch.object(rpc_transport.requests, "post", side_effect=[limited, healthy]) as post:
             result = rpc_transport.rpc_call("getHealth", [])
+            status = rpc_transport.get_rpc_status()
         self.assertEqual(result, "ok")
         self.assertEqual(post.call_count, 2)
-        status = rpc_transport.get_rpc_status()
         self.assertEqual(status["endpoint_count"], 2)
         self.assertNotIn("hidden", str(status))
         self.assertEqual(status["endpoints"][0]["rate_limits"], 1)
