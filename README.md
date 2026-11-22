@@ -194,3 +194,8 @@ GeckoTerminal requests share the API client's host-wide rate limiter and 60-seco
 ## Pool registry persistence
 
 Pool candidates and their provider provenance are stored in SQLite with a bounded write cadence and restored on process startup. Old snapshots expire after five minutes and fresh provider data replaces them. This uses the same database file as paper/live ledger records; durable storage across Railway deployments requires the service to mount a persistent Railway volume at the configured BOT_DATA_DIR.
+
+
+## Pool analysis resilience
+
+Pool RPC transport failures (timeouts, provider outages and rate limits) are kept separate from structural pool/layout failures. Transient failures use per-pool exponential backoff from 60 seconds up to 10 minutes; structural failures are quarantined for one hour. The pool refresher runs up to four independent confirmed account batches concurrently and continues refreshing healthy pools when one batch fails. Only snapshots explicitly marked on-chain verified are published. Dashboard health exposes active transient backoffs, structural quarantines and skipped pool refreshes.
