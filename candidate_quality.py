@@ -6,7 +6,6 @@ keeps candidates with incomplete data in a watch tier so fast/new tokens are
 not silently discarded.
 """
 import math
-import os
 import time
 
 _last_quality_status = {"candidate_count": 0, "tiers": {"strong": 0, "watch": 0, "weak": 0, "reject": 0}, "gating_enabled": False}
@@ -96,7 +95,7 @@ def score_candidate(token):
         reasons.append("VOLUME_UNKNOWN")
     else:
         if vol5 is not None:
-            score += 10 if vol5 >= 5000 else 6 if vol5 >= 1000 else 2 if vol5 > 0 else 0
+            score += 20 if vol5 >= 25000 else 15 if vol5 >= 5000 else 8 if vol5 >= 1000 else 2 if vol5 > 0 else 0
             if vol5 <= 0:
                 reasons.append("NO_5M_VOLUME")
         if vol1h is not None:
@@ -131,7 +130,7 @@ def score_candidate(token):
     if age_min is None:
         reasons.append("TOKEN_AGE_UNKNOWN")
     elif age_min < 2:
-        score += 3
+        score += 4
         reasons.append("VERY_NEW_POOL")
     elif age_min <= 1440:
         score += 10
