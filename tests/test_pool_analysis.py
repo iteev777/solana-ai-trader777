@@ -101,6 +101,17 @@ class PoolAnalysisResilienceTests(unittest.TestCase):
         )
         self.assertTrue(pool_analysis.is_structurally_blocked("bad-pool", now=11.0))
 
+    def test_unverified_snapshot_does_not_clear_active_backoff(self):
+        import protocol_validation
+        from solana_onchain import PROGRAMS
+        pool_analysis.record_transient_failure("pool", RuntimeError("RPC timeout"))
+        with patch("solana_onchain._account", return_value={"owner": PROGRAMS["pumpswap"]}), \
+             patch("database.record_protocol_validation"):
+            protocol_validation.record_validation(
+                "pumpswap", "pool", "mint", snapshot={"onchainVerified": False}
+            )
+        self.assertTrue(pool_analysis.should_skip_pool("pool"))
+
     def test_status_reports_separate_transient_and_structural_states(self):
         pool_analysis.record_transient_failure("rpc-pool", RuntimeError("timeout"), now=1.0)
         pool_analysis.record_structural_failure("bad-pool", ValueError("invalid layout"), now=1.0)
