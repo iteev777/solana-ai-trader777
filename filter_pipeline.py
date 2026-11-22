@@ -52,23 +52,62 @@ def _result(status, stage, reason, metrics=None):
     }
 
 
+def _clean_metadata_text(value):
+    if not isinstance(value, str):
+        return ""
+    return value.strip().strip("".join(chr(i) for i in range(0, 33)) + chr(127)).strip()
+
+
 def _metadata_stage(token, mint):
     symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name = token.get("name") or _get(token, "baseToken", "name")
+    name_raw = token.get("name") if "name" in token else _get(token, "baseToken", "name")
+    name = _clean_metadata_text(name_raw)
+    symbol = _clean_metadata_text(symbol)
+
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
-    if not isinstance(symbol, str) or not symbol.strip():
+    if not symbol:
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
-    normalized = symbol.strip().strip("\x00").strip()
-    if not normalized:
-        return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
-    if normalized.isdigit():
+    if symbol.isascii() and symbol.isdigit():
         return _result("REJECT", "metadata", "NUMERIC_SYMBOL")
-    if len(normalized) == 1 and not normalized.isascii():
+    reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "true").lower() == "true"
+    if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
-    if name is not None and (not isinstance(name, str) or not name.strip()):
-        return _result("WAIT", "metadata", "NAME_INVALID")
-    return _result("PASS", "metadata", "METADATA_VALID", {"symbol": normalized})
+    if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
+        return _result("WAIT", "metadata", "NAME_UNKNOWN" if name_raw is None else "NAME_INVALID")
+
+    info = token.get("info") if isinstance(token.get("info"), dict) else {}
+    token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
+    logo = (
+        token.get("logoURI") or token.get("logo_uri") or token.get("logo_url")
+        or token.get("imageUrl") or info.get("imageUrl") or token_meta.get("image")
+    )
+    require_logo = os.getenv("TROJAN_FILTER_REQUIRE_LOGO_URL", "false").lower() == "true"
+    if require_logo and not (isinstance(logo, str) and logo.strip().startswith(("https://", "http://"))):
+        return _result("WAIT", "metadata", "LOGO_URL_MISSING")
+
+    websites = token.get("websites")
+    if not isinstance(websites, list):
+        websites = info.get("websites") if isinstance(info.get("websites"), list) else []
+    has_website = any(
+        isinstance(item, dict) and isinstance(item.get("url"), str)
+        and item["url"].strip().startswith(("https://", "http://"))
+        for item in websites
+    )
+    direct_website = token.get("website") or token.get("website_url")
+    has_website = has_website or (
+        isinstance(direct_website, str)
+        and direct_website.strip().startswith(("https://", "http://"))
+    )
+    if os.getenv("TROJAN_FILTER_REQUIRE_WEBSITE_URL", "false").lower() == "true" and not has_website:
+        return _result("WAIT", "metadata", "WEBSITE_URL_MISSING")
+
+    return _result("PASS", "metadata", "METADATA_VALID", {
+        "symbol": symbol,
+        "name": name,
+        "logo_available": isinstance(logo, str) and logo.strip().startswith(("https://", "http://")),
+        "website_available": has_website,
+    })
 
 
 def _market_stage(token, strategy):
@@ -89,9 +128,16 @@ def _market_stage(token, strategy):
         0.0,
         1_000_000_000.0,
     )
+    max_liquidity = _env_float(
+        "TROJAN_FILTER_MAX_LIQUIDITY_USD", 0.0, 0.0, 1_000_000_000.0
+    )
     if liquidity < min_liquidity:
         return _result("WAIT", "market", "LIQUIDITY_BELOW_MINIMUM", {
             "liquidity_usd": liquidity, "minimum_usd": min_liquidity
+        })
+    if max_liquidity > 0 and liquidity > max_liquidity:
+        return _result("REJECT", "market", "LIQUIDITY_ABOVE_MAXIMUM", {
+            "liquidity_usd": liquidity, "maximum_usd": max_liquidity
         })
 
     base_mint = _get(token, "baseToken", "address")
@@ -262,19 +308,37 @@ def _age_stage(token):
 
 
 def _valuation_stage(token):
-    fdv = _number(token.get("fdv"))
-    market_cap = _number(token.get("marketCap"))
+    fdv = _number(_first_value(token.get("fdv"), token.get("fullyDilutedValuation")))
+    market_cap = _number(_first_value(token.get("marketCap"), token.get("market_cap")))
     liquidity = _number(_get(token, "liquidity", "usd"))
-    max_fdv = _env_float("TROJAN_FILTER_MAX_FDV_USD", 1e15, 0.0, 1e18)
-    min_liquidity_ratio = _env_float("TROJAN_FILTER_MIN_LIQUIDITY_FDV_RATIO", 0.0, 0.0, 100.0)
-    if fdv is not None and fdv < 0 or market_cap is not None and market_cap < 0:
+    if (fdv is not None and fdv < 0) or (market_cap is not None and market_cap < 0):
         return _result("REJECT", "valuation", "NEGATIVE_VALUATION")
-    if fdv is not None and fdv > max_fdv:
-        return _result("REJECT", "valuation", "FDV_ABOVE_MAXIMUM", {
-            "fdv_usd": fdv, "maximum_usd": max_fdv
-        })
-    valuation = fdv if fdv is not None else market_cap
+
+    rules = (
+        ("FDV", fdv, "TROJAN_FILTER_MIN_FDV_USD", "TROJAN_FILTER_MAX_FDV_USD"),
+        ("MARKET_CAP", market_cap, "TROJAN_FILTER_MIN_MARKET_CAP_USD", "TROJAN_FILTER_MAX_MARKET_CAP_USD"),
+    )
+    for label, value, min_env, max_env in rules:
+        minimum = _env_float(min_env, 0.0, 0.0, 1e18)
+        maximum = _env_float(max_env, 1e15, 0.0, 1e18)
+        if minimum > 0 and value is None:
+            return _result("WAIT", "valuation", label + "_UNKNOWN", {
+                "minimum_usd": minimum
+            })
+        if value is not None and minimum > 0 and value < minimum:
+            return _result("REJECT", "valuation", label + "_BELOW_MINIMUM", {
+                "value_usd": value, "minimum_usd": minimum
+            })
+        if value is not None and maximum > 0 and value > maximum:
+            return _result("REJECT", "valuation", label + "_ABOVE_MAXIMUM", {
+                "value_usd": value, "maximum_usd": maximum
+            })
+
+    min_liquidity_ratio = _env_float(
+        "TROJAN_FILTER_MIN_LIQUIDITY_FDV_RATIO", 0.0, 0.0, 100.0
+    )
     if min_liquidity_ratio > 0:
+        valuation = fdv if fdv is not None else market_cap
         if valuation is None or valuation <= 0 or liquidity is None:
             return _result("WAIT", "valuation", "LIQUIDITY_VALUATION_RATIO_UNKNOWN")
         ratio = liquidity / valuation
@@ -287,9 +351,16 @@ def _valuation_stage(token):
             "fdv_usd": fdv, "market_cap_usd": market_cap,
             "liquidity_to_fdv_ratio": round(ratio, 6)
         })
-    return _result("PASS", "valuation", "VALUATION_NOT_RESTRICTED", {
+    return _result("PASS", "valuation", "VALUATION_WITHIN_BOUNDS", {
         "fdv_usd": fdv, "market_cap_usd": market_cap
     })
+
+
+def _first_value(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 def _provenance_stage(token):
