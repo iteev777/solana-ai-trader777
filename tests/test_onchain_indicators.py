@@ -41,7 +41,7 @@ class OnchainDecoderTests(unittest.TestCase):
 
     def test_raydium_cpmm_quote_uses_confirmed_snapshot_and_fee_side(self):
         import solana_onchain
-        pool = bytearray(400)
+        pool = bytearray(420)
         pool[:8] = _discriminator("PoolState")
         put_key(pool, 8, 8)       # AmmConfig
         put_key(pool, 72, 3)      # vault token0
@@ -94,7 +94,7 @@ class OnchainDecoderTests(unittest.TestCase):
 
     def test_raydium_cpmm_quote_rejects_token_2022(self):
         import solana_onchain
-        pool = bytearray(400)
+        pool = bytearray(420)
         pool[:8] = _discriminator("PoolState")
         put_key(pool, 8, 8)
         put_key(pool, 72, 3)
