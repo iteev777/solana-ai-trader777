@@ -23,10 +23,12 @@ CACHE_TTL_SECONDS = 60
 POOL_STALE_TTL_SECONDS = 300
 FULL_POOL_REFRESH_TTL_SECONDS = 60
 POOL_REFRESH_RETRY_SECONDS = 30
+POOL_PERSIST_INTERVAL_SECONDS = 60
 
 _lock = threading.RLock()
 _candidates = OrderedDict()
 _candidate_updated_at = {}
+_persisted_at = {}
 _full_refresh_at = {}
 _full_refresh_retry_at = {}
 _gecko_retry_at = {}
@@ -76,7 +78,10 @@ def merge_pool_candidates(mint, pairs, source):
         return 0
     mint = mint.strip()
     now = time.time()
+    # Hydrate stale-safe persisted candidates before merging fresh provider rows.
+    get_pool_candidates(mint)
     merged_count = 0
+    structural_change = False
     with _lock:
         rows = _candidates.get(mint, OrderedDict())
         for pair in pairs:
@@ -92,8 +97,11 @@ def merge_pool_candidates(mint, pairs, source):
                 incoming["marketSources"] = [source]
                 incoming["poolSourceData"] = {source: copy.deepcopy(pair)}
                 rows[address] = incoming
+                structural_change = True
             else:
                 sources = set(existing.get("marketSources") or [])
+                if source not in sources:
+                    structural_change = True
                 sources.add(source)
                 source_data = dict(existing.get("poolSourceData") or {})
                 source_data[source] = copy.deepcopy(pair)
@@ -116,7 +124,25 @@ def merge_pool_candidates(mint, pairs, source):
         while len(_candidates) > MAX_TOKENS:
             removed, _ = _candidates.popitem(last=False)
             _candidate_updated_at.pop(removed, None)
+            _persisted_at.pop(removed, None)
         _status["pools_merged"] += merged_count
+        should_persist = bool(rows) and (
+            structural_change
+            or now - _persisted_at.get(mint, 0.0) >= POOL_PERSIST_INTERVAL_SECONDS
+        )
+        persist_payload = (
+            [copy.deepcopy(value) for value in _candidates[mint].values()]
+            if should_persist else None
+        )
+    if persist_payload:
+        try:
+            import database
+            database.save_pool_registry(mint, persist_payload, updated_at=now)
+            with _lock:
+                _persisted_at[mint] = now
+        except Exception as error:
+            with _lock:
+                _status["last_error"] = "POOL REGISTRY PERSIST: " + str(error)[:160]
     return merged_count
 
 
@@ -125,13 +151,53 @@ def get_pool_candidates(mint):
         return []
     normalized = mint.strip()
     with _lock:
+        rows = _candidates.get(normalized)
         updated_at = _candidate_updated_at.get(normalized, 0.0)
-        if updated_at and time.time() - updated_at > POOL_STALE_TTL_SECONDS:
+    if rows is None:
+        try:
+            import database
+            stored = database.load_pool_registry(normalized)
+        except Exception:
+            stored = None
+        if stored:
+            stored_at = float(stored.get("updated_at") or 0)
+            if stored_at > 0 and time.time() - stored_at <= POOL_STALE_TTL_SECONDS:
+                restored = OrderedDict()
+                for pair in stored.get("pools", []):
+                    if not isinstance(pair, dict):
+                        continue
+                    address = _pool_address(pair)
+                    base = pair.get("baseToken")
+                    if address and isinstance(base, dict) and base.get("address") == normalized:
+                        restored[address] = pair
+                with _lock:
+                    if normalized not in _candidates:
+                        _candidates[normalized] = restored
+                        _candidate_updated_at[normalized] = stored_at
+                        _persisted_at[normalized] = stored_at
+                    rows = _candidates.get(normalized)
+                    updated_at = _candidate_updated_at.get(normalized, stored_at)
+            else:
+                try:
+                    database.delete_pool_registry(normalized)
+                except Exception:
+                    pass
+        if rows is None:
+            with _lock:
+                rows = _candidates.get(normalized)
+                updated_at = _candidate_updated_at.get(normalized, 0.0)
+    if updated_at and time.time() - updated_at > POOL_STALE_TTL_SECONDS:
+        with _lock:
             _candidates.pop(normalized, None)
             _candidate_updated_at.pop(normalized, None)
-            return []
-        rows = _candidates.get(normalized)
-        return [copy.deepcopy(value) for value in rows.values()] if rows else []
+            _persisted_at.pop(normalized, None)
+        try:
+            import database
+            database.delete_pool_registry(normalized)
+        except Exception:
+            pass
+        return []
+    return [copy.deepcopy(value) for value in rows.values()] if rows else []
 
 
 def is_dexscreener_list_incomplete(pairs):
@@ -308,11 +374,12 @@ def get_pool_registry_status():
             "provider": "DexScreener + GeckoTerminal",
             "cache_ttl_seconds": CACHE_TTL_SECONDS,
             "pool_stale_ttl_seconds": POOL_STALE_TTL_SECONDS,
+            "persisted_tokens": len(_persisted_at),
             "max_pools_per_token": MAX_POOLS_PER_TOKEN,
         }
 
 
-def clear_pool_registry_state():
+def clear_pool_registry_state(clear_persisted=False):
     while True:
         try:
             _queue.get_nowait()
@@ -322,6 +389,7 @@ def clear_pool_registry_state():
     with _lock:
         _candidates.clear()
         _candidate_updated_at.clear()
+        _persisted_at.clear()
         _full_refresh_at.clear()
         _full_refresh_retry_at.clear()
         _gecko_retry_at.clear()
@@ -331,3 +399,10 @@ def clear_pool_registry_state():
                 "queued", "pending", "completed", "failed", "pools_merged",
                 "dex_pending", "gecko_pending"
             ) else None
+
+    if clear_persisted:
+        try:
+            import database
+            database.delete_pool_registry()
+        except Exception:
+            pass
