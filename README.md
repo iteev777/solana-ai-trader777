@@ -64,3 +64,28 @@ Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`,
 - A partial take-profit closes 50% of a position once it reaches +8% ROI; the remaining half continues under the normal stop, take-profit, trailing, and time-exit rules. Set `TROJAN_PARTIAL_TAKE_PROFIT_ENABLED=false` to disable it.
 - One DCA add of $2.50 is available after a 5% pullback, but it is **disabled by default**. Set `TROJAN_DCA_ENABLED=true` to enable it in paper mode. The add is blocked once the existing hard stop threshold has been reached and is limited to one add per position.
 - DCA and partial exits are recorded as separate paper transactions; realized P/L includes the configured estimated entry and exit fees.
+
+
+## On-chain pool verification and technical indicators
+
+Configure `SOLANA_RPC_URL` with a Solana mainnet RPC endpoint to enable read-only pool account decoding. Optional `SOLANA_WS_URL` is the matching websocket endpoint. The decoder verifies the pool account owner and binary discriminator before reading vaults. Supported layouts are PumpSwap Pool, Raydium CPMM, Raydium CLMM, Orca Whirlpool, and Meteora DLMM. Raydium AMM v4 and unsupported layouts fall back to the market-data providers; the bot does not pretend those are on-chain quotes.
+
+OHLCV candles are fetched from GeckoTerminal per known pool and stored in SQLite. The indicator engine calculates RSI(14), EMA(9/21), 20-candle breakout and volume-spike ratio. The optional technical entry filter is enabled by default when sufficient candles are available; it does not fabricate indicators when history is missing. Set `TROJAN_TECHNICAL_FILTER_ENABLED=false` to disable the extra confirmation. `TROJAN_OHLCV_MIN_INTERVAL` controls the minimum API request spacing (default 7.2 seconds).
+
+## Dashboard strategy editor
+
+The authenticated dashboard now has MAIN and SNIPER JSON rule editors. Save operations write to SQLite and override environment-based rules for that strategy. Use an empty JSON object (`{}`) to clear a saved override and return to the default strategy. Indicator fields include `rsi_14`, `ema_9`, `ema_21`, `ema_cross_bullish` (1/0), `breakout_20` (1/0), and `volume_spike_ratio`.
+
+## Telegram and copy-wallet monitoring
+
+Optional environment variables:
+
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`: send paper BUY/SELL, partial-exit and copy-watch alerts.
+- `TROJAN_COPY_WALLETS`: comma-separated public Solana wallet addresses (maximum 20) to monitor.
+- `SOLANA_WS_URL`: websocket endpoint for `logsSubscribe`; if omitted, it is derived from `SOLANA_RPC_URL` when possible.
+
+Copy-wallet tracking is read-only: it identifies token balance changes and SOL movement, stores unique signatures in SQLite and sends alerts. It does not place copy trades or sign transactions. Never enter a wallet seed phrase or private key into these settings.
+
+## Health and readiness
+
+The dashboard exposes `/api/readiness`, `/api/copy-trades`, and the strategy configuration endpoints. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
