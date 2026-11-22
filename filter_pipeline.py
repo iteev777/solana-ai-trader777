@@ -60,9 +60,9 @@ def _clean_metadata_text(value):
 
 def _metadata_stage(token, mint):
     symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name = token.get("name") or _get(token, "baseToken", "name")
+    name_raw = token.get("name") or _get(token, "baseToken", "name")
+    name = _clean_metadata_text(name_raw)
     symbol = _clean_metadata_text(symbol)
-    name = _clean_metadata_text(name)
 
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
@@ -74,7 +74,7 @@ def _metadata_stage(token, mint):
     if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
     if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
-        return _result("WAIT", "metadata", "NAME_UNKNOWN" if name is None else "NAME_INVALID")
+        return _result("WAIT", "metadata", "NAME_UNKNOWN" if name_raw is None else "NAME_INVALID")
 
     info = token.get("info") if isinstance(token.get("info"), dict) else {}
     token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
