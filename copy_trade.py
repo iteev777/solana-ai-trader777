@@ -82,16 +82,20 @@ def _fetch_wallet_transaction(signature, wallet):
             if item.get("owner") != wallet:
                 continue
             mint = item.get("mint")
-            amount = item.get("uiTokenAmount", {}).get("uiAmount")
+            ui_amount = item.get("uiTokenAmount", {})
+            amount = ui_amount.get("uiAmount")
+            if amount is None:
+                amount = ui_amount.get("uiAmountString")
             if mint and amount is not None:
                 token_deltas[mint] = token_deltas.get(mint, 0.0) + sign * float(amount)
     token_deltas = {mint: delta for mint, delta in token_deltas.items() if abs(delta) > 1e-12}
     if not token_deltas:
         return None
     mint, delta = max(token_deltas.items(), key=lambda item: abs(item[1]))
-    if delta > 0 and (sol_delta is None or sol_delta < 0):
+    # Ignore tiny SOL fee movements: they do not prove a swap took place.
+    if delta > 0 and sol_delta is not None and sol_delta < -0.0001:
         action = "BUY"
-    elif delta < 0 and (sol_delta is None or sol_delta > 0):
+    elif delta < 0 and sol_delta is not None and sol_delta > 0.0001:
         action = "SELL"
     else:
         action = "TOKEN TRANSFER / UNKNOWN"
