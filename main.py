@@ -639,7 +639,7 @@ def process_completed_tasks():
 
         if status == "error":
 
-            __import__("database").record_filter_decision(
+            database.record_filter_decision(
                 address, "ANALYSIS", "ERROR", reason
             )
 
