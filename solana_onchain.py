@@ -542,6 +542,7 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         impact_output_amount = output_amount
 
     output_reserve = reserve_base if is_buy else reserve_quote
+    gross_output_amount = output_amount if is_buy else gross_quote_out
     if output_amount <= 0 or output_amount >= output_reserve:
         raise ValueError("PumpSwap quote rounds to zero or exceeds available pool reserves")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
@@ -557,9 +558,10 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "provider": "pumpswap_direct", "protocol": "pumpswap", "pool_id": pool_address,
         "slot": slot, "snapshot_age_seconds": round(age, 3),
         "input_mint": input_mint, "output_mint": output_mint, "input_amount": amount_in,
-        "output_amount_gross": output_amount + total_fee, "out_amount": output_amount,
+        "output_amount_gross": gross_output_amount, "out_amount": output_amount,
         "minimum_out_amount": minimum_out, "unspent_input_amount": unspent_input,
         "fee_policy": "CONSERVATIVE_MAX_CONFIGURED_ONCHAIN_SCHEDULE",
+        "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
         "lp_fee_amount": fee_amounts[0], "protocol_fee_amount": fee_amounts[1],
         "creator_fee_amount": fee_amounts[2], "total_fee_amount": total_fee,
