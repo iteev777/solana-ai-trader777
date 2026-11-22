@@ -369,6 +369,8 @@ def analyze_token_task(address, strategy_name, token):
                     pool_address, pool_protocol, address
                 )
             except Exception as error:
+                from solana_onchain import record_onchain_error
+                record_onchain_error(error)
                 log_event("ONCHAIN POOL READ FAILED", address, repr(error))
         if isinstance(onchain_snapshot, dict):
             pair = dict(pair)
@@ -1109,6 +1111,8 @@ def monitor_positions():
                         merged.update(snapshot)
                         market_data[address] = merged
                 except Exception as error:
+                    from solana_onchain import record_onchain_error
+                    record_onchain_error(error)
                     log_event("ONCHAIN POSITION PRICE UNAVAILABLE", address, repr(error))
 
     except Exception as error:
