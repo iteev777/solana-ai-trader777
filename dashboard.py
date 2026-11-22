@@ -76,6 +76,8 @@ def _positions():
             "roi_percent": round(roi, 2) if roi is not None else None,
             "opened_at": position.get("opened_at"),
             "peak_price": (position.get("metadata") or {}).get("peak_price"),
+            "dca_count": int((position.get("metadata") or {}).get("dca_count", 0) or 0),
+            "partial_take_profit_done": bool((position.get("metadata") or {}).get("partial_take_profit_done")),
         })
     return result
 
@@ -197,7 +199,7 @@ footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
-<div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th></tr></thead><tbody id="positions"></tbody></table></div></section>
+<div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 <section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
@@ -222,7 +224,7 @@ document.getElementById('daily').textContent=usd(a.daily_realized_pnl);
 document.getElementById('loss').textContent=usd(a.daily_loss)+' / '+usd(o.risk.max_daily_loss);
 document.getElementById('closed').textContent=s.total_trades;
 document.getElementById('invested').textContent=usd(a.invested);
-document.getElementById('positions').innerHTML=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+p.token+'</td><td>'+p.strategy+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No open positions</td></tr>';
+document.getElementById('positions').innerHTML=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+p.token+'</td><td>'+p.strategy+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td></tr>';}).join(''):'<tr><td colspan="8" class="muted">No open positions</td></tr>';
 const m=o.market_data,r=o.runtime;
 const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
 document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
