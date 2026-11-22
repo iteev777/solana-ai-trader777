@@ -63,21 +63,68 @@ def _runtime():
 def _positions():
     import paper_trading as paper
     import main
+    from market_data import get_market_data_batch, get_gecko_pool_data_batch
+
+    open_positions = paper.get_positions()
+    addresses = [
+        address for address in open_positions
+        if isinstance(address, str) and address
+    ]
+
+    # Dashboard price refresh is independent of the bot's in-memory monitor.
+    # This avoids showing $0/partial after a restart or when last_prices has
+    # not yet been populated for an already-open paper position.
+    fresh_prices = {}
+    if addresses:
+        try:
+            market_data = get_market_data_batch(addresses)
+            if isinstance(market_data, dict):
+                for address, pair in market_data.items():
+                    if isinstance(pair, dict):
+                        try:
+                            price = float(pair.get("priceUsd") or 0)
+                        except (TypeError, ValueError):
+                            price = 0
+                        if price > 0:
+                            fresh_prices[address] = price
+
+                missing_pool_addresses = [
+                    (position.get("metadata") or {}).get("pool_address")
+                    for address, position in open_positions.items()
+                    if address not in fresh_prices
+                    and isinstance(position, dict)
+                    and isinstance(position.get("metadata"), dict)
+                    and position["metadata"].get("pool_address")
+                ]
+                if missing_pool_addresses:
+                    gecko_data = get_gecko_pool_data_batch(missing_pool_addresses)
+                    if isinstance(gecko_data, dict):
+                        for address, pair in gecko_data.items():
+                            if isinstance(pair, dict):
+                                try:
+                                    price = float(pair.get("priceUsd") or 0)
+                                except (TypeError, ValueError):
+                                    price = 0
+                                if price > 0:
+                                    fresh_prices[address] = price
+        except Exception as error:
+            print("[DASHBOARD] Position price refresh failed:", repr(error), flush=True)
 
     result = []
-    for address, position in paper.get_positions().items():
+    for address, position in open_positions.items():
         entry = float(position.get("entry_price") or 0)
-        current = main.last_prices.get(address)
+        current = fresh_prices.get(address) or main.last_prices.get(address)
         current = float(current) if current else None
         roi = ((current / entry) - 1) * 100 if current and entry > 0 else None
+        invested = float(position.get("invested") or 0)
         result.append({
             "token": address,
             "strategy": position.get("strategy", "main"),
             "entry_price": entry,
             "current_price": current,
-            "invested": float(position.get("invested") or 0),
+            "invested": invested,
             "market_value": (
-                float(position.get("invested") or 0) * current / entry
+                invested * current / entry
                 if current is not None and current > 0 and entry > 0 else None
             ),
             "roi_percent": round(roi, 2) if roi is not None else None,
