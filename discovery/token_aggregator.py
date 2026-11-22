@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from discovery.gecko_scanner import scan_new_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
+from discovery.dexscreener_scanner import scan_dexscreener
 
 
 # ==========================================
@@ -18,7 +19,8 @@ from discovery.birdeye_scanner import scan_birdeye
 SCANNERS = [
     ("geckoterminal", scan_new_pools),
     ("birdeye_meme_listing", scan_pumpfun),
-    ("birdeye", scan_birdeye)
+    ("birdeye", scan_birdeye),
+    ("dexscreener", scan_dexscreener)
 ]
 
 MAX_RESULTS = 300
