@@ -500,7 +500,6 @@ def get_pool_watch_accounts(pool_address, protocol):
     """
     if not isinstance(pool_address, str) or not pool_address.strip():
         raise ValueError("pool address is required for account watching")
-    declared = normalize_protocol(protocol)
     account = _account(pool_address.strip())
     owner_protocol = next(
         (name for name, program_id in PROGRAMS.items()
@@ -693,6 +692,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         }
         _cache[key] = {"time": snapshot_observed_at, "data": result}
         _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
+        if _register_watch:
+            _register_pool_price_watch(pool_address, protocol, token_mint)
         return result
 
     if token_mint not in (decoded["base_mint"], decoded["quote_mint"]):
