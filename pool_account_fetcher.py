@@ -76,7 +76,7 @@ def _normalize_pool_key(item):
     return tuple(value.strip() for value in item)
 
 
-def refresh_pools(pool_keys):
+def refresh_pools(pool_keys, prune_unwatched=False):
     """Refresh a group of pools with deduplicated, bounded RPC account batches."""
     from solana_onchain import (
         decode_pool_snapshot, fetch_pool_account_batch, get_pool_snapshot_accounts
@@ -89,10 +89,11 @@ def refresh_pools(pool_keys):
     now = time.time()
     with _lock:
         active = set(keys)
-        for key in list(_pool_account_sets):
-            if key not in active:
-                _pool_account_sets.pop(key, None)
-                _pool_account_set_times.pop(key, None)
+        if prune_unwatched:
+            for key in list(_pool_account_sets):
+                if key not in active:
+                    _pool_account_sets.pop(key, None)
+                    _pool_account_set_times.pop(key, None)
 
     account_sets = {}
     discovery_failures = 0
