@@ -551,7 +551,8 @@ def analyze_token_task(address, strategy_name, token):
             "market_source": pair.get("marketSource") or pair.get("dexId"),
             "pool_protocol": pool_protocol,
             "onchain_verified": bool(onchain_snapshot),
-            "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None
+            "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
+            "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None
         }
 
     except Exception as error:
@@ -702,12 +703,22 @@ def process_copy_signals():
                 log_event("COPY SELL ERROR", address, repr(error))
             continue
 
+        from copy_risk import check_copy_buy
+        decision = check_copy_buy(paper.get_positions(), wallet, address)
+        if not decision.get("allowed"):
+            log_event(
+                "COPY BUY RISK REJECTED", address,
+                "wallet=" + str(wallet),
+                "reason=" + str(decision.get("reason"))
+            )
+            continue
         token = {
             "tokenAddress": address,
             "chainId": "solana",
             "discovery_sources": ["copy_wallet"],
             "copy_wallet": wallet,
-            "copy_signature": event.get("signature")
+            "copy_signature": event.get("signature"),
+            "copy_trade_size_cap": decision.get("trade_size")
         }
         queued = schedule_token(address, "sniper", token)
         log_event(
@@ -883,6 +894,19 @@ def process_completed_tasks():
         try:
 
             approved_trade_size = safe_float(analysis.get("trade_size"))
+            copy_wallet = result.get("copy_wallet")
+            if copy_wallet:
+                from copy_risk import cap_copy_trade_size
+                approved_trade_size, copy_risk_decision = cap_copy_trade_size(
+                    paper.get_positions(), copy_wallet, address, approved_trade_size
+                )
+                if approved_trade_size <= 0:
+                    log_event(
+                        "COPY BUY RISK REJECTED AT EXECUTION", address,
+                        "wallet=" + str(copy_wallet),
+                        "reason=" + str(copy_risk_decision.get("reason"))
+                    )
+                    continue
             trade_result = manager.process_approved_signal(
                 address,
                 price,
@@ -893,7 +917,8 @@ def process_completed_tasks():
                     "market_source": result.get("market_source"),
                     "pool_protocol": result.get("pool_protocol"),
                     "onchain_verified": result.get("onchain_verified"),
-                    "copy_wallet": result.get("copy_wallet")
+                    "copy_wallet": result.get("copy_wallet"),
+                    "copy_signature": result.get("copy_signature")
                 }
             )
 
