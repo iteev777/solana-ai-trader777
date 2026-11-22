@@ -67,7 +67,7 @@ class DatabaseBackupTests(unittest.TestCase):
 
     def test_health_reports_storage_and_backup_state(self):
         database.backup_database(self.backup_dir)
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"TROJAN_BACKUP_DIR": self.backup_dir}, clear=True):
             health = database.get_database_health()
         self.assertEqual(health["integrity"], "ok")
         self.assertEqual(health["journal_mode"], "wal")
