@@ -22,11 +22,74 @@ _status = {
 }
 
 
-def _wallets():
+def _environment_wallets():
     return list(dict.fromkeys(
         item.strip() for item in os.getenv("TROJAN_COPY_WALLETS", "").split(",")
         if item.strip()
     ))[:20]
+
+
+def _wallets():
+    configured = _environment_wallets()
+    try:
+        stored = [
+            item["wallet"] for item in database.list_copy_watch_wallets()
+            if item.get("enabled") and item.get("wallet")
+        ]
+    except Exception as error:
+        _status["last_error"] = "watchlist database: " + type(error).__name__
+        stored = []
+    return list(dict.fromkeys(configured + stored))[:20]
+
+
+def _validate_wallet_address(wallet):
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("Wallet address is required")
+    address = wallet.strip()
+    try:
+        from solana_onchain import _b58decode
+        decoded = _b58decode(address)
+    except Exception as error:
+        raise ValueError("Wallet address must be valid base58") from error
+    if len(decoded) != 32:
+        raise ValueError("Wallet address must decode to 32 bytes")
+    return address
+
+
+def get_copy_watchlist():
+    env = _environment_wallets()
+    result = [
+        {"wallet": wallet, "label": "Environment variable", "enabled": True, "source": "environment"}
+        for wallet in env
+    ]
+    for item in database.list_copy_watch_wallets():
+        if item["wallet"] in env:
+            continue
+        result.append({**item, "source": "dashboard"})
+    return {
+        "wallets": result,
+        "active_count": len(_wallets()),
+        "maximum": 20,
+        "monitor": get_copy_monitor_status(),
+    }
+
+
+def add_copy_watch_wallet(wallet, label=None):
+    address = _validate_wallet_address(wallet)
+    if address in _environment_wallets():
+        raise ValueError("This wallet is already configured by TROJAN_COPY_WALLETS")
+    current = database.list_copy_watch_wallets()
+    existing = next((item for item in current if item["wallet"] == address), None)
+    if not existing and len(_wallets()) >= 20:
+        raise ValueError("Maximum of 20 copy-watch wallets reached")
+    return database.upsert_copy_watch_wallet(address, label=label, enabled=True)
+
+
+def remove_copy_watch_wallet(wallet):
+    address = _validate_wallet_address(wallet)
+    if address in _environment_wallets():
+        raise ValueError("environment-configured wallets must be removed from TROJAN_COPY_WALLETS")
+    return database.delete_copy_watch_wallet(address)
 
 
 def _rpc_url():
@@ -108,10 +171,15 @@ def _monitor_loop():
                 "wallet_count": len(subscriptions), "last_error": None
             })
             while True:
+                if _wallets() != wallets:
+                    print("[TROJAN V2] COPY WATCHLIST CHANGED; RECONNECTING", flush=True)
+                    break
                 try:
                     payload = json.loads(ws.recv())
                 except websocket.WebSocketTimeoutException:
                     ws.ping()
+                    if _wallets() != wallets:
+                        break
                     continue
                 params = payload.get("params", {})
                 value = params.get("result", {}).get("value", {})
@@ -187,5 +255,6 @@ def get_copy_monitor_status():
     configured = bool(wallets) and bool(_rpc_url()) and bool(_ws_url())
     return dict(
         _status, configured=configured, wallet_count=len(wallets),
-        paper_copy_enabled=os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true"
+        paper_copy_enabled=os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true",
+        watchlist_maximum=20
     )
