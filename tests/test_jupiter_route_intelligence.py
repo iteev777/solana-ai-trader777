@@ -15,6 +15,10 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["route_labels"], ["Raydium", "Orca"])
         self.assertTrue(result["is_split_route"])
 
+    def test_base_unit_amount_preserves_large_integer_precision(self):
+        amount = "18446744073709551615"
+        self.assertEqual(live_execution._amount(amount, "amount"), 18446744073709551615)
+
     def test_route_diagnostics_reject_malformed_plan(self):
         with self.assertRaises(ValueError):
             live_execution._route_diagnostics(["not-a-step"])
