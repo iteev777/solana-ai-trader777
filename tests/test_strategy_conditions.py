@@ -114,6 +114,12 @@ class StrategyConditionTests(unittest.TestCase):
             "minimum_pct": 10, "maximum_pct": 30
         })[0])
 
+    def test_six_hour_price_change_reads_raw_market_context(self):
+        passed, _ = self.evaluate("PriceChangePercent", {
+            "timeframe": "h6", "comparison": "ABOVE", "threshold_pct": 10
+        })
+        self.assertTrue(passed)
+
     def test_liquidity_change_and_volatility(self):
         self.assertTrue(self.evaluate("LiquidityChangeSinceEntry", {
             "comparison": "ABOVE", "threshold_pct": 5
