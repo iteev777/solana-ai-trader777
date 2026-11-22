@@ -27,7 +27,9 @@ ALLOWED_FIELDS = {
     "buy_ratio", "score", "source_count", "txns_m5_total",
     "pair_age_minutes", "rsi_14", "ema_9", "ema_21",
     "ema_cross_bullish", "breakout_20", "volume_spike_ratio",
-    "timeframe_ready_count", "bullish_timeframes", "bearish_timeframes",\n    "macd_histogram", "macd_bullish", "bollinger_percent_b",\n    "atr_percent", "stochastic_k", "above_vwap"
+    "timeframe_ready_count", "bullish_timeframes", "bearish_timeframes",
+    "macd_histogram", "macd_bullish", "bollinger_percent_b",
+    "atr_percent", "stochastic_k", "above_vwap"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
 
