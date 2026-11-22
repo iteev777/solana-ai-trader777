@@ -125,7 +125,8 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
     if not traded:
         return None
     mint, token_delta = max(traded.items(), key=lambda item: abs(item[1]))
-    quote_delta = sum((amount for mint, amount in deltas.items() if mint in QUOTE_MINTS), Decimal(0))
+    quote_flows = [amount for mint, amount in deltas.items() if mint in QUOTE_MINTS]
+    quote_delta = sum(quote_flows, Decimal(0))
 
     invoked = _program_ids(tx, keys)
     is_swap = bool(invoked & _swap_program_allowlist())
@@ -134,11 +135,18 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
     if wallet_index != 0:
         reason = "WATCHED_WALLET_NOT_FEE_PAYER"
     elif is_swap:
-        native_quote = Decimal(str(economic_sol_delta))
-        quote_flow = quote_delta if quote_delta != 0 else native_quote
-        if token_delta > 0 and quote_flow < Decimal("-0.0001"):
+        if quote_flows and all(value < 0 for value in quote_flows):
+            quote_direction = -1
+        elif quote_flows and all(value > 0 for value in quote_flows):
+            quote_direction = 1
+        elif quote_flows:
+            quote_direction = 0
+        else:
+            native_quote = Decimal(str(economic_sol_delta))
+            quote_direction = -1 if native_quote < Decimal("-0.0001") else 1 if native_quote > Decimal("0.0001") else 0
+        if token_delta > 0 and quote_direction < 0:
             action, reason = "BUY", "TOKEN_IN_QUOTE_OUT"
-        elif token_delta < 0 and quote_flow > Decimal("0.0001"):
+        elif token_delta < 0 and quote_direction > 0:
             action, reason = "SELL", "TOKEN_OUT_QUOTE_IN"
         else:
             reason = "SWAP_PROGRAM_WITH_AMBIGUOUS_BALANCE_FLOW"
