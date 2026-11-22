@@ -1,4 +1,6 @@
 import threading
+import time
+from datetime import datetime
 import database
 
 
@@ -11,8 +13,11 @@ MODE = "paper"
 STARTING_BALANCE = 100.00
 TRADE_SIZE = 5.00
 
-STOP_LOSS = 0.20
-TAKE_PROFIT = 0.30
+STOP_LOSS = 0.09
+TAKE_PROFIT = 0.10
+TRAILING_ACTIVATION = 0.04
+TRAILING_DISTANCE = 0.035
+MAX_HOLD_SECONDS = 900
 
 MAX_POSITIONS_PER_STRATEGY = 10
 
@@ -226,34 +231,59 @@ def update_position(token_address, current_price):
         return "Invalid price"
 
     with _lock:
-
         refresh_account()
-
         position = positions.get(token_address)
 
         if not position:
             return "Position not found"
 
         entry = float(position["entry_price"])
-
         if entry <= 0:
             return "Invalid entry price"
 
         change = (current_price / entry) - 1
+        metadata = position.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        # Persist the best observed price so trailing protection survives
+        # a process restart and does not reset on every monitor cycle.
+        peak_price = max(
+            float(metadata.get("peak_price", entry) or entry),
+            current_price
+        )
+        if peak_price > float(metadata.get("peak_price", 0) or 0):
+            metadata["peak_price"] = peak_price
+            database.update_position_metadata(
+                MODE, token_address, metadata
+            )
 
         if change <= -STOP_LOSS:
-            return close_position(
-                token_address,
-                current_price,
-                "STOP LOSS"
-            )
+            return close_position(token_address, current_price, "STOP LOSS")
 
         if change >= TAKE_PROFIT:
-            return close_position(
-                token_address,
-                current_price,
-                "TAKE PROFIT"
-            )
+            return close_position(token_address, current_price, "SCALP TAKE PROFIT")
+
+        peak_gain = (peak_price / entry) - 1
+        if peak_gain >= TRAILING_ACTIVATION:
+            trailing_floor = peak_price * (1 - TRAILING_DISTANCE)
+            if current_price <= trailing_floor:
+                return close_position(
+                    token_address, current_price, "TRAILING PROFIT EXIT"
+                )
+
+        opened_at = position.get("opened_at")
+        if opened_at:
+            try:
+                opened_timestamp = datetime.fromisoformat(
+                    str(opened_at).replace("Z", "+00:00")
+                ).timestamp()
+                if time.time() - opened_timestamp >= MAX_HOLD_SECONDS:
+                    return close_position(
+                        token_address, current_price, "15 MINUTE ROTATION EXIT"
+                    )
+            except (ValueError, TypeError, OverflowError):
+                pass
 
         return "Position still open"
 
