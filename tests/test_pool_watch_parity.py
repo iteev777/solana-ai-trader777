@@ -42,7 +42,7 @@ class CandidatePoolWatchTests(unittest.TestCase):
     def test_candidate_watch_registry_is_bounded_lru(self):
         with patch.object(stream, "_ensure_thread_locked"), \
              patch.object(stream, "MAX_CANDIDATE_WATCHES", 10), \
-             patch.object(stream.time, "time", side_effect=range(100, 120)):
+             patch.object(stream.time, "time", return_value=100.0):
             for index in range(11):
                 stream.watch_pool_price("pool-" + str(index), "pumpswap", "mint-" + str(index))
         watched = stream.get_watched_pools()
