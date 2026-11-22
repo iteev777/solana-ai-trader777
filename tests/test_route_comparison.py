@@ -91,9 +91,11 @@ class RouteComparisonTests(unittest.TestCase):
             "out_amount": 9000, "minimum_out_amount": 8900,
             "price_impact_percent": 0.2, "slot": 777, "pool_id": "pool",
         }
-        with patch("live_execution.get_jupiter_quote", return_value=jupiter), \\
-             patch.object(route_comparison, "_raptor", return_value=raptor), \\
-             patch("solana_onchain.quote_direct_pool", return_value=direct):
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
             result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
         self.assertEqual(result["best_provider"], "jupiter")
         self.assertEqual(result["quotes"]["direct_pool"]["status"], "FAILED")
