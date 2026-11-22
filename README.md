@@ -297,3 +297,8 @@ The deterministic candidate filter now evaluates volume, transaction activity an
 Each window is checked independently, one-sided transaction counts are retained as reported, and absent measurements are only held when the corresponding floor/requirement is enabled. The filter report includes per-window raw measurements and derived buy ratios. Existing 5m environment variables and rejection codes remain compatible.
 
 
+
+
+## RugCheck holder and insider guards
+
+RugCheck reports now expose the largest-holder and top-three concentration, top-ten insider count/share, graph-insider share, creator balance percentage (when explicitly supplied by the report), and detected LP-lock percentage. Optional hard limits are configurable with `TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT` (default 85), `TROJAN_RUGCHECK_MAX_INSIDERS_TOP10` (default 10), `TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT` (default 100), `TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT` (default 100), and `TROJAN_RUGCHECK_MAX_CREATOR_BALANCE_PCT` (default 100). Graph insider data can be required with `TROJAN_RUGCHECK_REQUIRE_GRAPH_INSIDER_DATA=true`. Pump-token LP lock checks are opt-in through `TROJAN_RUGCHECK_MIN_LP_LOCK_PCT`; if enabled, missing Pump LP-lock evidence yields UNKNOWN (not PASS). These checks use only fields present in the RugCheck response and never infer beneficial ownership from raw token-account concentration.
