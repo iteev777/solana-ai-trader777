@@ -225,30 +225,23 @@ def select_best_pairs(pairs, requested_addresses):
         if price is None or price <= 0:
             continue
 
-        pair_addresses = get_pair_address(pair)
+        # DexScreener priceUsd always describes the BASE token.
+        # Never attach that price to the quote token: doing so can
+        # corrupt entry and exit prices for the other side of a pair.
+        base_token = pair.get("baseToken")
+        if not isinstance(base_token, dict):
+            continue
 
-        if not pair_addresses:
+        address = base_token.get("address")
+        if not valid_address(address) or address not in requested:
             continue
 
         liquidity = get_liquidity(pair)
+        previous = best_liquidity.get(address, -1)
 
-        for address in pair_addresses:
-
-            if address not in requested:
-                continue
-
-            previous = best_liquidity.get(
-                address,
-                -1
-            )
-
-            if liquidity > previous:
-
-                best_liquidity[address] = liquidity
-
-                best_pairs[address] = copy.deepcopy(
-                    pair
-                )
+        if liquidity > previous:
+            best_liquidity[address] = liquidity
+            best_pairs[address] = copy.deepcopy(pair)
 
     return best_pairs
 
