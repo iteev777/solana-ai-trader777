@@ -317,3 +317,10 @@ Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the exis
 ## Dynamic copy-wallet watchlist
 
 The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite schema v7 and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass wallet-specific risk limits and the conservative swap-event classifier.
+
+## Extended metadata and market bounds
+
+The filter pipeline supports optional metadata completeness gates: `TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL`, `TROJAN_FILTER_REQUIRE_LOGO_URL` and `TROJAN_FILTER_REQUIRE_WEBSITE_URL`. Logo and website requirements accept only HTTP(S) URLs from supported provider metadata. Suspicious single-character symbols can be controlled with `TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL` (enabled by default); numeric-only symbols remain rejected.
+
+Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_LIQUIDITY_USD` (maximum 0 disables the ceiling). Valuation bands are independently configurable with `TROJAN_FILTER_MIN_FDV_USD`, `TROJAN_FILTER_MAX_FDV_USD`, `TROJAN_FILTER_MIN_MARKET_CAP_USD` and `TROJAN_FILTER_MAX_MARKET_CAP_USD`. A positive floor with missing data returns WAIT; a configured ceiling only applies when the measurement exists. Invalid negative valuations are rejected. Existing default behavior remains permissive when optional metadata and floors are disabled.
+
