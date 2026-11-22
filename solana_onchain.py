@@ -13,7 +13,7 @@ import time
 import threading
 import requests
 
-RPC_URL = os.getenv("SOLANA_RPC_URL", "").strip()
+RPC_URL = os.getenv("SOLANA_RPC_URL", "").strip() or os.getenv("SOLANA_RPC_URLS", "").split(",")[0].strip()
 _rpc_semaphore = threading.BoundedSemaphore(4)
 TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -111,18 +111,11 @@ def _discriminator(name):
 
 def _rpc(method, params):
     if not RPC_URL:
-        raise RuntimeError("SOLANA_RPC_URL is not configured")
+        raise RuntimeError("SOLANA_RPC_URL or SOLANA_RPC_URLS is not configured")
+    import rpc_transport
     with _rpc_semaphore:
-        response = requests.post(
-            RPC_URL,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            timeout=TIMEOUT
-        )
-        response.raise_for_status()
-        payload = response.json()
-    if payload.get("error"):
-        raise RuntimeError(str(payload["error"])[:300])
-    return payload.get("result")
+        result = rpc_transport.rpc_call(method, params)
+    return result
 
 
 def _account(pubkey):
@@ -490,7 +483,7 @@ _rpc_probe = {"checked_at": 0.0, "healthy": False, "error": None}
 def check_rpc_health(force=False):
     now = time.time()
     if not RPC_URL:
-        return False, "SOLANA_RPC_URL missing"
+        return False, "SOLANA_RPC_URL / SOLANA_RPC_URLS missing"
     if not force and now - _rpc_probe["checked_at"] < 30:
         return _rpc_probe["healthy"], _rpc_probe["error"]
     try:
@@ -510,12 +503,19 @@ def get_onchain_status():
         stream = get_stream_status()
     except Exception as stream_error:
         stream = {"running": False, "last_error": str(stream_error)[:120]}
+    try:
+        import rpc_transport
+        rpc = rpc_transport.get_rpc_status()
+    except Exception as rpc_error:
+        rpc = {"configured": bool(RPC_URL), "endpoint_count": 1 if RPC_URL else 0,
+               "endpoints": [], "status_error": str(rpc_error)[:120]}
     return {
         **_last_status,
         "supported_protocols": sorted(list(PROGRAMS.keys()) + ["raydium_auto"]),
         "rpc_configured": bool(RPC_URL),
         "rpc_healthy": healthy,
         "rpc_error": error,
+        "rpc_failover": rpc,
         "price_stream": stream
     }
 
