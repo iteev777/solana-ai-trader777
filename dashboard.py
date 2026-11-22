@@ -164,8 +164,11 @@ def api_save_strategy():
         return jsonify({"error": "Unknown strategy"}), 400
     try:
         from strategy_rules import validate_rules_config
-        validate_rules_config({strategy: rules})
-        database.save_strategy_config(strategy, rules)
+        if rules == {}:
+            database.delete_strategy_config(strategy)
+        else:
+            validate_rules_config({strategy: rules})
+            database.save_strategy_config(strategy, rules)
         return jsonify({"saved": True, "strategy": strategy})
     except Exception as error:
         return jsonify({"saved": False, "error": str(error)[:300]}), 400
@@ -247,7 +250,7 @@ footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 <section class="panel section"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
 <section class="panel section"><h2>COPY WALLET ACTIVITY</h2><div class="muted" style="margin-bottom:10px">Read-only wallet monitoring. No transactions are copied or signed.</div><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Wallet</th><th>Action</th><th>Mint</th><th>Token Δ</th><th>SOL Δ</th></tr></thead><tbody id="copy-trades"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section>
-</main><footer>Read-only dashboard · no wallet keys · no live trade controls · Trojan V2</footer>
+</main><footer>Paper trading controls · no wallet keys · live execution locked · Trojan V2</footer>
 <script>
 const esc=v=>String(v===null||v===undefined?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=(v,n=2)=>v===null||v===undefined?'—':Number(v).toFixed(n);
