@@ -172,7 +172,8 @@ def _activity_stage(token):
                     "window": key, "minimum": min_ratio
                 })
             if buy_ratio < min_ratio:
-                return _result("REJECT", "activity", "BUY_PRESSURE_" + label + "_BELOW_MINIMUM", {
+                reason = "BUY_PRESSURE_BELOW_MINIMUM" if key == "m5" else "BUY_PRESSURE_" + label + "_BELOW_MINIMUM"
+                return _result("REJECT", "activity", reason, {
                     "window": key, "buy_ratio": round(buy_ratio, 4), "minimum": min_ratio
                 })
 
@@ -212,17 +213,20 @@ def _momentum_stage(token):
         required = os.getenv(require_name, "false").lower() == "true"
         if change is None:
             if required:
-                return _result("WAIT", "momentum", "MOMENTUM_" + label + "_UNKNOWN", {
+                reason = "M5_MOMENTUM_UNKNOWN" if key == "m5" else "MOMENTUM_" + label + "_UNKNOWN"
+                return _result("WAIT", "momentum", reason, {
                     "window": key, "minimum_pct": minimum, "maximum_pct": maximum
                 })
             metrics[key] = None
             continue
         if change < minimum:
-            return _result("REJECT", "momentum", "MOMENTUM_" + label + "_BELOW_MINIMUM", {
+            reason = "M5_DOWNTREND_TOO_STRONG" if key == "m5" else "MOMENTUM_" + label + "_BELOW_MINIMUM"
+            return _result("REJECT", "momentum", reason, {
                 "window": key, "change_pct": change, "minimum_pct": minimum
             })
         if change > maximum:
-            return _result("REJECT", "momentum", "MOMENTUM_" + label + "_ABOVE_MAXIMUM", {
+            reason = "M5_MOVE_EXTENDED" if key == "m5" else "MOMENTUM_" + label + "_ABOVE_MAXIMUM"
+            return _result("REJECT", "momentum", reason, {
                 "window": key, "change_pct": change, "maximum_pct": maximum
             })
         metrics[key] = change
