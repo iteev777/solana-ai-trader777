@@ -5,7 +5,13 @@ import time
 
 
 def evaluate_event_freshness(block_time, received_at=None, now=None):
-    max_age = max(1.0, min(300.0, float(os.getenv("TROJAN_COPY_MAX_EVENT_AGE_SECONDS", "30"))))
+    try:
+        configured_max_age = float(os.getenv("TROJAN_COPY_MAX_EVENT_AGE_SECONDS", "30"))
+    except (TypeError, ValueError, OverflowError):
+        configured_max_age = 30.0
+    if not math.isfinite(configured_max_age):
+        configured_max_age = 30.0
+    max_age = max(1.0, min(300.0, configured_max_age))
     current = time.time() if now is None else float(now)
     received = current if received_at is None else float(received_at)
     try:
