@@ -574,8 +574,8 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         raise ValueError("FluxBeam pool address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
-    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
-        raise ValueError("Input amount must be a positive integer")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
     if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
