@@ -263,6 +263,9 @@ def normalize_gecko_pool(pool):
     relationships = pool.get("relationships")
     if not isinstance(attributes, dict) or not isinstance(relationships, dict):
         return None
+    dex_relation = relationships.get("dex")
+    dex_data = dex_relation.get("data") if isinstance(dex_relation, dict) else None
+    dex_id = (dex_data.get("id") if isinstance(dex_data, dict) else None) or attributes.get("dex_id") or attributes.get("dex")
     base = relationships.get("base_token")
     base_data = base.get("data") if isinstance(base, dict) else None
     token_id = base_data.get("id") if isinstance(base_data, dict) else None
@@ -298,7 +301,7 @@ def normalize_gecko_pool(pool):
             created_ms = None
     return {
         "chainId": "solana",
-        "dexId": attributes.get("dex_id") or attributes.get("dex") or "geckoterminal",
+        "dexId": dex_id or "geckoterminal",
         "poolName": attributes.get("name"),
         "pairAddress": attributes.get("address"),
         "baseToken": {"address": address, "name": "Unknown", "symbol": "Unknown"},
