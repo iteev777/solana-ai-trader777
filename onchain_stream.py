@@ -22,7 +22,7 @@ _snapshots = {}
 _refreshing = set()
 _last_refresh_at = {}
 MIN_POOL_REFRESH_INTERVAL = max(0.25, float(os.getenv("TROJAN_POOL_REFRESH_INTERVAL", "0.5")))
-POOL_BATCH_POLL_INTERVAL = max(0.5, float(os.getenv("TROJAN_POOL_BATCH_POLL_INTERVAL", "1.5")))
+POOL_BATCH_POLL_INTERVAL = max(0.5, float(os.getenv("TROJAN_POOL_BATCH_POLL_INTERVAL", "0.5")))
 CANDIDATE_WATCH_TTL = max(30.0, float(os.getenv("TROJAN_CANDIDATE_WATCH_TTL", "300")))
 MAX_CANDIDATE_WATCHES = max(10, int(os.getenv("TROJAN_MAX_CANDIDATE_WATCHES", "100")))
 _thread = None
@@ -211,12 +211,12 @@ def _refresh(key):
             _refreshing.discard(key)
 
 
-def _refresh_many(keys):
+def _refresh_many(keys, prune_unwatched=False):
     global _batch_refreshing
     started = time.perf_counter()
     try:
         import pool_account_fetcher
-        result = pool_account_fetcher.refresh_pools(keys)
+        result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune_unwatched)
         with _lock:
             for name in _batch_status:
                 _batch_status[name] = result.get(name, _batch_status[name])
@@ -267,13 +267,15 @@ def _run():
                     now_mono = time.monotonic()
                     poll_due = bool(current) and now_mono >= next_batch_poll
                     batch_keys = None
+                    prune_unwatched = False
                     if current and not _batch_refreshing and (_dirty_pools or poll_due):
                         batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
+                        prune_unwatched = poll_due
                         _dirty_pools.difference_update(batch_keys)
                         _batch_refreshing = True
                         next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
                 if batch_keys:
-                    _batch_refresh_pool.submit(_refresh_many, batch_keys)
+                    _batch_refresh_pool.submit(_refresh_many, batch_keys, prune_unwatched)
 
                 # Remove every pool's state and reserve subscriptions when it leaves
                 # both the position set and the candidate LRU.
