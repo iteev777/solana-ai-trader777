@@ -1,23 +1,71 @@
-"""Optional Telegram notifications. No credentials are stored in source."""
+"""Asynchronous optional Telegram notifications; never block the position loop."""
 import os
+import queue
+import threading
 import requests
+
+_queue = queue.Queue(maxsize=200)
+_lock = threading.Lock()
+_worker = None
+
+
+def _sender():
+    while True:
+        message = _queue.get()
+        try:
+            token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+            chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+            if token and chat_id:
+                response = requests.post(
+                    "https://api.telegram.org/bot" + token + "/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": str(message)[:3800],
+                        "disable_web_page_preview": True
+                    },
+                    timeout=8
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not payload.get("ok"):
+                    raise RuntimeError("Telegram API returned not-ok")
+        except Exception as error:
+            print("[TROJAN V2] TELEGRAM ALERT FAILED:", repr(error), flush=True)
+        finally:
+            _queue.task_done()
+
+
+def _start_worker():
+    global _worker
+    with _lock:
+        if _worker and _worker.is_alive():
+            return
+        _worker = threading.Thread(
+            target=_sender, name="trojan-telegram-alerts", daemon=True
+        )
+        _worker.start()
+
 
 def send_alert(message):
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
-        return {"sent": False, "reason": "Telegram not configured"}
+        return {"queued": False, "reason": "Telegram not configured"}
+    _start_worker()
     try:
-        response = requests.post(
-            "https://api.telegram.org/bot" + token + "/sendMessage",
-            json={"chat_id": chat_id, "text": str(message)[:3800], "disable_web_page_preview": True},
-            timeout=8
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not payload.get("ok"):
-            raise RuntimeError("Telegram API returned not-ok")
-        return {"sent": True}
-    except Exception as error:
-        print("[TROJAN V2] TELEGRAM ALERT FAILED:", repr(error), flush=True)
-        return {"sent": False, "reason": str(error)[:180]}
+        _queue.put_nowait(str(message)[:3800])
+        return {"queued": True}
+    except queue.Full:
+        print("[TROJAN V2] TELEGRAM ALERT QUEUE FULL", flush=True)
+        return {"queued": False, "reason": "Alert queue full"}
+
+
+def get_telegram_status():
+    return {
+        "configured": bool(
+            os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+            and os.getenv("TELEGRAM_CHAT_ID", "").strip()
+        ),
+        "queue_size": _queue.qsize(),
+        "worker_running": bool(_worker and _worker.is_alive())
+    }
