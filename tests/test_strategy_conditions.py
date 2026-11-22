@@ -26,6 +26,7 @@ class StrategyConditionTests(unittest.TestCase):
                 "ema_21": 10,
                 "ema_cross_bullish": True,
                 "breakout_20": True,
+                "breakdown_20": False,
                 "volume_spike_ratio": 2.5,
                 "bollinger_percent_b": 0.7,
                 "atr_percent": 4.0,
@@ -113,6 +114,12 @@ class StrategyConditionTests(unittest.TestCase):
             "minimum_pct": 10, "maximum_pct": 30
         })[0])
 
+    def test_six_hour_price_change_reads_raw_market_context(self):
+        passed, _ = self.evaluate("PriceChangePercent", {
+            "timeframe": "h6", "comparison": "ABOVE", "threshold_pct": 10
+        })
+        self.assertTrue(passed)
+
     def test_liquidity_change_and_volatility(self):
         self.assertTrue(self.evaluate("LiquidityChangeSinceEntry", {
             "comparison": "ABOVE", "threshold_pct": 5
@@ -140,6 +147,36 @@ class StrategyConditionTests(unittest.TestCase):
         with patch.dict("os.environ", {"TROJAN_STRATEGY_RULES": config}, clear=False):
             passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
         self.assertTrue(passed, reason)
+
+
+    def test_downside_breakout_uses_previous_low_not_inverse_high_breakout(self):
+        self.context["indicators"]["breakdown_20"] = True
+        passed, _ = self.evaluate("PriceBreakout", {"direction": "BELOW"})
+        self.assertTrue(passed)
+
+    def test_price_to_ma_only_accepts_supported_periods(self):
+        with self.assertRaises(ValueError):
+            strategy_conditions.validate_condition({
+                "condition": "PriceToMa", "params": {"period": 10}
+            })
+
+    def test_missing_boolean_indicator_is_unknown_not_false(self):
+        context = strategy_rules._context({"symbol": "X"}, 50)
+        passed, reasons = strategy_conditions.evaluate_condition({
+            "condition": "MaCross", "params": {"direction": "BULLISH"}
+        }, context)
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reasons[0])
+
+    def test_liquidity_to_size_missing_trade_size_fails_closed(self):
+        context = strategy_rules._context({
+            "liquidity": {"usd": 10000}, "symbol": "X"
+        }, 50)
+        passed, reasons = strategy_conditions.evaluate_condition({
+            "condition": "LiquidityToSize", "params": {"minimum_multiple": 10}
+        }, context)
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reasons[0])
 
     def test_unknown_named_condition_fails_validation(self):
         with self.assertRaises(ValueError):

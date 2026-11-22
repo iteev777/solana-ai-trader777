@@ -108,6 +108,10 @@ def validate_condition(node):
         high = _num(params.get("maximum_pct", 100))
         if low is not None and high is not None and low > high:
             raise ValueError(name + ": minimum_pct exceeds maximum_pct")
+    if name == "PriceToMa":
+        period = _num(params.get("period", 9))
+        if period not in (9, 21):
+            raise ValueError("PriceToMa.period must be 9 or 21")
     if name == "TimeOfDay":
         start = _num(params.get("start_hour_utc", 0))
         end = _num(params.get("end_hour_utc", 23))
@@ -166,14 +170,14 @@ def evaluate_condition(node, context):
         result = _compare(liquidity, params.get("comparison", "ABOVE"), _num(params.get("threshold_usd", 10000)))
         detail = "liquidity USD"
     elif name == "LiquidityToSize":
-        size = _num(params.get("trade_size_usd", context.get("trade_size_usd", 0)))
+        size = _num(params.get("trade_size_usd", context.get("trade_size_usd")))
         minimum = _num(params.get("minimum_multiple", 100))
-        result = liquidity is not None and size is not None and size > 0 and liquidity / size >= minimum
+        result = None if liquidity is None or size is None or size <= 0 else liquidity / size >= minimum
         detail = "liquidity / trade size"
     elif name == "MaCross":
         bullish = indicators.get("ema_cross_bullish")
         direction = params.get("direction", "BULLISH")
-        result = (bullish is True) if direction == "BULLISH" else (bullish is False)
+        result = None if not isinstance(bullish, bool) else (bullish is True) if direction == "BULLISH" else (bullish is False)
         detail = "EMA cross"
     elif name == "PositionAdds":
         value = _metric(context, "position_add_count", "position_adds")
@@ -188,14 +192,13 @@ def evaluate_condition(node, context):
         result = _compare(value, params.get("comparison", "ABOVE"), _num(params.get("profit_pct", 5)))
         detail = "position profit"
     elif name == "PriceBreakout":
-        value = indicators.get("breakout_20")
-        direction = params.get("direction", "ABOVE")
-        result = (value is True) if direction == "ABOVE" else (value is False)
-        detail = "20-candle breakout"
+        value = indicators.get("breakout_20") if params.get("direction", "ABOVE") == "ABOVE" else indicators.get("breakdown_20")
+        result = value if isinstance(value, bool) else None
+        detail = "20-candle high/low breakout"
     elif name == "PriceChangePercent":
         window = params.get("timeframe", "m5")
         field = {"m5": "m5", "h1": "h1", "h6": "h6", "h24": "h24"}[window]
-        value = _metric(context, "price_change_" + field, "priceChange." + field)
+        value = _metric(context, "price_change_" + field, "priceChange." + field, "token.priceChange." + field)
         result = _compare(value, params.get("comparison", "ABOVE"), _num(params.get("threshold_pct", 0)))
         detail = "price change " + window
     elif name == "PriceToMa":
@@ -255,7 +258,7 @@ def evaluate_condition(node, context):
         detail = "volume spike ratio"
     elif name == "Vwap":
         value = indicators.get("above_vwap")
-        result = (value is True) if params.get("position", "ABOVE") == "ABOVE" else (value is False)
+        result = None if not isinstance(value, bool) else (value is True) if params.get("position", "ABOVE") == "ABOVE" else (value is False)
         detail = "VWAP position"
 
     if result is None:
