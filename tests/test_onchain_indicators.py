@@ -33,6 +33,17 @@ class OnchainDecoderTests(unittest.TestCase):
         result = _decode_pool("raydium_cpmm", bytes(raw))
         self.assertEqual(result["price_mode"], "reserves")
 
+    def test_raydium_amm_v4_pool_layout(self):
+        raw = bytearray(752)
+        struct.pack_into("<Q", raw, 0, 6)
+        put_key(raw, 336, 1)
+        put_key(raw, 368, 2)
+        put_key(raw, 400, 3)
+        put_key(raw, 432, 4)
+        result = _decode_pool("raydium_amm_v4", bytes(raw))
+        self.assertEqual(result["price_mode"], "reserves")
+        self.assertEqual(result["status"], "active")
+
     def test_raydium_clmm_pool_layout(self):
         raw = bytearray(500)
         raw[:8] = _discriminator("PoolState")
