@@ -3,6 +3,7 @@
 # ==========================================
 
 import os
+import math
 from ai_analyzer import analyze_token
 from strategy_rules import evaluate_strategy_rules
 from risk_manager import (
