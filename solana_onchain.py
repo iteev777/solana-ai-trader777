@@ -158,8 +158,15 @@ def _decode_pool(protocol, raw):
             raise ValueError("invalid Raydium CPMM PoolState discriminator/layout")
         status = raw[329]
         return {
+            "amm_config": _key(raw, 8),
             "vault_base": _key(raw, 72), "vault_quote": _key(raw, 104),
             "base_mint": _key(raw, 168), "quote_mint": _key(raw, 200),
+            "token_program_base": _key(raw, 232), "token_program_quote": _key(raw, 264),
+            "protocol_fees_base": _u64(raw, 341), "protocol_fees_quote": _u64(raw, 349),
+            "fund_fees_base": _u64(raw, 357), "fund_fees_quote": _u64(raw, 365),
+            "open_time": _u64(raw, 373), "creator_fee_on": raw[389],
+            "enable_creator_fee": bool(raw[390]),
+            "creator_fees_base": _u64(raw, 397), "creator_fees_quote": _u64(raw, 405),
             "status": "disabled" if status & 4 else "active",
             "price_mode": "reserves"
         }
@@ -270,6 +277,178 @@ def _decode_pool(protocol, raw):
             "status": "active", "price_mode": "moonit_curve"
         }
     raise ValueError("unsupported Solana pool protocol")
+
+
+
+def _decode_raydium_amm_config(raw):
+    """Decode the Raydium CPMM AmmConfig account using its Anchor layout."""
+    if len(raw) < 116 or raw[:8] != _discriminator("AmmConfig"):
+        raise ValueError("invalid Raydium CPMM AmmConfig discriminator/layout")
+    trade_fee_rate = _u64(raw, 12)
+    protocol_fee_rate = _u64(raw, 20)
+    fund_fee_rate = _u64(raw, 28)
+    creator_fee_rate = _u64(raw, 108)
+    if (trade_fee_rate + creator_fee_rate >= 1_000_000
+            or protocol_fee_rate > 1_000_000
+            or fund_fee_rate > 1_000_000
+            or protocol_fee_rate + fund_fee_rate > 1_000_000):
+        raise ValueError("Raydium CPMM fee configuration is invalid")
+    return {
+        "trade_fee_rate": trade_fee_rate,
+        "protocol_fee_rate": protocol_fee_rate,
+        "fund_fee_rate": fund_fee_rate,
+        "creator_fee_rate": creator_fee_rate,
+    }
+
+
+def _multiple_accounts_with_context(keys):
+    result = _rpc("getMultipleAccounts", [
+        keys, {"encoding": "base64", "commitment": "confirmed"}
+    ])
+    values = (result or {}).get("value") or []
+    if len(values) != len(keys):
+        raise ValueError("RPC returned unexpected account count")
+    accounts = []
+    for value in values:
+        if not value:
+            accounts.append(None)
+        else:
+            accounts.append({
+                "owner": value.get("owner"),
+                "data": base64.b64decode(value["data"][0]),
+                "lamports": value.get("lamports"),
+            })
+    context = (result or {}).get("context") or {}
+    slot = context.get("slot")
+    if not isinstance(slot, int) or slot <= 0:
+        raise ValueError("RPC snapshot is missing a confirmed context slot")
+    return accounts, slot
+
+
+def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
+                            slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only exact-input quote from a single confirmed Raydium CPMM snapshot.
+
+    The first pool read discovers dependent account addresses. A second
+    getMultipleAccounts call fetches pool/config/vaults/mints together; all
+    quote inputs are decoded from that same RPC context slot.
+    """
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("Raydium CPMM pool address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
+        raise ValueError("Input amount must be a positive integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["raydium_cpmm"]:
+        raise ValueError("Pool account is not owned by the Raydium CPMM program")
+    first = _decode_pool("raydium_cpmm", discovered["data"])
+    keys = [
+        pool_address, first["amm_config"], first["vault_base"], first["vault_quote"],
+        first["base_mint"], first["quote_mint"]
+    ]
+    accounts, slot = _multiple_accounts_with_context(keys)
+    pool_acc, config_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
+    if any(item is None for item in accounts):
+        raise ValueError("Raydium CPMM snapshot is missing one or more accounts")
+    if pool_acc["owner"] != PROGRAMS["raydium_cpmm"]:
+        raise ValueError("Raydium CPMM pool owner changed during snapshot")
+    decoded = _decode_pool("raydium_cpmm", pool_acc["data"])
+    if decoded["amm_config"] != first["amm_config"] or decoded["vault_base"] != first["vault_base"] or decoded["vault_quote"] != first["vault_quote"]:
+        raise ValueError("Raydium CPMM pool accounts changed during snapshot")
+    if config_acc["owner"] != PROGRAMS["raydium_cpmm"]:
+        raise ValueError("AmmConfig is not owned by the Raydium CPMM program")
+    config = _decode_raydium_amm_config(config_acc["data"])
+    if decoded["status"] != "active":
+        raise ValueError("Raydium CPMM pool swaps are disabled")
+    now = time.time()
+    if decoded["open_time"] > int(now):
+        raise ValueError("Raydium CPMM pool is not open for swaps yet")
+    if mint_base_acc["owner"] != TOKEN_PROGRAM or mint_quote_acc["owner"] != TOKEN_PROGRAM:
+        raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
+    if decoded["token_program_base"] != TOKEN_PROGRAM or decoded["token_program_quote"] != TOKEN_PROGRAM:
+        raise ValueError("Pool token program does not match the supported SPL Token program")
+    base_decimals = _mint_decimals(mint_base_acc)
+    quote_decimals = _mint_decimals(mint_quote_acc)
+    base_vault = _token_amount(vault_base_acc, decoded["base_mint"])
+    quote_vault = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    base_deduct = decoded["protocol_fees_base"] + decoded["fund_fees_base"] + decoded["creator_fees_base"]
+    quote_deduct = decoded["protocol_fees_quote"] + decoded["fund_fees_quote"] + decoded["creator_fees_quote"]
+    if base_vault <= base_deduct or quote_vault <= quote_deduct:
+        raise ValueError("Raydium CPMM vault reserves are empty after accrued fees")
+    reserve_base, reserve_quote = base_vault - base_deduct, quote_vault - quote_deduct
+
+    if input_mint == decoded["base_mint"]:
+        reserve_in, reserve_out = reserve_base, reserve_quote
+        output_mint = decoded["quote_mint"]
+        input_is_token0 = True
+    elif input_mint == decoded["quote_mint"]:
+        reserve_in, reserve_out = reserve_quote, reserve_base
+        output_mint = decoded["base_mint"]
+        input_is_token0 = False
+    else:
+        raise ValueError("Input mint does not belong to this Raydium CPMM pool")
+
+    fee_on = decoded["creator_fee_on"]
+    if fee_on not in (0, 1, 2):
+        raise ValueError("Raydium CPMM creator fee mode is invalid")
+    creator_rate = config["creator_fee_rate"] if decoded["enable_creator_fee"] else 0
+    creator_on_input = (
+        creator_rate > 0 and (
+            fee_on == 0 or (fee_on == 1 and input_is_token0)
+            or (fee_on == 2 and not input_is_token0)
+        )
+    )
+    trade_fee = (amount_in * config["trade_fee_rate"] + 999_999) // 1_000_000
+    creator_fee_input = (
+        (amount_in * creator_rate + 999_999) // 1_000_000
+        if creator_on_input else 0
+    )
+    net_input = amount_in - trade_fee - creator_fee_input
+    if net_input <= 0:
+        raise ValueError("Input is fully consumed by Raydium CPMM fees")
+    raw_output = (reserve_out * net_input) // (reserve_in + net_input)
+    creator_fee_output = (
+        (raw_output * creator_rate + 999_999) // 1_000_000
+        if creator_rate and not creator_on_input else 0
+    )
+    output_amount = raw_output - creator_fee_output
+    if output_amount <= 0 or output_amount >= reserve_out:
+        raise ValueError("Raydium CPMM quote rounds to zero or drains the pool")
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    impact = 1.0 - ((reserve_out - raw_output) / (reserve_in + net_input)) / (reserve_out / reserve_in)
+    if not math.isfinite(impact) or impact < 0:
+        raise ValueError("Raydium CPMM price impact is invalid")
+    age = time.time() - now
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Raydium CPMM snapshot is stale")
+
+    return {
+        "provider": "raydium_cpmm_direct",
+        "protocol": "raydium_cpmm",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "trade_fee_rate": config["trade_fee_rate"],
+        "creator_fee_rate": creator_rate,
+        "creator_fee_on_input": creator_on_input,
+        "trade_fee_amount": trade_fee,
+        "creator_fee_input_amount": creator_fee_input,
+        "creator_fee_output_amount": creator_fee_output,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "price_impact_percent": round(impact * 100, 6),
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
 
 
 def _token_amount(account, expected_mint):
