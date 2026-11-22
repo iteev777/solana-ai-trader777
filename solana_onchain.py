@@ -480,6 +480,7 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     first = _decode_pool("raydium_amm_v4", discovered["data"])
     keys = [pool_address, first["vault_base"], first["vault_quote"],
             first["base_mint"], first["quote_mint"]]
+    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
     if any(item is None for item in accounts):
         raise ValueError("Raydium AMM v4 snapshot is missing a required account")
@@ -522,9 +523,11 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium AMM v4 quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     spot_price = reserve_out / reserve_in
-    execution_price = output_amount / amount_in
+    execution_price = output_amount / net_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - time.time()
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Raydium AMM v4 snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Raydium AMM v4 price impact is invalid")
 
@@ -533,6 +536,7 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         "protocol": "raydium_amm_v4",
         "pool_id": pool_address,
         "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
