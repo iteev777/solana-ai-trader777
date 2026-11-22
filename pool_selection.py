@@ -100,6 +100,7 @@ def _summary(candidate):
         "volume24h": candidate["volume_h24"],
         "isNativePair": candidate["is_native_pair"],
         "metric": candidate["metric"],
+        "metricUnit": "SOL" if candidate["is_native_pair"] else "USD",
     }
 
 
@@ -152,7 +153,7 @@ def select_best_pairs(pairs, requested_addresses):
             if chosen["address"]:
                 _canonical_pool_by_token[mint] = chosen["address"]
             result = copy.deepcopy(chosen["pair"])
-            ordered = sorted(ranked, key=_rank_key, reverse=True)
+            ordered = sorted(candidates, key=lambda item: (item["is_native_pair"], *_rank_key(item)), reverse=True)
             result["poolSelection"] = {
                 "candidateCount": len(candidates),
                 "nativePairCount": len(native),
