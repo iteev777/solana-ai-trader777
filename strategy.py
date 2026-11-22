@@ -89,6 +89,25 @@ def evaluate_trade(
     rules_passed, rules_reason = evaluate_strategy_rules(
         token, score, strategy
     )
+
+    # Deterministic market-quality score is advisory by default. Operators may
+    # opt into a minimum threshold after reviewing paper results.
+    from candidate_quality import score_candidate
+    candidate_quality = score_candidate(token)
+    try:
+        minimum_quality = float(os.getenv("TROJAN_MIN_CANDIDATE_QUALITY_SCORE", "0"))
+    except (TypeError, ValueError, OverflowError):
+        minimum_quality = 0.0
+    if not math.isfinite(minimum_quality) or minimum_quality < 0 or minimum_quality > 100:
+        minimum_quality = 0.0
+    candidate_quality["gating_enabled"] = minimum_quality > 0
+    candidate_quality["minimum_score"] = minimum_quality
+    if minimum_quality > 0 and candidate_quality["score"] < minimum_quality:
+        return {
+            "action": "WAIT", "score": score,
+            "reason": "Candidate quality below configured threshold",
+            "candidate_quality": candidate_quality
+        }
     if not rules_passed:
         return {
             "action": "WAIT",
@@ -187,7 +206,8 @@ def evaluate_trade(
         "score": score,
         "strategy": strategy,
         "trade_size": round(trade_size, 2),
-        "reasons": analysis.get("reasons", [])
+        "reasons": analysis.get("reasons", []),
+        "candidate_quality": candidate_quality
     }
 
 
