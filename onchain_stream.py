@@ -35,17 +35,36 @@ def _rpc_ws_url():
     return ""
 
 
-def watch_pool_price(pool_address, protocol, token_mint):
+def sync_watched_pools(items):
     global _thread
-    if not all(isinstance(x, str) and x.strip() for x in (pool_address, protocol, token_mint)):
-        return False
-    key = (pool_address.strip(), protocol.strip(), token_mint.strip())
+    normalized = set()
+    for item in items or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 3:
+            continue
+        if not all(isinstance(x, str) and x.strip() for x in item):
+            continue
+        normalized.add(tuple(x.strip() for x in item))
     with _lock:
-        _watches[key] = True
+        removed = set(_watches) - normalized
+        for key in removed:
+            _snapshots.pop(key, None)
+        _watches.clear()
+        _watches.update({key: True for key in normalized})
         _status["configured"] = bool(_rpc_ws_url())
-        if _thread is None or not _thread.is_alive():
+        if normalized and (_thread is None or not _thread.is_alive()):
             _thread = threading.Thread(target=_run, name="trojan-onchain-price-stream", daemon=True)
             _thread.start()
+    return len(normalized)
+
+
+def watch_pool_price(pool_address, protocol, token_mint):
+    if not all(isinstance(x, str) and x.strip() for x in (pool_address, protocol, token_mint)):
+        return False
+    with _lock:
+        current = list(_watches)
+    key = (pool_address.strip(), protocol.strip(), token_mint.strip())
+    current.append(key)
+    sync_watched_pools(current)
     return True
 
 
@@ -110,7 +129,23 @@ def _run():
                 _status.update({"running": True, "configured": True, "last_error": None})
             while True:
                 with _lock:
-                    current = list(_watches)
+                    current = set(_watches)
+                for key in list(sent):
+                    if key not in current:
+                        subscription_id = next(
+                            (sid for sid, watched_key in subscriptions.items() if watched_key == key),
+                            None
+                        )
+                        if subscription_id is not None:
+                            ws.send(json.dumps({
+                                "jsonrpc": "2.0", "id": request_id,
+                                "method": "accountUnsubscribe", "params": [subscription_id]
+                            }))
+                            request_id += 1
+                            subscriptions.pop(subscription_id, None)
+                        sent.pop(key, None)
+                        with _lock:
+                            _status["subscriptions"] = len(subscriptions)
                 for key in current:
                     if key in sent:
                         continue
