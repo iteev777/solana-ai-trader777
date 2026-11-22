@@ -1,111 +1,85 @@
-# ==========================================
-# TROJAN V2 - TOKEN AGGREGATOR
-# ==========================================
-
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from discovery.gecko_scanner import scan_new_pools
+from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_dexscreener
-
-
-# ==========================================
-# SCANNER SOURCES
-# ==========================================
+from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coingecko, scan_defillama
 
 SCANNERS = [
-    ("geckoterminal", scan_new_pools),
+    ("geckoterminal_new_pools", scan_new_pools),
+    ("geckoterminal_trending_pools", scan_trending_pools),
     ("birdeye_meme_listing", scan_pumpfun),
     ("birdeye", scan_birdeye),
-    ("dexscreener", scan_dexscreener)
+    ("dexscreener", scan_dexscreener),
+    ("rugcheck", scan_rugcheck),
+    ("jupiter", scan_jupiter),
+    ("coingecko", scan_coingecko),
+    ("defillama", scan_defillama),
 ]
-
-MAX_RESULTS = 300
-
+MAX_RESULTS = 500
+MAX_WORKERS = min(9, len(SCANNERS))
 _aggregator_lock = threading.Lock()
+_last_source_stats = {}
+_last_scan_at = None
 
-
-# ==========================================
-# TOKEN VALIDATION
-# ==========================================
 
 def normalize_token(token):
-
     if not isinstance(token, dict):
         return None
-
     address = token.get("tokenAddress")
-
-    if not isinstance(address, str):
-        return None
-
-    address = address.strip()
-
-    if not address:
-        return None
-
     chain = token.get("chainId")
-
-    if not isinstance(chain, str):
+    if not isinstance(address, str) or not address.strip():
         return None
-
-    if chain.lower().strip() != "solana":
+    if not isinstance(chain, str) or chain.lower().strip() != "solana":
         return None
+    return address.strip()
 
-    return address
 
+def get_discovery_status():
+    return {
+        "source_count": len(SCANNERS),
+        "sources": list(_last_source_stats.values()),
+        "last_scan_at": _last_scan_at,
+        "last_scan_age_seconds": max(0, round(time.time() - _last_scan_at, 1)) if _last_scan_at else None,
+        "max_results": MAX_RESULTS,
+    }
 
-# ==========================================
-# TOKEN AGGREGATION
-# ==========================================
 
 def collect_tokens():
-
+    global _last_source_stats, _last_scan_at
     if not _aggregator_lock.acquire(blocking=False):
-
-        print("TROJAN V2 AGGREGATOR ALREADY RUNNING")
+        print("TROJAN V2 AGGREGATOR ALREADY RUNNING", flush=True)
         return []
-
     try:
-
         discovered = {}
         source_stats = {}
-
         current_time = time.time()
-
-        # Run independent providers concurrently, as ScreenerBot does.
-        # Merge in configured source order so results stay deterministic.
         source_results = {}
-        with ThreadPoolExecutor(max_workers=max(1, len(SCANNERS))) as pool:
-            futures = {
-                pool.submit(scanner): source_name
-                for source_name, scanner in SCANNERS
-            }
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+            futures = {pool.submit(scanner): name for name, scanner in SCANNERS}
             for future in as_completed(futures):
-                source_name = futures[future]
+                name = futures[future]
                 try:
                     result = future.result()
-                    source_results[source_name] = result if isinstance(result, list) else []
+                    source_results[name] = result if isinstance(result, list) else []
+                    source_stats[name] = {"name": name, "count": len(source_results[name]), "ok": True, "error": None}
                 except Exception as error:
-                    print("TOKEN SOURCE WORKER ERROR:", source_name, repr(error), flush=True)
-                    source_results[source_name] = []
+                    print("TOKEN SOURCE WORKER ERROR:", name, repr(error), flush=True)
+                    source_results[name] = []
+                    source_stats[name] = {"name": name, "count": 0, "ok": False, "error": str(error)[:180]}
 
-        for source_name, scanner in SCANNERS:
-            tokens = source_results.get(source_name, [])
-            source_stats[source_name] = len(tokens)
-            for token in tokens:
+        for name, _scanner in SCANNERS:
+            for token in source_results.get(name, []):
                 address = normalize_token(token)
                 if not address:
                     continue
                 if address not in discovered:
                     discovered[address] = {
-                        "tokenAddress": address,
-                        "chainId": "solana",
-                        "discovery_sources": [],
-                        "discovery_timestamp": current_time
+                        "tokenAddress": address, "chainId": "solana",
+                        "discovery_sources": [], "discovery_timestamp": current_time,
                     }
                 candidate = discovered[address]
                 sources = token.get("discovery_sources", [])
@@ -113,68 +87,30 @@ def collect_tokens():
                     sources = [sources]
                 if not isinstance(sources, list):
                     sources = []
-                valid_sources = [
-                    source.strip().lower()
-                    for source in sources
-                    if isinstance(source, str) and source.strip()
-                ]
-                if not valid_sources:
-                    valid_sources = [source_name]
+                valid_sources = [s.strip().lower() for s in sources if isinstance(s, str) and s.strip()] or [name]
                 for source in valid_sources:
                     if source not in candidate["discovery_sources"]:
                         candidate["discovery_sources"].append(source)
                 for key, value in token.items():
-                    if key not in candidate:
+                    if key not in candidate and value is not None:
                         candidate[key] = value
 
         results = list(discovered.values())
-
-        results.sort(
-            key=lambda token: (
-                len(token["discovery_sources"]),
-                token["discovery_timestamp"]
-            ),
-            reverse=True
-        )
-
+        results.sort(key=lambda t: (len(t["discovery_sources"]), t["discovery_timestamp"]), reverse=True)
         results = results[:MAX_RESULTS]
-
-        print("================================")
-        print("TROJAN V2 TOKEN AGGREGATOR")
-        print("UNIQUE TOKENS:", len(results))
-        print("================================")
-
-        for source_name, count in source_stats.items():
-
-            print(
-                "SCANNER:",
-                source_name,
-                "| FOUND:",
-                count
-            )
-
-        for token in results[:10]:
-
-            print(
-                "AGGREGATED TOKEN:",
-                token["tokenAddress"],
-                "| SOURCES:",
-                token["discovery_sources"]
-            )
-
+        for name, _scanner in SCANNERS:
+            source_stats.setdefault(name, {"name": name, "count": 0, "ok": True, "error": None})
+        _last_source_stats = source_stats
+        _last_scan_at = current_time
+        print("TROJAN V2 TOKEN AGGREGATOR | SOURCES:", len(SCANNERS), "| UNIQUE:", len(results), flush=True)
+        for name, _scanner in SCANNERS:
+            stat = source_stats[name]
+            print("SCANNER:", name, "| FOUND:", stat["count"], "| OK:", stat["ok"], flush=True)
         return results
-
     finally:
-
         _aggregator_lock.release()
 
 
-# ==========================================
-# STARTUP
-# ==========================================
-
 if __name__ == "__main__":
-
-    print("TROJAN V2 TOKEN AGGREGATOR READY")
-
+    print("TROJAN V2 TOKEN AGGREGATOR READY", flush=True)
     collect_tokens()
