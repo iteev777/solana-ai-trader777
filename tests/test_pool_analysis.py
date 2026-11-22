@@ -48,6 +48,19 @@ class PoolAnalysisResilienceTests(unittest.TestCase):
         )
         self.assertEqual(second["retry_in_seconds"], 120.0)
 
+    def test_recent_verified_snapshot_suppresses_racing_transient_failure(self):
+        with patch.object(pool_analysis.time, "monotonic", return_value=100.0):
+            pool_analysis.record_success("pool")
+        result = pool_analysis.record_transient_failure(
+            "pool", RuntimeError("RPC timeout"), now=101.0
+        )
+        self.assertTrue(result["ignored_after_recent_success"])
+        self.assertEqual(result["retry_in_seconds"], 0.0)
+        self.assertEqual(
+            pool_analysis.get_pool_analysis_status(now=102.0)["transient_backoff_pools"],
+            0,
+        )
+
     def test_structural_failures_are_quarantined_and_success_clears_them(self):
         state = pool_analysis.record_structural_failure(
             "pool", ValueError("invalid pool layout"), now=10.0
