@@ -77,7 +77,8 @@ def get_jupiter_quote(input_mint, output_mint, amount, slippage_bps=None):
         raise ValueError("Jupiter returned an invalid quote")
     in_amount = int(quote.get("inAmount", 0))
     out_amount = int(quote.get("outAmount", 0))
-    impact = _finite(quote.get("priceImpactPct", 0), "price impact")
+    # Jupiter expresses priceImpactPct as a ratio (0.01 = 1%).
+    impact = _finite(quote.get("priceImpactPct", 0), "price impact") * 100.0
     if in_amount != raw_amount or out_amount <= 0:
         raise ValueError("Jupiter quote amount mismatch")
     if impact > MAX_PRICE_IMPACT_PERCENT:
