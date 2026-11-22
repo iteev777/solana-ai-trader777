@@ -132,6 +132,8 @@ def _positions():
             "peak_price": (position.get("metadata") or {}).get("peak_price"),
             "dca_count": int((position.get("metadata") or {}).get("dca_count", 0) or 0),
             "partial_take_profit_done": bool((position.get("metadata") or {}).get("partial_take_profit_done")),
+            "copy_wallet": (position.get("metadata") or {}).get("copy_wallet"),
+            "copy_latency_seconds": (position.get("metadata") or {}).get("copy_latency_seconds"),
         })
     return result
 
@@ -542,6 +544,50 @@ def api_filtering():
     })
 
 
+@app.get("/api/route-status")
+def api_route_status():
+    from route_comparison import get_router_status
+    return jsonify(get_router_status())
+
+
+@app.get("/api/route-comparison")
+def api_route_comparison():
+    from route_comparison import compare_quotes
+    input_mint = request.args.get("input_mint", "")
+    output_mint = request.args.get("output_mint", "")
+    amount = request.args.get("amount", "")
+    slippage = request.args.get("slippage_bps", default=None, type=int)
+    try:
+        return jsonify(compare_quotes(input_mint, output_mint, amount, slippage))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": "Quote comparison failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/strategy-catalog")
+def api_strategy_catalog():
+    from strategy_catalog import get_strategy_catalog
+    return jsonify(get_strategy_catalog())
+
+
+@app.get("/api/copy-readiness")
+def api_copy_readiness():
+    from copy_trade import get_copy_monitor_status
+    from copy_freshness import evaluate_event_freshness
+    return jsonify({
+        "monitor": get_copy_monitor_status(),
+        "wallet_performance": database.get_copy_wallet_performance(),
+        "freshness_guard": {
+            "enabled": True,
+            "max_age_seconds": float(os.getenv("TROJAN_COPY_MAX_EVENT_AGE_SECONDS", "30")),
+            "unknown_block_time": "rejected",
+        },
+        "mode": "paper_only",
+        "live_execution": "locked",
+    })
+
+
 @app.get("/api/performance")
 def api_performance():
     # Count closed paper trades only. BUY rows are not independent outcomes.
@@ -628,6 +674,14 @@ main{max-width:1440px;padding-top:16px}
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Open positions · live value</small><strong id="invested">—</strong></div></div>
+<section class="panel section"><h2>ROUTE COMPARISON · PAPER ONLY</h2>
+<div class="muted">Compare Jupiter and Raptor minimum output. No transaction is built, signed or sent. Amount is in input-token base units.</div>
+<div class="actions" style="margin-top:10px;flex-wrap:wrap">
+<input id="route-input" aria-label="Input mint" value="So11111111111111111111111111111111111111112" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
+<input id="route-output" aria-label="Output mint" placeholder="Output token mint" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
+<input id="route-amount" aria-label="Amount in base units" value="10000000" inputmode="numeric" style="width:150px;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
+<button class="refresh" type="button" onclick="runRouteComparison()">Compare quotes</button>
+</div><div id="route-results" class="health" style="margin-top:12px">No quote comparison run yet.</div></section>
 <section class="panel section"><h2>PHANTOM WALLET ASSETS</h2><div class="muted" id="wallet-summary">Loading on-chain assets…</div><div style="overflow:auto;margin-top:10px"><table><thead><tr><th>Asset</th><th>Amount</th><th>Price</th><th>Value</th><th>Mint</th></tr></thead><tbody id="wallet-assets"><tr><td colspan="5" class="muted">Loading wallet…</td></tr></tbody></table></div></section>
 <div class="split"><section class="panel section" id="home-health"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
@@ -669,6 +723,23 @@ async function loadWallet(){
   });
   document.getElementById('wallet-assets').innerHTML=rows.length?rows.join(''):'<tr><td colspan="5" class="muted">No SPL assets found</td></tr>';
  }catch(err){document.getElementById('wallet-usd').textContent='Wallet update failed: '+err.message;document.getElementById('wallet-summary').textContent='Wallet data unavailable';}
+}
+async function runRouteComparison(){
+ const input=document.getElementById('route-input').value.trim();
+ const output=document.getElementById('route-output').value.trim();
+ const amount=document.getElementById('route-amount').value.trim();
+ const target=document.getElementById('route-results');
+ if(!input||!output||!amount){target.textContent='Enter input mint, output mint and base-unit amount.';return;}
+ target.textContent='Fetching independent quotes…';
+ try{
+  const q=new URLSearchParams({input_mint:input,output_mint:output,amount:amount});
+  const result=await get('/api/route-comparison?'+q.toString());
+  const rows=Object.values(result.quotes||{}).map(item=>{
+   const value=item.minimum_out_amount===null||item.minimum_out_amount===undefined?'—':String(item.minimum_out_amount);
+   return '<div class="health-item"><span>'+esc(item.provider)+'</span><strong>'+esc(item.status)+'</strong><small>Min out: '+esc(value)+' · '+esc(item.reason||'')+'</small></div>';
+  }).join('');
+  target.innerHTML=rows+'<div class="muted">Best: '+esc(result.best_provider||'No valid route')+' · execution '+esc(result.execution)+'</div>';
+ }catch(err){target.textContent='Quote comparison failed: '+err.message;}
 }
 async function loadHome(){
  try{

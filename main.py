@@ -614,7 +614,8 @@ def analyze_token_task(address, strategy_name, token):
             "token_security": token_security_report,
             "entry_intelligence": entry_intelligence,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
-            "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None
+            "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None,
+            "copy_latency_seconds": token.get("copy_latency_seconds") if isinstance(token, dict) else None
         }
 
     except Exception as error:
@@ -725,7 +726,9 @@ def queue_copy_signal(event):
     if not isinstance(event.get("token_mint"), str) or not event["token_mint"]:
         return False
     try:
-        copy_signal_queue.put_nowait(dict(event))
+        queued = dict(event)
+        queued["queued_at"] = time.time()
+        copy_signal_queue.put_nowait(queued)
         return True
     except queue.Full:
         log_event("COPY SIGNAL QUEUE FULL", event.get("token_mint"))
@@ -743,6 +746,21 @@ def process_copy_signals():
         address = event.get("token_mint")
         wallet = event.get("wallet")
         action = event.get("action")
+
+        # Reject delayed/replayed wallet activity before either paper BUY or SELL.
+        from copy_freshness import evaluate_event_freshness
+        freshness = evaluate_event_freshness(
+            event.get("block_time"), event.get("received_at"),
+            now=time.time()
+        )
+        if not freshness.get("allowed"):
+            log_event(
+                "COPY SIGNAL SKIPPED",
+                address,
+                str(freshness.get("reason")) + " | age=" + str(freshness.get("age_seconds"))
+            )
+            continue
+        event["copy_latency_seconds"] = freshness.get("age_seconds")
 
         # Mirror a followed wallet's SELL only against the paper position
         # opened from that same wallet's BUY signal. Never close unrelated
@@ -777,9 +795,9 @@ def process_copy_signals():
         )
         if not decision.get("allowed"):
             log_event(
-                "COPY BUY RISK REJECTED", address,
-                "wallet=" + str(wallet),
-                "reason=" + str(decision.get("reason"))
+                "COPY BUY RISK REJECTED",
+                address,
+                "wallet=" + str(wallet) + " | reason=" + str(decision.get("reason"))
             )
             continue
         token = {
@@ -788,7 +806,8 @@ def process_copy_signals():
             "discovery_sources": ["copy_wallet"],
             "copy_wallet": wallet,
             "copy_signature": event.get("signature"),
-            "copy_trade_size_cap": decision.get("trade_size")
+            "copy_trade_size_cap": decision.get("trade_size"),
+            "copy_latency_seconds": event.get("copy_latency_seconds")
         }
         queued = schedule_token(address, "sniper", token)
         log_event(
@@ -978,9 +997,9 @@ def process_completed_tasks():
                 )
                 if approved_trade_size <= 0:
                     log_event(
-                        "COPY BUY RISK REJECTED AT EXECUTION", address,
-                        "wallet=" + str(copy_wallet),
-                        "reason=" + str(copy_risk_decision.get("reason"))
+                        "COPY BUY RISK REJECTED AT EXECUTION",
+                        address,
+                        "wallet=" + str(copy_wallet) + " | reason=" + str(copy_risk_decision.get("reason"))
                     )
                     continue
             trade_result = manager.process_approved_signal(
@@ -996,7 +1015,8 @@ def process_completed_tasks():
                     "token_security": result.get("token_security"),
                     "entry_intelligence": result.get("entry_intelligence"),
                     "copy_wallet": result.get("copy_wallet"),
-                    "copy_signature": result.get("copy_signature")
+                    "copy_signature": result.get("copy_signature"),
+                    "copy_latency_seconds": result.get("copy_latency_seconds")
                 }
             )
 
