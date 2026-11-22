@@ -304,6 +304,7 @@ def update_position(token_address, current_price):
             )
             if isinstance(result, dict):
                 metadata["partial_take_profit_done"] = True
+                metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0) or 0) + 1
                 database.update_position_metadata(MODE, token_address, metadata)
                 refresh_account()
                 print("PAPER PARTIAL SELL:", token_address, "|", result, flush=True)
