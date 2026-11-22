@@ -6,6 +6,7 @@ import requests
 import math
 import time
 import threading
+import re
 
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
@@ -107,6 +108,38 @@ def _risk_threshold(name, default, minimum=0.0, maximum=100.0):
         return float(default)
 
 
+
+def _percentage_from_text(value):
+    if not isinstance(value, str):
+        return None
+    match = re.search(r"(?<![\\w.])([0-9]+(?:\\.[0-9]+)?)\\s*%", value)
+    if match:
+        number = get_number(match.group(1))
+        return number if number is not None and 0 <= number <= 100 else None
+    lowered = value.lower()
+    if "unlock" in lowered or "not locked" in lowered:
+        return 0.0
+    if "locked" in lowered and "partial" not in lowered:
+        return 100.0
+    return None
+
+
+def _lp_lock_percentage(risks):
+    for risk in risks:
+        if not isinstance(risk, dict):
+            continue
+        name = str(risk.get("name", "")).lower()
+        description = str(risk.get("description", "")).lower()
+        if not (("lp" in name and "lock" in name)
+                or ("liquidity" in description and "lock" in description)):
+            continue
+        for field in ("value", "description", "name"):
+            result = _percentage_from_text(risk.get(field))
+            if result is not None:
+                return result
+    return None
+
+
 def analyze_rugcheck_report(data):
     """Normalize RugCheck risk signals into one auditable, fail-closed decision."""
     empty = {
@@ -184,6 +217,7 @@ def analyze_rugcheck_report(data):
     top_holders = data.get("topHolders")
     holders_valid = isinstance(top_holders, list) and len(top_holders) > 0
     holder_percentages = []
+    holder_records = []
     creator_pct = None
     creator = data.get("creator")
     if holders_valid:
@@ -193,6 +227,11 @@ def analyze_rugcheck_report(data):
             pct = get_number(holder.get("pct"))
             if pct is not None and 0 <= pct <= 100:
                 holder_percentages.append(pct)
+                holder_records.append({
+                    "pct": pct,
+                    "insider": holder.get("insider") is True,
+                    "insider_field_present": "insider" in holder,
+                })
                 owner = holder.get("owner")
                 address = holder.get("address")
                 if (isinstance(owner, str) and owner.lower() == "creator") or (
@@ -223,6 +262,64 @@ def analyze_rugcheck_report(data):
         elif top10_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_TOP10_PCT", 60.0):
             medium_risks += 1
             reasons.append("Elevated top-ten holder concentration")
+
+
+    top_three_pct = sum(holder_percentages[:3]) if holder_percentages else None
+    top10_records = sorted(holder_records, key=lambda item: item["pct"], reverse=True)[:10]
+    top10_insider_count = None
+    insider_total_pct = None
+    if any(item["insider_field_present"] for item in top10_records):
+        insiders_top10 = [item for item in top10_records if item["insider"]]
+        top10_insider_count = len(insiders_top10)
+        insider_total_pct = sum(item["pct"] for item in insiders_top10)
+
+    if top_three_pct is not None:
+        maximum_top_three = _risk_threshold("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 85.0)
+        if top_three_pct > maximum_top_three:
+            high_risks += 1
+            reasons.append("Top three holder concentration exceeds configured maximum")
+
+    if top10_insider_count is not None:
+        maximum_insiders = int(_risk_threshold(
+            "TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 10.0, 0.0, 10.0
+        ))
+        maximum_insider_pct = _risk_threshold(
+            "TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 100.0
+        )
+        if top10_insider_count > maximum_insiders:
+            high_risks += 1
+            reasons.append("Too many insider wallets among top ten holders")
+        if insider_total_pct > maximum_insider_pct:
+            high_risks += 1
+            reasons.append("Insider holder balance exceeds configured maximum")
+
+    graph_insider_share_pct = None
+    total_holders = get_number(data.get("totalHolders"))
+    if insiders is not None and total_holders is not None and total_holders > 0:
+        graph_insider_share_pct = min(100.0, max(0.0, insiders / total_holders * 100.0))
+        maximum_graph_share = _risk_threshold(
+            "TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 100.0
+        )
+        if graph_insider_share_pct > maximum_graph_share:
+            high_risks += 1
+            reasons.append("Graph insider share exceeds configured maximum")
+    elif __import__("os").getenv("TROJAN_RUGCHECK_REQUIRE_GRAPH_INSIDER_DATA", "false").lower() == "true":
+        unknown_risks += 1
+        reasons.append("Graph insider share data required but unavailable")
+
+    lp_lock_pct = _lp_lock_percentage(risks)
+    token_type = str(
+        data.get("tokenType") or token.get("tokenType")
+        or token_meta.get("tokenType") or ""
+    ).lower()
+    minimum_lp_lock = _risk_threshold("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
+    if minimum_lp_lock > 0 and "pump" in token_type:
+        if lp_lock_pct is None:
+            unknown_risks += 1
+            reasons.append("Pump token LP lock data required but unavailable")
+        elif lp_lock_pct < minimum_lp_lock:
+            high_risks += 1
+            reasons.append("Pump token LP lock is below configured minimum")
 
     creator_balance = _first_present(data.get("creatorBalance"), token.get("creatorBalance"))
     token_supply = _first_present(data.get("tokenSupply"), token.get("supply"))
@@ -330,6 +427,11 @@ def analyze_rugcheck_report(data):
             "token_mutable": token_mutable,
             "top_holder_pct": round(top_holder_pct, 4) if top_holder_pct is not None else None,
             "top10_holder_pct": round(top10_pct, 4) if top10_pct is not None else None,
+            "top_three_holders_pct": round(top_three_pct, 4) if top_three_pct is not None else None,
+            "top_ten_insider_count": top10_insider_count,
+            "insider_total_pct": round(insider_total_pct, 4) if insider_total_pct is not None else None,
+            "graph_insider_share_pct": round(graph_insider_share_pct, 4) if graph_insider_share_pct is not None else None,
+            "lp_lock_pct": lp_lock_pct,
             "creator_pct": round(creator_pct, 4) if creator_pct is not None else None,
             "transfer_fee_pct": transfer_fee_pct,
             "transfer_fee_authority_active": transfer_fee_authority not in (None, "", False),
