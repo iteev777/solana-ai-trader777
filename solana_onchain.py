@@ -493,7 +493,7 @@ def _register_pool_price_watch(pool_address, protocol, token_mint):
 
 
 def get_pool_watch_accounts(pool_address, protocol, token_mint=None):
-    """Return every account required to price and monitor one verified pool."""
+    """Return pool state and reserve vault accounts for WebSocket subscriptions."""
     if not isinstance(pool_address, str) or not pool_address.strip():
         raise ValueError("pool address is required for account watching")
     account = _account(pool_address.strip())
@@ -508,23 +508,47 @@ def get_pool_watch_accounts(pool_address, protocol, token_mint=None):
     if decoded.get("status") != "active":
         raise ValueError("pool is not active for account watching")
     accounts = [pool_address.strip()]
+    for field in ("vault_base", "vault_quote"):
+        address = decoded.get(field)
+        if isinstance(address, str) and address and address not in accounts:
+            accounts.append(address)
+    return accounts
+
+
+def get_pool_snapshot_accounts(pool_address, protocol, token_mint):
+    """Return the complete account set needed for a coherent pool price snapshot."""
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("pool address is required for snapshot fetching")
+    if not isinstance(token_mint, str) or not token_mint.strip():
+        raise ValueError("token mint is required for snapshot fetching")
+    account = _account(pool_address.strip())
+    owner_protocol = next(
+        (name for name, program_id in PROGRAMS.items()
+         if account.get("owner") == program_id),
+        None
+    )
+    if owner_protocol is None:
+        raise ValueError("pool owner is not a supported Solana DEX program")
+    decoded = _decode_pool(owner_protocol, account["data"])
+    if decoded.get("status") != "active":
+        raise ValueError("pool is not active for snapshot fetching")
+    accounts = [pool_address.strip()]
 
     def add(address):
         if isinstance(address, str) and address and address not in accounts:
             accounts.append(address)
 
     if owner_protocol in ("pumpfun_legacy", "moonit_amm"):
-        if not isinstance(token_mint, str) or not token_mint.strip():
-            raise ValueError("curve watch requires its token mint")
         add(token_mint.strip())
         return accounts
-
     if owner_protocol == "meteora_dbc":
+        if decoded.get("base_mint") != token_mint:
+            raise ValueError("requested mint is not the Meteora DBC base mint")
         config = _account(decoded["config"])
         if (config.get("owner") != PROGRAMS["meteora_dbc"]
                 or len(config.get("data", b"")) < 40
                 or config["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43])):
-            raise ValueError("invalid Meteora DBC config for pool watching")
+            raise ValueError("invalid Meteora DBC config for snapshot fetching")
         add(decoded["config"])
         add(decoded["base_mint"])
         add(_key(config["data"], 8))
@@ -532,7 +556,6 @@ def get_pool_watch_accounts(pool_address, protocol, token_mint=None):
         add(decoded.get("amm_config"))
         add(decoded.get("base_mint"))
         add(decoded.get("quote_mint"))
-
     add(decoded.get("vault_base"))
     add(decoded.get("vault_quote"))
     return accounts
