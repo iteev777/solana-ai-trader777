@@ -57,3 +57,10 @@ The optional strategy rule engine supports nested `all`, `any`, and `not` groups
 ```
 
 Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`, `price_change_h1`, `price_change_h24`, `buy_ratio`, `score`, `source_count`, `txns_m5_total`, and `pair_age_minutes`. Supported operators: `gt`, `gte`, `lt`, `lte`, `eq`, and `between`. The dashboard reports whether the custom rules are enabled and valid at `/api/strategies`. Live execution remains locked.
+
+
+## Paper position management
+
+- A partial take-profit closes 50% of a position once it reaches +8% ROI; the remaining half continues under the normal stop, take-profit, trailing, and time-exit rules. Set `TROJAN_PARTIAL_TAKE_PROFIT_ENABLED=false` to disable it.
+- One DCA add of $2.50 is available after a 5% pullback, but it is **disabled by default**. Set `TROJAN_DCA_ENABLED=true` to enable it in paper mode. The add is blocked once the existing hard stop threshold has been reached and is limited to one add per position.
+- DCA and partial exits are recorded as separate paper transactions; realized P/L includes the configured estimated entry and exit fees.
