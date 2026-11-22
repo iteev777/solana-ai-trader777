@@ -11,7 +11,8 @@ import database
 app = Flask(__name__)
 _server = None
 _server_thread = None
-_server_lock = threading.Lock()\n_wallet_price_cache = {"checked_at": 0, "price_usd": None}
+_server_lock = threading.Lock()
+_wallet_price_cache = {"checked_at": 0, "price_usd": None}
 
 
 def _authorized():
