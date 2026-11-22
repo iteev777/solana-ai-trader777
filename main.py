@@ -241,11 +241,18 @@ def queue_retry(
 # RUGCHECK
 # ==========================================
 
-def check_rugcheck(token_address):
+_RUGCHECK_REPORT_UNSET = object()
+
+
+def check_rugcheck(token_address, report=_RUGCHECK_REPORT_UNSET):
+    """Validate a RugCheck report, optionally reusing the already-fetched report."""
 
     try:
 
-        result = get_rugcheck_report(token_address)
+        result = (
+            get_rugcheck_report(token_address)
+            if report is _RUGCHECK_REPORT_UNSET else report
+        )
 
         if not isinstance(result, dict):
 
@@ -571,12 +578,22 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address
             }
 
-        if not check_rugcheck(address):
+        # Fetch once, evaluate once, and carry the exact same report through
+        # the candidate result so the dashboard/API can inspect its risk signals.
+        rugcheck_report = get_rugcheck_report(address)
+        rugcheck_analysis = (
+            rugcheck_report.get("analysis")
+            if isinstance(rugcheck_report, dict)
+            and isinstance(rugcheck_report.get("analysis"), dict)
+            else None
+        )
+        if not check_rugcheck(address, rugcheck_report):
 
             return {
                 "status": "rejected",
                 "reason": "RUGCHECK_FAILED",
-                "address": address
+                "address": address,
+                "rugcheck": rugcheck_analysis
             }
 
         token_security_report = {
@@ -593,14 +610,16 @@ def analyze_token_task(address, strategy_name, token):
                         "status": "rejected",
                         "reason": security_decision.get("reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"),
                         "address": address,
-                        "token_security": token_security_report
+                        "token_security": token_security_report,
+                        "rugcheck": rugcheck_analysis
                     }
             except Exception as security_error:
                 log_event("ONCHAIN TOKEN SECURITY FAILED", address, repr(security_error))
                 return {
                     "status": "rejected",
                     "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
-                    "address": address
+                    "address": address,
+                    "rugcheck": rugcheck_analysis
                 }
 
         score = safe_float(trade_decision.get("score"))
@@ -627,7 +646,8 @@ def analyze_token_task(address, strategy_name, token):
                     "reason": entry_intelligence.get("reason", "ENTRY_ROUTE_REJECTED"),
                     "address": address,
                     "route_quality": entry_intelligence.get("route_quality"),
-                    "simulation": entry_intelligence.get("simulation")
+                    "simulation": entry_intelligence.get("simulation"),
+                    "rugcheck": rugcheck_analysis
                 }
         except Exception as route_error:
             log_event("JUPITER ENTRY ANALYSIS FAILED", address, repr(route_error))
@@ -651,6 +671,7 @@ def analyze_token_task(address, strategy_name, token):
             "pool_protocol": pool_protocol,
             "onchain_verified": bool(onchain_snapshot),
             "token_security": token_security_report,
+            "rugcheck": rugcheck_analysis,
             "entry_intelligence": entry_intelligence,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
             "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None,
