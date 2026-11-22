@@ -22,7 +22,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -272,6 +272,31 @@ def initialize_database():
                 token_address TEXT,
                 timestamp TEXT NOT NULL
             )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS token_filter_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_address TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                reason TEXT,
+                score REAL,
+                liquidity REAL,
+                source_count INTEGER NOT NULL DEFAULT 0,
+                metadata TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_filter_events_token
+            ON token_filter_events(token_address)
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_filter_events_timestamp
+            ON token_filter_events(timestamp)
         """)
 
         connection.execute("""
@@ -1188,6 +1213,86 @@ def get_recent_events(limit=50):
             LIMIT ?
         """, (limit,)).fetchall()
 
+    return [dict(row) for row in rows]
+
+
+# ==========================================
+# TOKEN FILTERING AUDIT + ANALYTICS
+# ==========================================
+
+def record_filter_decision(
+    token_address,
+    stage,
+    decision,
+    reason=None,
+    score=None,
+    liquidity=None,
+    source_count=0,
+    metadata=None
+):
+    """Persist a transparent, queryable result for every filter stage."""
+    if not isinstance(token_address, str) or not token_address.strip():
+        return False
+    if not isinstance(stage, str) or not stage.strip():
+        return False
+    if not isinstance(decision, str) or not decision.strip():
+        return False
+    score_value = None if score is None else validate_number(score, "score")
+    liquidity_value = None if liquidity is None else validate_number(liquidity, "liquidity")
+    try:
+        source_count_value = max(0, int(source_count))
+    except (TypeError, ValueError, OverflowError):
+        source_count_value = 0
+    with connect() as connection:
+        connection.execute("""
+            INSERT INTO token_filter_events
+            (token_address, stage, decision, reason, score, liquidity,
+             source_count, metadata, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            token_address.strip(), stage.strip().upper(), decision.strip().upper(),
+            str(reason or "")[:1000], score_value, liquidity_value,
+            source_count_value, json.dumps(metadata or {}, default=str)[:8000], now()
+        ))
+    return True
+
+
+def get_filtering_summary(limit=1000):
+    limit = max(1, min(int(limit), 10000))
+    with connect() as connection:
+        totals = connection.execute("""
+            SELECT decision, COUNT(*) AS count
+            FROM token_filter_events
+            WHERE id > (SELECT COALESCE(MAX(id), 0) - ? FROM token_filter_events)
+            GROUP BY decision
+        """, (limit,)).fetchall()
+        reasons = connection.execute("""
+            SELECT stage, decision, COALESCE(NULLIF(reason, ''), 'No reason') AS reason,
+                   COUNT(*) AS count
+            FROM token_filter_events
+            WHERE id > (SELECT COALESCE(MAX(id), 0) - ? FROM token_filter_events)
+            GROUP BY stage, decision, reason
+            ORDER BY count DESC
+            LIMIT 20
+        """, (limit,)).fetchall()
+        total = connection.execute("SELECT COUNT(*) FROM token_filter_events").fetchone()[0]
+    return {
+        "total_recorded": int(total or 0),
+        "window_size": limit,
+        "decisions": {row["decision"]: int(row["count"]) for row in totals},
+        "top_reasons": [dict(row) for row in reasons]
+    }
+
+
+def get_recent_filter_events(limit=100):
+    limit = max(1, min(int(limit), 500))
+    with connect() as connection:
+        rows = connection.execute("""
+            SELECT id, token_address, stage, decision, reason, score,
+                   liquidity, source_count, timestamp
+            FROM token_filter_events
+            ORDER BY id DESC LIMIT ?
+        """, (limit,)).fetchall()
     return [dict(row) for row in rows]
 
 
