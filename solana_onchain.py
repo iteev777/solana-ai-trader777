@@ -252,13 +252,32 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     if cached and time.time() - cached["time"] < 3:
         return dict(cached["data"])
     pool = _account(pool_address)
-    if protocol == "raydium_auto":
-        protocol = next((name for name in ("raydium_cpmm", "raydium_clmm", "raydium_amm_v4")
-                         if pool["owner"] == PROGRAMS[name]), None)
-        if protocol is None:
-            raise ValueError("Raydium pool owner is not a supported CPMM or CLMM program")
-    if pool["owner"] != PROGRAMS[protocol]:
-        raise ValueError("pool account owner does not match " + protocol)
+
+    # The account owner is the authoritative protocol identifier.
+    # DEX labels from discovery APIs are often broad or stale (for example,
+    # "Meteora" can refer to more than one pool family). Never select a binary
+    # decoder from a display label when the on-chain owner can identify it.
+    owner_protocol = next(
+        (name for name, program_id in PROGRAMS.items()
+         if pool["owner"] == program_id),
+        None
+    )
+    if owner_protocol is None:
+        raise ValueError(
+            "pool account owner is not a supported Solana DEX program: "
+            + str(pool["owner"])
+        )
+
+    if protocol != owner_protocol:
+        print(
+            "[TROJAN V2] ONCHAIN PROTOCOL LABEL OVERRIDE",
+            "| DECLARED:", protocol,
+            "| ACCOUNT_OWNER_PROTOCOL:", owner_protocol,
+            "| POOL:", pool_address,
+            flush=True
+        )
+
+    protocol = owner_protocol
     decoded = _decode_pool(protocol, pool["data"])
     if decoded["status"] != "active":
         raise ValueError("pool is not swap-active")
