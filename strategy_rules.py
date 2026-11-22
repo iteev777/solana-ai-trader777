@@ -29,7 +29,9 @@ ALLOWED_FIELDS = {
     "ema_cross_bullish", "breakout_20", "volume_spike_ratio",
     "timeframe_ready_count", "bullish_timeframes", "bearish_timeframes",
     "macd_histogram", "macd_bullish", "bollinger_percent_b",
-    "atr_percent", "stochastic_k", "above_vwap"
+    "atr_percent", "stochastic_k", "above_vwap",
+    "candle_body_pct", "candle_range_pct", "consecutive_green_candles",
+    "consecutive_red_candles", "volume_spike", "position_holding_minutes"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
 
@@ -88,7 +90,13 @@ def _context(token, score):
         "bollinger_percent_b": _number(indicators.get("bollinger_percent_b")),
         "atr_percent": _number(indicators.get("atr_percent")),
         "stochastic_k": _number(indicators.get("stochastic_k")),
-        "above_vwap": 1.0 if indicators.get("above_vwap") is True else 0.0 if indicators.get("above_vwap") is False else None
+        "above_vwap": 1.0 if indicators.get("above_vwap") is True else 0.0 if indicators.get("above_vwap") is False else None,
+        "candle_body_pct": _number(indicators.get("candle_body_pct")),
+        "candle_range_pct": _number(indicators.get("candle_range_pct")),
+        "consecutive_green_candles": _number(indicators.get("consecutive_green_candles")),
+        "consecutive_red_candles": _number(indicators.get("consecutive_red_candles")),
+        "volume_spike": 1.0 if indicators.get("volume_spike") is True else 0.0 if indicators.get("volume_spike") is False else None,
+        "position_holding_minutes": _number(token.get("position_holding_minutes"))
     }
 
 
