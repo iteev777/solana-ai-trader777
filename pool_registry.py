@@ -56,6 +56,20 @@ def _pool_liquidity(pair):
         return 0.0
 
 
+def _pool_priority(pair):
+    quote = pair.get("quoteToken")
+    quote_address = quote.get("address") if isinstance(quote, dict) else None
+    liquidity = pair.get("liquidity")
+    liquidity = liquidity if isinstance(liquidity, dict) else {}
+    if quote_address == "So11111111111111111111111111111111111111112":
+        try:
+            native_reserve = float(liquidity.get("quote") or 0)
+        except (TypeError, ValueError, OverflowError):
+            native_reserve = 0.0
+        return (1, max(0.0, native_reserve), _pool_liquidity(pair))
+    return (0, 0.0, _pool_liquidity(pair))
+
+
 def merge_pool_candidates(mint, pairs, source):
     """Merge pool rows by pool address while preserving per-source provenance."""
     if not isinstance(mint, str) or not mint.strip() or not isinstance(pairs, list):
@@ -96,7 +110,7 @@ def merge_pool_candidates(mint, pairs, source):
 
         ordered = sorted(
             rows.items(),
-            key=lambda item: (_pool_liquidity(item[1]), item[0]),
+            key=lambda item: (_pool_priority(item[1]), item[0]),
             reverse=True
         )[:MAX_POOLS_PER_TOKEN]
         _candidates[mint] = OrderedDict(ordered)
