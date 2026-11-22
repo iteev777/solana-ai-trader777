@@ -6,13 +6,15 @@ native-SOL pairs, and uses incumbent hysteresis to prevent price-source churn.
 import copy
 import math
 import threading
+from collections import OrderedDict
 
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 CANONICAL_KEEP_RATIO = 0.80
 MAX_CANDIDATE_SUMMARIES = 5
+MAX_CANONICAL_TOKENS = 5000
 
 _lock = threading.RLock()
-_canonical_pool_by_token = {}
+_canonical_pool_by_token = OrderedDict()
 
 
 def _number(value):
@@ -152,6 +154,9 @@ def select_best_pairs(pairs, requested_addresses):
             chosen = incumbent if retained else best
             if chosen["address"]:
                 _canonical_pool_by_token[mint] = chosen["address"]
+                _canonical_pool_by_token.move_to_end(mint)
+                while len(_canonical_pool_by_token) > MAX_CANONICAL_TOKENS:
+                    _canonical_pool_by_token.popitem(last=False)
             result = copy.deepcopy(chosen["pair"])
             ordered = sorted(candidates, key=lambda item: (item["is_native_pair"], *_rank_key(item)), reverse=True)
             result["poolSelection"] = {
