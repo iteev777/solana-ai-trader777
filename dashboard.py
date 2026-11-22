@@ -202,6 +202,31 @@ def api_filtering():
     })
 
 
+@app.get("/api/performance")
+def api_performance():
+    # Count closed paper trades only. BUY rows are not independent outcomes.
+    rows = _rows("""
+        SELECT strategy,
+               SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS closed_trades,
+               SUM(CASE WHEN action='SELL' AND profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
+               SUM(CASE WHEN action='SELL' AND profit_loss <= 0 THEN 1 ELSE 0 END) AS losses,
+               COALESCE(SUM(CASE WHEN action='SELL' THEN profit_loss ELSE 0 END), 0) AS realized_pnl
+        FROM trades
+        WHERE mode='paper'
+        GROUP BY strategy
+        ORDER BY strategy
+    """)
+    for row in rows:
+        closed = int(row.get("closed_trades") or 0)
+        wins = int(row.get("wins") or 0)
+        row["win_rate"] = round((wins / closed) * 100, 2) if closed else 0.0
+    return jsonify({
+        "strategies": rows,
+        "mode": "paper",
+        "live_execution": "locked"
+    })
+
+
 @app.get("/api/health")
 def api_health():
     return jsonify({
@@ -245,6 +270,7 @@ footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 <div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 <section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+<section class="panel section"><h2>STRATEGY PERFORMANCE</h2><div class="health" id="performance"><div class="muted">Waiting for closed-trade data…</div></div></section>
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 <section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, volume_spike_ratio. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
 <section class="panel section"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
@@ -259,8 +285,8 @@ const short=v=>v?String(v).slice(0,6)+'…'+String(v).slice(-5):'—';
 const time=v=>v?new Date(v).toLocaleTimeString():'—';
 async function get(path){const r=await fetch(path);if(r.status===401){document.body.innerHTML='<main><h2>Authentication required</h2><p>Reload and sign in using your dashboard token.</p></main>';throw Error('auth');}if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
 async function loadAll(){try{
-const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering')]);
-const o=data[0],t=data[1],e=data[2],f=data[3],a=o.account,s=o.stats;
+const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering'),get('/api/performance')]);
+const o=data[0],t=data[1],e=data[2],f=data[3],p=data[4],a=o.account,s=o.stats;
 document.getElementById('balance').textContent=usd(a.balance);
 document.getElementById('pnl').textContent=usd(s.total_profit);
 document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
@@ -277,6 +303,7 @@ document.getElementById('health').innerHTML=checks.map(function(x){return '<div>
 document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
 document.getElementById('trades').innerHTML=t.length?t.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td class="'+(x.action==='SELL'?'bad':'good')+'">'+x.action+'</td><td class="token">'+short(x.token_address)+'</td><td>'+fmt(x.price,8)+'</td><td>'+usd(x.amount)+'</td><td class="'+(x.profit_loss>=0?'good':'bad')+'">'+usd(x.profit_loss)+'</td><td>'+x.strategy+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No trades recorded</td></tr>';
 const decisions=f.summary.decisions||{};
+document.getElementById('performance').innerHTML=p.strategies.length?p.strategies.map(function(x){return '<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Closed: '+esc(x.closed_trades)+' · Wins: '+esc(x.wins)+' · Losses: '+esc(x.losses)+' · Win rate: '+fmt(x.win_rate,1)+'%</div></div>';}).join(''):'<div class="muted">No closed paper trades yet. Strategy stats appear after the first SELL.</div>';
 document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
 document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
 document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.event_type)+'</td><td>'+esc((x.message||'').slice(0,180))+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';

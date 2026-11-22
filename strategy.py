@@ -5,7 +5,12 @@
 import os
 from ai_analyzer import analyze_token
 from strategy_rules import evaluate_strategy_rules
-from risk_manager import check_trade_risk
+from risk_manager import (
+    check_trade_risk,
+    MAX_TRADE_SIZE,
+    MIN_TRADE_SIZE,
+    MAX_TRADE_BALANCE_FRACTION
+)
 import paper_trading as paper
 
 
@@ -121,6 +126,24 @@ def evaluate_trade(
             "reason": "Score below strategy threshold"
         }
 
+    # Scale the ticket down as the paper balance falls. Never exceed
+    # either the strategy's normal ticket or the configured balance fraction.
+    try:
+        available_balance = float(balance)
+    except (TypeError, ValueError, OverflowError):
+        available_balance = 0.0
+    trade_size = min(
+        TRADE_SIZE,
+        MAX_TRADE_SIZE,
+        available_balance * MAX_TRADE_BALANCE_FRACTION
+    )
+    if trade_size < MIN_TRADE_SIZE:
+        return {
+            "action": "REJECT",
+            "score": score,
+            "reason": "BALANCE TOO LOW FOR MINIMUM SAFE TRADE"
+        }
+
     # Get separate strategy position counts.
     main_positions = paper.position_count("main")
     sniper_positions = paper.position_count("sniper")
@@ -130,7 +153,7 @@ def evaluate_trade(
         balance,
         open_positions,
         daily_loss,
-        TRADE_SIZE,
+        trade_size,
         strategy=strategy,
         main_positions=main_positions,
         sniper_positions=sniper_positions
@@ -147,7 +170,7 @@ def evaluate_trade(
         "action": "BUY_SIGNAL",
         "score": score,
         "strategy": strategy,
-        "trade_size": TRADE_SIZE,
+        "trade_size": round(trade_size, 2),
         "reasons": analysis.get("reasons", [])
     }
 

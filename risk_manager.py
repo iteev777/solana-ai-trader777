@@ -1,4 +1,5 @@
 import math
+import os
 
 
 # ==========================================
@@ -7,17 +8,48 @@ import math
 
 STARTING_BALANCE = 100.00
 
-MAX_TRADE_SIZE = 5.00
-MIN_TRADE_SIZE = 1.00
 
-MAX_MAIN_POSITIONS = 10
-MAX_SNIPER_POSITIONS = 10
-MAX_TOTAL_POSITIONS = 15
+def _env_number(name, default, minimum=0.0):
+    try:
+        value = float(os.getenv(name, str(default)))
+        if math.isfinite(value) and value >= minimum:
+            return value
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return float(default)
 
-MAX_DAILY_LOSS = 50.00
 
-STOP_LOSS_PERCENT = 20
-TAKE_PROFIT_PERCENT = 30
+def _env_count(name, default, minimum=1):
+    try:
+        value = int(os.getenv(name, str(default)))
+        if value >= minimum:
+            return value
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return int(default)
+
+
+MAX_TRADE_SIZE = _env_number("TROJAN_MAX_TRADE_SIZE_USD", 5.00, 1.00)
+MIN_TRADE_SIZE = _env_number("TROJAN_MIN_TRADE_SIZE_USD", 1.00, 0.01)
+
+MAX_MAIN_POSITIONS = _env_count("TROJAN_MAX_MAIN_POSITIONS", 10)
+MAX_SNIPER_POSITIONS = _env_count("TROJAN_MAX_SNIPER_POSITIONS", 10)
+MAX_TOTAL_POSITIONS = _env_count("TROJAN_MAX_TOTAL_POSITIONS", 15)
+
+# Default daily loss cap is 10% of the paper starting balance. It can be
+# overridden explicitly in Railway without editing the source.
+MAX_DAILY_LOSS = _env_number(
+    "TROJAN_MAX_DAILY_LOSS_USD",
+    STARTING_BALANCE * 0.10,
+    0.01
+)
+MAX_TRADE_BALANCE_FRACTION = min(
+    1.0,
+    _env_number("TROJAN_MAX_TRADE_BALANCE_FRACTION", 0.10, 0.01)
+)
+
+STOP_LOSS_PERCENT = _env_number("TROJAN_STOP_LOSS_PERCENT", 20.0, 0.1)
+TAKE_PROFIT_PERCENT = _env_number("TROJAN_TAKE_PROFIT_PERCENT", 30.0, 0.1)
 
 VALID_STRATEGIES = ("main", "sniper")
 
@@ -116,6 +148,13 @@ def check_trade_risk(
 
     if balance < trade_size:
         return False, "INSUFFICIENT BALANCE"
+
+    # Position sizing must shrink with the remaining account balance.
+    # This prevents the fixed default ticket from becoming oversized after
+    # a drawdown or a series of open positions.
+    max_balance_risk = balance * MAX_TRADE_BALANCE_FRACTION
+    if trade_size > max_balance_risk:
+        return False, "TRADE SIZE EXCEEDS BALANCE RISK FRACTION"
 
     if daily_loss >= MAX_DAILY_LOSS:
         return False, "DAILY LOSS LIMIT REACHED"
@@ -245,6 +284,7 @@ def get_risk_summary():
         "max_sniper_positions": MAX_SNIPER_POSITIONS,
         "max_total_positions": MAX_TOTAL_POSITIONS,
         "max_daily_loss": MAX_DAILY_LOSS,
+        "max_trade_balance_fraction": MAX_TRADE_BALANCE_FRACTION,
         "stop_loss_percent": STOP_LOSS_PERCENT,
         "take_profit_percent": TAKE_PROFIT_PERCENT
     }

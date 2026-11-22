@@ -341,11 +341,40 @@ def check_rugcheck(token_address):
 
 def analyze_token_task(address, strategy_name, token):
 
-    pair = token.get("market_data") if isinstance(token, dict) else None
+    token = token if isinstance(token, dict) else {}
+    pair = token.get("market_data")
+    if isinstance(pair, dict):
+        pair_base = pair.get("baseToken") if isinstance(pair.get("baseToken"), dict) else {}
+        pair_base_address = pair_base.get("address")
+        if pair_base_address and pair_base_address != address:
+            log_event("MARKET PAIR MINT MISMATCH", address, str(pair_base_address))
+            pair = None
     if not isinstance(pair, dict):
         pair = get_market_data(address)
 
-    if not pair:
+    # Provider resilience: when DexScreener has no complete quote, use the
+    # exact pool discovered for this token as a GeckoTerminal fallback.
+    # The fallback is accepted only when Gecko identifies this mint as the
+    # pool's BASE token; we never transfer a quote-token price to this mint.
+    discovered_pool = (
+        token.get("poolAddress") or token.get("pool_address")
+        or (pair.get("pairAddress") if isinstance(pair, dict) else None)
+    )
+    pair_price = safe_float(pair.get("priceUsd")) if isinstance(pair, dict) else None
+    pair_liquidity = get_liquidity(pair) if isinstance(pair, dict) else None
+    if (pair_price is None or pair_price <= 0 or pair_liquidity is None or pair_liquidity <= 0) and discovered_pool:
+        try:
+            gecko_fallback = get_gecko_pool_data_batch([discovered_pool])
+            fallback_pair = gecko_fallback.get(address) if isinstance(gecko_fallback, dict) else None
+            if isinstance(fallback_pair, dict):
+                merged_pair = dict(pair) if isinstance(pair, dict) else {}
+                merged_pair.update(fallback_pair)
+                pair = merged_pair
+                log_event("GECKO MARKET FALLBACK USED", address, discovered_pool)
+        except Exception as fallback_error:
+            log_event("GECKO MARKET FALLBACK FAILED", address, repr(fallback_error))
+
+    if not isinstance(pair, dict) or not pair:
 
         return {
             "status": "waiting",
@@ -411,9 +440,20 @@ def analyze_token_task(address, strategy_name, token):
                     "address": address
                 }
 
-        indicators = fetch_pool_indicators(pool_address) if pool_address else {
-            "ready": False, "reason": "Pool address unavailable"
-        }
+        # GeckoTerminal OHLCV is denominated in the pool's base token.
+        # Do not apply those indicators to a candidate that is the quote mint.
+        base_token = pair.get("baseToken") if isinstance(pair.get("baseToken"), dict) else {}
+        indicators = (
+            fetch_pool_indicators(pool_address)
+            if pool_address and base_token.get("address") == address
+            else {
+                "ready": False,
+                "reason": (
+                    "Pool address unavailable" if not pool_address
+                    else "OHLCV base token differs from candidate mint"
+                )
+            }
+        )
 
         token_data = dict(pair)
         token_data["address"] = address

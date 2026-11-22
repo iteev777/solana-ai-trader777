@@ -2,7 +2,7 @@ name: Trojan V2 tests
 
 on:
   push:
-    branches: [main]
+    branches: ["main", "trojan/**"]
   pull_request:
     branches: [main]
 
