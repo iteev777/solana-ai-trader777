@@ -250,3 +250,8 @@ Example named leaf:
 ```
 
 Named conditions can be nested in the existing `all`, `any`, and `not` groups. Parameter ranges and enum choices are validated before saving. If a condition requires unavailable candle or position data, it fails closed with an explicit reason rather than inventing a value. Position-only conditions require the corresponding position context to be supplied; they do not become entry signals by themselves. Validate strategy changes in paper mode before tightening live-facing thresholds.
+
+
+## Native direct quote adapters
+
+The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is currently implemented for Raydium CPMM and Raydium AMM v4. Raydium AMM v4 quotes read the on-chain fee numerator/denominator and subtract accrued `need_take_pnl` from vault balances before applying constant-product math. Token-2022 transfer-fee mints are refused until a dedicated adapter is implemented. Other decoded DEX protocols remain explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
