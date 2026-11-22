@@ -143,6 +143,12 @@ def api_events():
     ))
 
 
+@app.get("/api/strategies")
+def api_strategies():
+    from strategy_rules import get_strategy_rules_status
+    return jsonify(get_strategy_rules_status())
+
+
 @app.get("/api/filtering")
 def api_filtering():
     return jsonify({
