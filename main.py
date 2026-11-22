@@ -362,7 +362,7 @@ def analyze_token_task(address, strategy_name, token):
     )
     pair_price = safe_float(pair.get("priceUsd")) if isinstance(pair, dict) else None
     pair_liquidity = get_liquidity(pair) if isinstance(pair, dict) else None
-    if (pair_price is None or pair_price <= 0 or pair_liquidity is None) and discovered_pool:
+    if (pair_price is None or pair_price <= 0 or pair_liquidity is None or pair_liquidity <= 0) and discovered_pool:
         try:
             gecko_fallback = get_gecko_pool_data_batch([discovered_pool])
             fallback_pair = gecko_fallback.get(address) if isinstance(gecko_fallback, dict) else None
