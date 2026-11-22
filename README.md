@@ -113,3 +113,18 @@ The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, an
 ## Automated safety tests
 
 Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. GitHub Actions runs the same suite on feature-branch pushes and pull requests.
+
+
+## Pre-entry routing, unsigned simulation and token security
+
+Every strategy-approved paper entry now receives a Jupiter Swap API v2 quote for the intended USD ticket size, converted to SOL lamports using the live SOL/USD feed. Trojan evaluates price impact, platform fee, route venues/hops, split routing and quote latency before allowing the paper entry. Route quality is scored and checked against `TROJAN_MIN_ROUTE_QUALITY_SCORE` (default 55); price impact is capped by `TROJAN_MAX_PRICE_IMPACT_PERCENT` (default 3%). Slippage is capped by `TROJAN_MAX_SLIPPAGE_BPS` (default 100). When both `TROJAN_PUBLIC_WALLET_ADDRESS` and `SOLANA_RPC_URL` are configured, Trojan requests a Jupiter order for that public address and simulates the unsigned transaction with Solana `simulateTransaction`, `sigVerify=false` and `replaceRecentBlockhash=true`. The transaction is never signed, submitted, or broadcast. Set `TROJAN_REQUIRE_UNSIGNED_SIMULATION=true` to reject entries when this simulation cannot run. Jupiter keyless access is rate-limited; configure `JUPITER_API_KEY` for production use.
+
+When a mainnet RPC is configured, a separate mint-security gate verifies the actual SPL/Token-2022 mint account, requires mint and freeze authorities to be revoked, and inspects the largest token accounts. The concentration metric is explicitly token-account-authority concentration, not beneficial-owner concentration; pool vaults and custody accounts can be included. RugCheck's holder-risk report remains an independent gate. Missing or malformed on-chain authority data fails closed.
+
+## Copy-wallet performance and daily risk
+
+Paper trade rows now preserve the originating copy wallet through entry, DCA, partial exits and final exits. The dashboard reports wallet-attributed realized P/L, win rate, open positions/exposure and observed wallet activity. Copy trading also has a separate per-wallet daily realized-loss circuit breaker: `TROJAN_COPY_MAX_DAILY_LOSS_PER_WALLET_USD=10` by default, alongside the existing per-wallet position, exposure and ticket limits. The daily loss is checked before queuing and again immediately before paper entry.
+
+## Eleven-protocol mainnet validation telemetry
+
+Each observed pool that reaches the on-chain decoder is recorded by the protocol family actually identified from the pool account owner and verified snapshot. The dashboard's protocol-validation panel reports real confirmed-RPC decode attempts, successes, failures and last errors for all eleven supported families. A zero count means no real pool sample for that protocol has yet been validated by this deployment; decoder unit tests do not count as mainnet validation. This telemetry is intentionally evidence-based and does not mark an unobserved protocol as verified.
