@@ -80,7 +80,7 @@ def add_copy_watch_wallet(wallet, label=None):
         raise ValueError("This wallet is already configured by TROJAN_COPY_WALLETS")
     current = database.list_copy_watch_wallets()
     existing = next((item for item in current if item["wallet"] == address), None)
-    if not existing and len(_wallets()) >= 20:
+    if (not existing or not existing.get("enabled")) and len(_wallets()) >= 20:
         raise ValueError("Maximum of 20 copy-watch wallets reached")
     return database.upsert_copy_watch_wallet(address, label=label, enabled=True)
 
