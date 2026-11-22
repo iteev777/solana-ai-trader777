@@ -157,10 +157,39 @@ def queue_retry(
     first_seen,
     attempts,
     delay,
-    reason
+    reason,
+    retry_on_wait=False
 ):
 
-    if attempts >= MAX_ANALYSIS_RETRIES:
+    current_time = time.time()
+
+    maximum_age = (
+        SNIPER_TOKEN_TIMEOUT
+        if strategy_name == "sniper"
+        else DISCOVERY_TOKEN_TIMEOUT
+    )
+
+    token_age = current_time - first_seen
+
+    # Missing market data is common immediately after a new launch.
+    # Keep checking transient WAIT results until the token's own
+    # discovery window expires instead of dropping it after two tries.
+    if retry_on_wait:
+
+        if token_age >= maximum_age:
+
+            log_event(
+                "TOKEN WAIT WINDOW EXPIRED",
+                address,
+                reason
+            )
+
+            seen_tokens.discard(address)
+            remove_pending_duplicates(address)
+
+            return
+
+    elif attempts >= MAX_ANALYSIS_RETRIES:
 
         log_event(
             "ANALYSIS RETRIES EXHAUSTED",
@@ -177,7 +206,7 @@ def queue_retry(
         "first_seen": first_seen,
         "token": token,
         "attempts": attempts + 1,
-        "retry_after": time.time() + delay
+        "retry_after": current_time + delay
     }
 
     if strategy_name == "sniper":
@@ -576,7 +605,8 @@ def process_completed_tasks():
                 task["first_seen"],
                 task["attempts"],
                 WAIT_RETRY_INTERVAL,
-                reason
+                reason,
+                retry_on_wait=True
             )
 
             continue
