@@ -492,12 +492,8 @@ def _register_pool_price_watch(pool_address, protocol, token_mint):
         print("[TROJAN V2] POOL WATCH REGISTRATION FAILED:", str(error)[:180], flush=True)
 
 
-def get_pool_watch_accounts(pool_address, protocol):
-    """Return the verified pool state and reserve accounts to subscribe to.
-
-    Pool state is included for curve/CLMM/DLMM state changes; vault accounts
-    are included because CPMM swaps primarily mutate vault balances.
-    """
+def get_pool_watch_accounts(pool_address, protocol, token_mint=None):
+    """Return every account required to price and monitor one verified pool."""
     if not isinstance(pool_address, str) or not pool_address.strip():
         raise ValueError("pool address is required for account watching")
     account = _account(pool_address.strip())
@@ -512,14 +508,67 @@ def get_pool_watch_accounts(pool_address, protocol):
     if decoded.get("status") != "active":
         raise ValueError("pool is not active for account watching")
     accounts = [pool_address.strip()]
-    for field in ("vault_base", "vault_quote"):
-        address = decoded.get(field)
+
+    def add(address):
         if isinstance(address, str) and address and address not in accounts:
             accounts.append(address)
+
+    if owner_protocol in ("pumpfun_legacy", "moonit_amm"):
+        if not isinstance(token_mint, str) or not token_mint.strip():
+            raise ValueError("curve watch requires its token mint")
+        add(token_mint.strip())
+        return accounts
+
+    if owner_protocol == "meteora_dbc":
+        config = _account(decoded["config"])
+        if (config.get("owner") != PROGRAMS["meteora_dbc"]
+                or len(config.get("data", b"")) < 40
+                or config["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43])):
+            raise ValueError("invalid Meteora DBC config for pool watching")
+        add(decoded["config"])
+        add(decoded["base_mint"])
+        add(_key(config["data"], 8))
+    else:
+        add(decoded.get("amm_config"))
+        add(decoded.get("base_mint"))
+        add(decoded.get("quote_mint"))
+
+    add(decoded.get("vault_base"))
+    add(decoded.get("vault_quote"))
     return accounts
 
 
-def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _register_watch=True):
+def _accounts_for_snapshot(keys, prefetched_accounts=None, prefetched_slot=None):
+    """Resolve a complete per-pool account bundle from one confirmed RPC slot."""
+    if prefetched_accounts is None:
+        return _multiple_accounts_with_context(keys)
+    if not isinstance(prefetched_slot, int) or prefetched_slot <= 0:
+        raise ValueError("prefetched pool snapshot is missing its confirmed slot")
+    if not isinstance(prefetched_accounts, dict):
+        raise ValueError("prefetched pool account bundle must be a mapping")
+    accounts = [prefetched_accounts.get(key) for key in keys]
+    if any(account is None for account in accounts):
+        raise ValueError("prefetched pool snapshot is missing a required account")
+    return accounts, prefetched_slot
+
+
+def fetch_pool_account_batch(account_keys):
+    """Fetch up to 100 unique pool accounts in one confirmed RPC context."""
+    if not isinstance(account_keys, (list, tuple)):
+        raise ValueError("account_keys must be a list or tuple")
+    keys = list(dict.fromkeys(
+        key.strip() for key in account_keys
+        if isinstance(key, str) and key.strip()
+    ))
+    if not keys or len(keys) > 100:
+        raise ValueError("pool account batch must contain between 1 and 100 unique keys")
+    accounts, slot = _multiple_accounts_with_context(keys)
+    return dict(zip(keys, accounts)), slot, time.time()
+
+
+def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False,
+                         _register_watch=True, _prefetched_accounts=None,
+                         _prefetched_slot=None, _prefetched_observed_at=None):
     """Return a verified pool snapshot in USD, or None if data is unavailable."""
     protocol = normalize_protocol(protocol)
     if protocol == "raydium_auto":
@@ -539,7 +588,12 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         if _register_watch:
             _register_pool_price_watch(pool_address, protocol, token_mint)
         return cached_data
-    pool = _account(pool_address)
+    if _prefetched_accounts is not None:
+        pool = _prefetched_accounts.get(pool_address)
+        if pool is None:
+            raise ValueError("prefetched pool snapshot is missing the pool account")
+    else:
+        pool = _account(pool_address)
 
     # The account owner is the authoritative protocol identifier.
     # DEX labels from discovery APIs are often broad or stale (for example,
@@ -575,8 +629,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         # Re-read the curve and mint together. The initial account read only
         # discovers the protocol; the published quote is tied to this one
         # confirmed RPC context and never combines independently-timed reads.
-        curve_accounts, snapshot_slot = _multiple_accounts_with_context(
-            [pool_address, token_mint]
+        curve_accounts, snapshot_slot = _accounts_for_snapshot(
+            [pool_address, token_mint], _prefetched_accounts, _prefetched_slot
         )
         curve_account, mint_account = curve_accounts
         if curve_account is None or mint_account is None:
@@ -586,7 +640,11 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         decoded = _decode_pool(protocol, curve_account["data"])
         if decoded["status"] != "active":
             raise ValueError("curve is no longer active in the confirmed snapshot")
-        snapshot_observed_at = time.time()
+        snapshot_observed_at = (
+            _prefetched_observed_at
+            if isinstance(_prefetched_observed_at, (int, float)) and _prefetched_observed_at > 0
+            else time.time()
+        )
         decimals = _mint_decimals(mint_account)
         if protocol == "pumpfun_legacy":
             virtual_tokens = decoded["virtual_token_reserves"] / (10 ** decimals)
@@ -641,15 +699,21 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         if decoded["base_mint"] != token_mint:
             raise ValueError("requested mint is not the Meteora DBC base mint")
         config_address = decoded["config"]
-        config_first = _account(config_address)
+        config_first = (
+            _prefetched_accounts.get(config_address)
+            if isinstance(_prefetched_accounts, dict) else None
+        )
+        if config_first is None:
+            config_first = _account(config_address)
         if config_first["owner"] != PROGRAMS["meteora_dbc"] or len(config_first["data"]) < 40:
             raise ValueError("invalid Meteora DBC PoolConfig account")
         if config_first["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
             raise ValueError("invalid Meteora DBC PoolConfig discriminator")
         quote_mint = _key(config_first["data"], 8)
         # Pool, config and both mints are read in one confirmed context.
-        dbc_accounts, snapshot_slot = _multiple_accounts_with_context(
-            [pool_address, config_address, decoded["base_mint"], quote_mint]
+        dbc_accounts, snapshot_slot = _accounts_for_snapshot(
+            [pool_address, config_address, decoded["base_mint"], quote_mint],
+            _prefetched_accounts, _prefetched_slot
         )
         pool_acc, config_acc, base_mint_acc, quote_mint_acc = dbc_accounts
         if any(item is None for item in dbc_accounts):
@@ -667,7 +731,11 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
             raise ValueError("Meteora DBC config changed to an unsupported layout")
         if _key(config_acc["data"], 8) != quote_mint or decoded["base_mint"] != token_mint:
             raise ValueError("Meteora DBC pool/config mint relationship changed")
-        snapshot_observed_at = time.time()
+        snapshot_observed_at = (
+            _prefetched_observed_at
+            if isinstance(_prefetched_observed_at, (int, float)) and _prefetched_observed_at > 0
+            else time.time()
+        )
         base_decimals = _mint_decimals(base_mint_acc)
         quote_decimals = _mint_decimals(quote_mint_acc)
         quote_usd = _quote_usd(quote_mint)
@@ -705,7 +773,9 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         pool_address, decoded["vault_base"], decoded["vault_quote"],
         decoded["base_mint"], decoded["quote_mint"]
     ]
-    snapshot_accounts, snapshot_slot = _multiple_accounts_with_context(snapshot_keys)
+    snapshot_accounts, snapshot_slot = _accounts_for_snapshot(
+        snapshot_keys, _prefetched_accounts, _prefetched_slot
+    )
     pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = snapshot_accounts
     if any(item is None for item in snapshot_accounts):
         raise ValueError("pool snapshot is missing its pool, vault or mint account")
@@ -718,7 +788,11 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
     if snapshot_decoded["status"] != "active":
         raise ValueError("pool swaps are disabled in the confirmed snapshot")
     decoded = snapshot_decoded
-    snapshot_observed_at = time.time()
+    snapshot_observed_at = (
+        _prefetched_observed_at
+        if isinstance(_prefetched_observed_at, (int, float)) and _prefetched_observed_at > 0
+        else time.time()
+    )
     vaults = [vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc]
     base_amount = _token_amount(vaults[0], decoded["base_mint"]) / (10 ** _mint_decimals(vaults[2]))
     quote_amount = _token_amount(vaults[1], decoded["quote_mint"]) / (10 ** _mint_decimals(vaults[3]))
