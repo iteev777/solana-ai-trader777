@@ -151,6 +151,46 @@ def api_strategies():
     return jsonify(get_strategy_rules_status())
 
 
+@app.post("/api/strategies")
+def api_save_strategy():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    strategy = payload.get("strategy")
+    rules = payload.get("rules")
+    if strategy not in ("main", "sniper"):
+        return jsonify({"error": "Unknown strategy"}), 400
+    try:
+        from strategy_rules import validate_rules_config
+        validate_rules_config({strategy: rules})
+        database.save_strategy_config(strategy, rules)
+        return jsonify({"saved": True, "strategy": strategy})
+    except Exception as error:
+        return jsonify({"saved": False, "error": str(error)[:300]}), 400
+
+
+@app.get("/api/readiness")
+def api_readiness():
+    import service_health
+    from solana_onchain import get_onchain_status
+    from indicators import get_indicator_status
+    from copy_trade import get_copy_monitor_status
+    return jsonify({
+        "readiness": service_health.get_readiness_report(),
+        "services": service_health.get_service_status(),
+        "onchain": get_onchain_status(),
+        "indicators": get_indicator_status(),
+        "copy_monitor": get_copy_monitor_status()
+    })
+
+
+@app.get("/api/copy-trades")
+def api_copy_trades():
+    return jsonify(database.get_recent_copy_trade_events(100))
+
+
 @app.get("/api/filtering")
 def api_filtering():
     return jsonify({
@@ -203,6 +243,9 @@ footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 <section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
+<section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, volume_spike_ratio. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
+<section class="panel section"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
+<section class="panel section"><h2>COPY WALLET ACTIVITY</h2><div class="muted" style="margin-bottom:10px">Read-only wallet monitoring. No transactions are copied or signed.</div><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Wallet</th><th>Action</th><th>Mint</th><th>Token Δ</th><th>SOL Δ</th></tr></thead><tbody id="copy-trades"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section>
 </main><footer>Read-only dashboard · no wallet keys · no live trade controls · Trojan V2</footer>
 <script>
@@ -235,7 +278,20 @@ document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total
 document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
 document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.event_type)+'</td><td>'+esc((x.message||'').slice(0,180))+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';
 }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}}
-loadAll();setInterval(loadAll,5000);
+async function loadAdvanced(){try{
+const values=await Promise.all([get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades?limit=50')]);
+const s=values[0],h=values[1],c=values[2];
+document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
+document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
+document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
+const r=h.readiness;
+document.getElementById('readiness').innerHTML=r.checks.map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':(x.required?'bad':'muted'))+'">'+(x.ok?'OK':'NOT CONFIGURED / CHECK')+'</span><div class="muted">'+esc(x.details||'')+'</div></div>').join('');
+document.getElementById('onchain-status').textContent='On-chain RPC: '+(h.onchain.rpc_configured?'configured':'not configured')+' · protocols: '+h.onchain.supported_protocols.join(', ');
+document.getElementById('indicator-status').textContent='OHLCV cache: '+h.indicators.ready_pools+' ready pools / '+h.indicators.cached_pools+' cached pools';
+document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
+}catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}}
+async function saveRules(strategy){try{const rules=JSON.parse(document.getElementById('rules-'+strategy).value);const response=await fetch('/api/strategies',{method:'POST',headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},body:JSON.stringify({strategy:strategy,rules:rules})});const data=await response.json();if(!response.ok)throw Error(data.error||'Save failed');document.getElementById('rules-status').textContent=strategy.toUpperCase()+' rules saved. New candidate evaluations will use them.';loadAdvanced();}catch(err){document.getElementById('rules-status').textContent='Could not save: '+err.message;}}
+loadAll();loadAdvanced();setInterval(loadAll,5000);setInterval(loadAdvanced,15000);
 </script></body></html>"""
 
 
