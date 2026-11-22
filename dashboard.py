@@ -688,7 +688,7 @@ async function loadAdvanced(){
   document.getElementById('onchain-status').textContent='On-chain RPC: '+(h.onchain.rpc_configured?'configured':'not configured')+' · protocols: '+h.onchain.supported_protocols.join(', ');
   document.getElementById('indicator-status').textContent='OHLCV cache: '+h.indicators.ready_pools+' ready pools / '+h.indicators.cached_pools+' cached pools';
   const stream=h.onchain.price_stream||{};
-  document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · price stream: '+(stream.running?'LIVE':'OFF')+' ('+(stream.subscriptions||0)+' pools, '+(stream.notifications||0)+' updates, '+(stream.last_latency_ms===null?'n/a':stream.last_latency_ms+' ms')+') · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
+  document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · price stream: '+(stream.running?'LIVE':'OFF')+' ('+(stream.subscriptions||0)+' pools, '+(stream.notifications||0)+' updates, '+(stream.last_latency_ms==null?'n/a':stream.last_latency_ms+' ms')+') · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
   document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
  }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}
 }
