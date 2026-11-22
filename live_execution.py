@@ -35,10 +35,19 @@ def _finite(value, name, minimum=0.0):
 
 
 def _amount(value, name, minimum=1):
-    number = _finite(value, name, minimum)
-    if not number.is_integer():
+    if isinstance(value, bool):
+        raise ValueError(name + " must be an integer")
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        number = int(value.strip())
+    elif isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        number = int(value)
+    else:
         raise ValueError(name + " must be an integer base-unit amount")
-    return int(number)
+    if number < minimum:
+        raise ValueError(name + " is invalid")
+    return number
 
 
 def _route_diagnostics(route_plan):
