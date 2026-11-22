@@ -76,7 +76,7 @@ def _context(token, score):
         "ema_21": _number(indicators.get("ema_21")),
         "ema_cross_bullish": 1.0 if indicators.get("ema_cross_bullish") is True else 0.0 if indicators.get("ema_cross_bullish") is False else None,
         "breakout_20": 1.0 if indicators.get("breakout_20") is True else 0.0 if indicators.get("breakout_20") is False else None,
-        "volume_spike_ratio": _number(indicators.get("volume_spike_ratio"))
+        "volume_spike_ratio": _number(indicators.get("volume_spike_ratio")),\n        "timeframe_ready_count": _number(indicators.get("timeframe_ready_count")),\n        "bullish_timeframes": _number(indicators.get("bullish_timeframes")),\n        "bearish_timeframes": _number(indicators.get("bearish_timeframes"))
     }
 
 
