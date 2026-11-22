@@ -343,6 +343,12 @@ def analyze_token_task(address, strategy_name, token):
 
     token = token if isinstance(token, dict) else {}
     pair = token.get("market_data")
+    if isinstance(pair, dict):
+        pair_base = pair.get("baseToken") if isinstance(pair.get("baseToken"), dict) else {}
+        pair_base_address = pair_base.get("address")
+        if pair_base_address and pair_base_address != address:
+            log_event("MARKET PAIR MINT MISMATCH", address, str(pair_base_address))
+            pair = None
     if not isinstance(pair, dict):
         pair = get_market_data(address)
 
