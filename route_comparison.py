@@ -177,25 +177,31 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_addr
             direct = solana_onchain.quote_direct_pool(
                 pool_address, input_mint, amount, slip
             )
+            if direct.get("output_mint") != output_mint:
+                raise ValueError("Direct pool quote output mint does not match requested output mint")
             results["direct_pool"] = {
                 "provider": direct["provider"],
                 "protocol": direct["protocol"],
                 "status": "QUOTED",
+                "output_mint": direct["output_mint"],
                 "out_amount": direct["out_amount"],
                 "minimum_out_amount": direct["minimum_out_amount"],
                 "price_impact_percent": direct["price_impact_percent"],
                 "slot": direct["slot"],
+                "snapshot_age_seconds": direct.get("snapshot_age_seconds"),
                 "pool_id": direct["pool_id"],
                 "creator_fee_on_input": direct.get("creator_fee_on_input"),
                 "fee_amounts": {
-                    "trade": direct.get("trade_fee_amount", direct.get("trade_fee_amount")),
+                    "trade": direct.get("trade_fee_amount", 0),
+                    "owner": direct.get("owner_fee_amount", 0),
                     "creator_input": direct.get("creator_fee_input_amount", 0),
                     "creator_output": direct.get("creator_fee_output_amount", 0),
+                    "total": direct.get("total_fee_amount"),
                 },
                 "execution": "DISABLED",
             }
         except Exception as error:
-            results["direct_pool"] = _failed("raydium_cpmm_direct", error)
+            results["direct_pool"] = _failed("direct_pool", error)
     else:
         results["direct_pool"] = {
             "provider": "solana_direct_pool",
