@@ -172,35 +172,43 @@ def enqueue_gecko_pool_fetch(mint):
     return True
 
 
+def fetch_gecko_pool_candidates(mint):
+    """Fetch, normalize and merge GeckoTerminal's full pool list for one mint."""
+    url = GECKO_TOKEN_POOLS_URL + mint + "/pools?include=base_token,quote_token,dex"
+    with _lock:
+        _status["last_request_at"] = time.time()
+    response = get_json(
+        url,
+        headers={"Accept": "application/json;version=20230203"},
+        timeout=10,
+        cache_ttl=CACHE_TTL_SECONDS,
+        max_retries=1,
+    )
+    data = response.get("data") if isinstance(response, dict) else None
+    if not isinstance(data, list):
+        raise ValueError("GeckoTerminal token pools response has no data list")
+    from market_data import normalize_gecko_pool, refresh_market_data_from_pool_registry
+    normalized = []
+    for pool in data:
+        row = normalize_gecko_pool(pool, requested_mint=mint)
+        if row:
+            normalized.append(row)
+    merged = merge_pool_candidates(mint, normalized, "geckoterminal")
+    refreshed = refresh_market_data_from_pool_registry(mint)
+    with _lock:
+        _status["last_success_at"] = time.time()
+        _status["last_error"] = None if normalized else "GeckoTerminal returned no usable pools"
+    return {"received": len(data), "normalized": len(normalized),
+            "merged": merged, "selected": bool(refreshed)}
+
+
 def _worker():
     while True:
         mint = _queue.get()
         try:
-            url = GECKO_TOKEN_POOLS_URL + mint + "/pools?include=base_token,quote_token,dex"
-            with _lock:
-                _status["last_request_at"] = time.time()
-            response = get_json(
-                url,
-                headers={"Accept": "application/json;version=20230203"},
-                timeout=10,
-                cache_ttl=CACHE_TTL_SECONDS,
-                max_retries=1,
-            )
-            data = response.get("data") if isinstance(response, dict) else None
-            if not isinstance(data, list):
-                raise ValueError("GeckoTerminal token pools response has no data list")
-            from market_data import normalize_gecko_pool, refresh_market_data_from_pool_registry
-            normalized = []
-            for pool in data:
-                row = normalize_gecko_pool(pool, requested_mint=mint)
-                if row:
-                    normalized.append(row)
-            merge_pool_candidates(mint, normalized, "geckoterminal")
-            refreshed = refresh_market_data_from_pool_registry(mint)
+            fetch_gecko_pool_candidates(mint)
             with _lock:
                 _status["completed"] += 1
-                _status["last_success_at"] = time.time()
-                _status["last_error"] = None if normalized else "GeckoTerminal returned no usable pools"
         except Exception as error:
             with _lock:
                 _status["failed"] += 1
