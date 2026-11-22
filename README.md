@@ -25,3 +25,8 @@ python main.py
 ```
 
 Keep the bot in paper mode while validating signal quality, net P/L, drawdown, trade count, and API reliability.
+
+
+## Read-only dashboard
+
+The bot can serve an authenticated dashboard on Railway. Set the Railway variable `TROJAN_DASHBOARD_TOKEN` to a long random secret before starting the service. The dashboard uses HTTP Basic Authentication (username can be any value; password is the token), listens on Railway's `PORT`, and exposes read-only portfolio, paper-trading, queue, API, market-data and event information. No wallet keys or live-trading controls are exposed. If the token is not configured, the dashboard stays disabled.
