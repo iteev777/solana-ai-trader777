@@ -259,17 +259,21 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
         ratio *= 10 ** (_mint_decimals(vaults[2]) - _mint_decimals(vaults[3]))
     else:
         ratio = quote_amount / base_amount
-    quote_usd = _quote_usd(decoded["quote_mint"])
-    if quote_usd is None:
+    other_mint = decoded["quote_mint"] if token_mint == decoded["base_mint"] else decoded["base_mint"]
+    other_usd = _quote_usd(other_mint)
+    if other_usd is None:
         return None
-    token_price = ratio * quote_usd if token_mint == decoded["base_mint"] else quote_usd / ratio
+    token_is_base = token_mint == decoded["base_mint"]
+    token_price = ratio * other_usd if token_is_base else other_usd / ratio
     if not math.isfinite(token_price) or token_price <= 0:
         raise ValueError("decoded on-chain price is invalid")
+    base_price_usd = token_price if token_is_base else other_usd
+    quote_price_usd = other_usd if token_is_base else token_price
     result = {
         "priceUsd": str(token_price),
-        "liquidity": {"usd": (base_amount * token_price + quote_amount * quote_usd)},
+        "liquidity": {"usd": (base_amount * base_price_usd + quote_amount * quote_price_usd)},
         "baseToken": {"address": token_mint},
-        "quoteToken": {"address": decoded["quote_mint"] if token_mint == decoded["base_mint"] else decoded["base_mint"]},
+        "quoteToken": {"address": other_mint},
         "marketSource": "solana_rpc_" + protocol,
         "poolAddress": pool_address,
         "onchainVerified": True,
