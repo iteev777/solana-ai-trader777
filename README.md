@@ -1,11 +1,11 @@
 # Trojan V2 — Solana Paper Scalper
 
-A multi-source Solana token scanner with a dip-reversal entry model and rapid paper-position management.
+A multi-source Solana token scanner with a dip-reversal entry model, multi-timeframe technical analysis, owner-verified on-chain pricing, and rapid paper-position management.
 
 ## Current operating mode
 
 - **Paper trading only.** Real-money execution remains locked.
-- Scans DexScreener discovery feeds concurrently and listens for new PumpPortal tokens.
+- Scans GeckoTerminal, Birdeye, DexScreener profiles/boosts and PumpPortal feeds concurrently.
 - Uses 5-minute price change and buy/sell flow to wait for a small positive rebound instead of buying a falling candle or chasing a vertical pump.
 - Rechecks WATCH candidates while their discovery window is active.
 - Monitors paper positions frequently, with a 9% stop loss, 10% take-profit target, 4% trailing activation, 3.5% trailing distance, and a 15-minute rotation exit.
@@ -34,7 +34,7 @@ The risk manager reads these optional Railway variables (values below are the de
 
 - `TROJAN_MAX_TRADE_SIZE_USD=5`
 - `TROJAN_MIN_TRADE_SIZE_USD=1`
-- `TROJAN_MAX_DAILY_LOSS_USD=10` (10% of the $100 paper starting balance)
+- `TROJAN_MAX_DAILY_LOSS_USD=50` (default $50 paper daily loss cap; an explicit Railway variable overrides it)
 - `TROJAN_MAX_TRADE_BALANCE_FRACTION=0.10` (each new position is capped at 10% of remaining balance)
 - `TROJAN_MAX_MAIN_POSITIONS=10`
 - `TROJAN_MAX_SNIPER_POSITIONS=10`
@@ -72,7 +72,7 @@ The optional strategy rule engine supports nested `all`, `any`, and `not` groups
 }
 ```
 
-Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`, `price_change_h1`, `price_change_h24`, `buy_ratio`, `score`, `source_count`, `txns_m5_total`, and `pair_age_minutes`. Supported operators: `gt`, `gte`, `lt`, `lte`, `eq`, and `between`. The dashboard reports whether the custom rules are enabled and valid at `/api/strategies`. Live execution remains locked.
+Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`, `price_change_h1`, `price_change_h24`, `buy_ratio`, `score`, `source_count`, `txns_m5_total`, `pair_age_minutes`, `rsi_14`, `ema_9`, `ema_21`, `ema_cross_bullish`, `breakout_20`, `volume_spike_ratio`, `timeframe_ready_count`, `bullish_timeframes`, `bearish_timeframes`, `macd_histogram`, `macd_bullish`, `bollinger_percent_b`, `atr_percent`, `stochastic_k`, and `above_vwap`. Supported operators: `gt`, `gte`, `lt`, `lte`, `eq`, and `between`. The dashboard reports whether the custom rules are enabled and valid at `/api/strategies`. Live execution remains locked.
 
 
 ## Paper position management
@@ -84,13 +84,13 @@ Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`,
 
 ## On-chain pool verification and technical indicators
 
-Configure `SOLANA_RPC_URL` with a Solana mainnet RPC endpoint to enable read-only pool account decoding. Optional `SOLANA_WS_URL` is the matching websocket endpoint. The decoder verifies the pool account owner and binary discriminator before reading vaults. Supported layouts are PumpSwap Pool, Raydium AMM v4, Raydium CPMM, Raydium CLMM, Orca Whirlpool, and Meteora DLMM. Unsupported layouts fall back to the market-data providers; the bot does not pretend those are on-chain quotes.
+Configure `SOLANA_RPC_URL` with a Solana mainnet RPC endpoint to enable read-only pool account decoding. Optional `SOLANA_WS_URL` is the matching websocket endpoint. The decoder verifies the program owner and account discriminator/layout before reading pool state. Supported families: PumpSwap, Pump.fun legacy bonding curves, Raydium AMM v4/CPMM/CLMM, Orca Whirlpool, Meteora DLMM/DAMM v2/DBC, FluxBeam AMM, and Moonit. Active paper-position pools are watched through a shared `accountSubscribe` WebSocket connection; notifications trigger fresh verified snapshots and stream latency is exposed in the dashboard. Unsupported layouts fall back to market-data providers; the bot does not label those as on-chain quotes.
 
-OHLCV candles are fetched from GeckoTerminal per known pool and stored in SQLite. The indicator engine calculates RSI(14), EMA(9/21), 20-candle breakout and volume-spike ratio. The optional technical entry filter is enabled by default when sufficient candles are available; it does not fabricate indicators when history is missing. Set `TROJAN_TECHNICAL_FILTER_ENABLED=false` to disable the extra confirmation. `TROJAN_OHLCV_MIN_INTERVAL` controls the minimum API request spacing (default 7.2 seconds).
+OHLCV candles are fetched from GeckoTerminal per known pool and stored in SQLite. The indicator engine calculates RSI(14), EMA(9/21), MACD, Bollinger Bands, ATR(14), Stochastic, VWAP, OBV, 20-candle breakout and volume-spike ratio. Seven views (1m, 3m, 5m, 15m, 30m, 1h and 4h) are aggregated from the 1m source; higher timeframes stay not-ready until enough candles exist. The optional technical entry filter is enabled by default when sufficient candles are available; it does not fabricate indicators when history is missing. Set `TROJAN_TECHNICAL_FILTER_ENABLED=false` to disable the extra confirmation. `TROJAN_OHLCV_MIN_INTERVAL` controls the minimum API request spacing (default 7.2 seconds).
 
 ## Dashboard strategy editor
 
-The authenticated dashboard now has MAIN and SNIPER JSON rule editors. Save operations write to SQLite and override environment-based rules for that strategy. Use an empty JSON object (`{}`) to clear a saved override and return to the default strategy. Indicator fields include `rsi_14`, `ema_9`, `ema_21`, `ema_cross_bullish` (1/0), `breakout_20` (1/0), and `volume_spike_ratio`.
+The authenticated dashboard now has MAIN and SNIPER JSON rule editors. Save operations write to SQLite and override environment-based rules for that strategy. Use an empty JSON object (`{}`) to clear a saved override and return to the default strategy. Indicator fields include RSI/EMA, MACD, Bollinger position, ATR, Stochastic, VWAP, OBV, timeframe readiness and trend consensus.
 
 ## Telegram and copy-wallet monitoring
 
@@ -100,7 +100,7 @@ Optional environment variables:
 - `TROJAN_COPY_WALLETS`: comma-separated public Solana wallet addresses (maximum 20) to monitor.
 - `SOLANA_WS_URL`: websocket endpoint for `logsSubscribe`; if omitted, it is derived from `SOLANA_RPC_URL` when possible.
 
-Copy-wallet tracking is read-only: it identifies token balance changes and SOL movement, stores unique signatures in SQLite and sends alerts. It does not place copy trades or sign transactions. Never enter a wallet seed phrase or private key into these settings.
+Copy-wallet tracking reads public wallet activity, stores unique signatures in SQLite and sends alerts. Set `TROJAN_COPY_PAPER_ENABLED=true` to mirror BUY/SELL signals in the paper ledger only. Paper copy limits default to 3 open positions, $25 total exposure and $5 per ticket per followed wallet; override with `TROJAN_COPY_MAX_POSITIONS_PER_WALLET`, `TROJAN_COPY_MAX_EXPOSURE_PER_WALLET_USD` and `TROJAN_COPY_MAX_TRADE_SIZE_USD`. Because the paper ledger is keyed by mint, a token already held by another wallet or strategy is rejected rather than mixing ownership. No private key is used and no live transaction is signed or broadcast. Never enter a wallet seed phrase or private key into these settings.
 
 ## Health and readiness
 
