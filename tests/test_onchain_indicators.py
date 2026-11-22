@@ -201,8 +201,15 @@ class OnchainDecoderTests(unittest.TestCase):
         put_key(raw, 67, 2)
         put_key(raw, 131, 3)
         put_key(raw, 163, 4)
+        raw[227:235] = (20).to_bytes(8, "little")
+        raw[235:243] = (10000).to_bytes(8, "little")
+        raw[243:251] = (99).to_bytes(8, "little")
+        raw[251:259] = (10000).to_bytes(8, "little")
+        raw[291] = 0
         result = _decode_pool("fluxbeam_amm", bytes(raw))
         self.assertEqual(result["vault_base"], _decode_pool("fluxbeam_amm", bytes(raw))["vault_base"])
+        self.assertEqual(result["trade_fee_numerator"], 20)
+        self.assertEqual(result["owner_fee_numerator"], 99)
         self.assertEqual(result["price_mode"], "reserves")
 
     def test_meteora_damm_v2_layout(self):
