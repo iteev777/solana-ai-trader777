@@ -5,6 +5,53 @@ from unittest.mock import patch
 
 import live_execution
 import position_policy
+import indicators
+import strategy_rules
+
+
+
+class MultiTimeframeIndicatorTests(unittest.TestCase):
+    def _candles(self, count=120):
+        rows = []
+        price = 1.0
+        for index in range(count):
+            next_price = price * (1.001 if index % 9 else 0.998)
+            rows.append([
+                1_700_000_100 + index * 60,
+                price, max(price, next_price) * 1.002,
+                min(price, next_price) * 0.998,
+                next_price, 100 + index
+            ])
+            price = next_price
+        return rows
+
+    def test_aggregation_preserves_ohlcv_semantics(self):
+        rows = self._candles(6)
+        aggregated = indicators.aggregate_candles(rows, 180)
+        self.assertEqual(len(aggregated), 2)
+        self.assertEqual(aggregated[0][1], rows[0][1])
+        self.assertEqual(aggregated[0][4], rows[2][4])
+        self.assertAlmostEqual(aggregated[0][5], sum(row[5] for row in rows[:3]))
+
+    def test_multi_timeframe_marks_insufficient_history_not_ready(self):
+        result = indicators.calculate_multi_timeframe_indicators(self._candles(120))
+        self.assertEqual(result["timeframe_count"], 7)
+        self.assertTrue(result["timeframes"]["1m"]["ready"])
+        self.assertFalse(result["timeframes"]["4h"]["ready"])
+        self.assertIn(result["trend_consensus"], {"bullish", "bearish", "mixed"})
+        for key in ("macd_histogram", "bollinger_percent_b", "atr_percent",
+                    "stochastic_k", "vwap", "obv"):
+            self.assertIsInstance(result[key], (int, float))
+        strategy_rules.validate_rules_config({
+            "main": {"all": [
+                {"field": "macd_bullish", "op": "eq", "value": 1},
+                {"field": "atr_percent", "op": "lt", "value": 15}
+            ]}
+        })
+
+    def test_aggregation_rejects_invalid_interval(self):
+        with self.assertRaises(ValueError):
+            indicators.aggregate_candles(self._candles(), 90)
 
 
 class PositionPolicyTests(unittest.TestCase):

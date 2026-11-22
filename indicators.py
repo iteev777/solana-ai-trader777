@@ -60,6 +60,55 @@ def calculate_indicators(candles):
     volume_base = sum(volumes[-21:-1]) / 20
     volume_spike = volumes[-1] / volume_base if volume_base > 0 else None
     current_close = closes[-1]
+
+    # Momentum and volatility measurements used by the configurable rule engine.
+    def ema_series(values, period):
+        alpha = 2 / (period + 1)
+        output = []
+        value = values[0]
+        for item in values:
+            value = alpha * item + (1 - alpha) * value
+            output.append(value)
+        return output
+
+    ema12 = ema_series(closes, 12)
+    ema26 = ema_series(closes, 26)
+    macd_line = [a - b for a, b in zip(ema12, ema26)]
+    macd_signal = ema_series(macd_line, 9)
+    macd_histogram = macd_line[-1] - macd_signal[-1]
+    window = closes[-20:]
+    mean20 = sum(window) / len(window)
+    variance20 = sum((value - mean20) ** 2 for value in window) / len(window)
+    std20 = math.sqrt(variance20)
+    true_ranges = []
+    for index in range(1, len(rows)):
+        previous_close = closes[index - 1]
+        true_ranges.append(max(
+            rows[index]["high"] - rows[index]["low"],
+            abs(rows[index]["high"] - previous_close),
+            abs(rows[index]["low"] - previous_close)
+        ))
+    atr14 = sum(true_ranges[-14:]) / min(14, len(true_ranges))
+    stochastic_low = min(row["low"] for row in rows[-14:])
+    stochastic_high = max(row["high"] for row in rows[-14:])
+    stochastic_k = (
+        (current_close - stochastic_low) / (stochastic_high - stochastic_low) * 100
+        if stochastic_high > stochastic_low else 50.0
+    )
+    typical_prices = [
+        (row["high"] + row["low"] + row["close"]) / 3 for row in rows
+    ]
+    total_volume = sum(volumes)
+    vwap = (
+        sum(price * volume for price, volume in zip(typical_prices, volumes)) / total_volume
+        if total_volume > 0 else None
+    )
+    obv = 0.0
+    for index in range(1, len(closes)):
+        if closes[index] > closes[index - 1]:
+            obv += volumes[index]
+        elif closes[index] < closes[index - 1]:
+            obv -= volumes[index]
     return {
         "ready": True,
         "candle_count": len(rows),
@@ -73,8 +122,95 @@ def calculate_indicators(candles):
         "previous_high_20": previous_high,
         "volume_spike_ratio": round(volume_spike, 3) if volume_spike is not None else None,
         "volume_spike": volume_spike is not None and volume_spike >= 2.0,
+        "macd": round(macd_line[-1], 12),
+        "macd_signal": round(macd_signal[-1], 12),
+        "macd_histogram": round(macd_histogram, 12),
+        "macd_bullish": macd_histogram > 0,
+        "bollinger_middle": mean20,
+        "bollinger_upper": mean20 + 2 * std20,
+        "bollinger_lower": mean20 - 2 * std20,
+        "bollinger_percent_b": (
+            (current_close - (mean20 - 2 * std20)) / (4 * std20)
+            if std20 > 0 else 0.5
+        ),
+        "atr_14": atr14,
+        "atr_percent": atr14 / current_close * 100,
+        "stochastic_k": round(stochastic_k, 3),
+        "vwap": vwap,
+        "above_vwap": current_close > vwap if vwap is not None else None,
+        "obv": obv,
         "trend": "bullish" if ema9 > ema21 else "bearish",
         "source": "geckoterminal_ohlcv"
+    }
+
+
+
+def aggregate_candles(candles, interval_seconds):
+    """Aggregate 1m OHLCV rows into a larger timeframe without look-ahead."""
+    interval_seconds = int(interval_seconds)
+    if interval_seconds < 60 or interval_seconds % 60:
+        raise ValueError("Timeframe must be a whole number of minutes")
+    buckets = {}
+    for item in _normalize(candles):
+        timestamp = int(item["timestamp"])
+        bucket = timestamp - (timestamp % interval_seconds)
+        current = buckets.get(bucket)
+        if current is None:
+            buckets[bucket] = {
+                "timestamp": bucket, "open": item["open"],
+                "high": item["high"], "low": item["low"],
+                "close": item["close"], "volume": item["volume"]
+            }
+        else:
+            current["high"] = max(current["high"], item["high"])
+            current["low"] = min(current["low"], item["low"])
+            current["close"] = item["close"]
+            current["volume"] += item["volume"]
+    return [
+        [row["timestamp"], row["open"], row["high"], row["low"],
+         row["close"], row["volume"]]
+        for _, row in sorted(buckets.items())
+    ]
+
+
+TIMEFRAMES = {
+    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
+    "30m": 1800, "1h": 3600, "4h": 14400
+}
+
+
+def calculate_multi_timeframe_indicators(candles):
+    """Calculate seven timeframe views from the same ordered 1m source candles.
+
+    Higher timeframes remain explicitly not-ready until enough complete
+    aggregate candles exist; no synthetic history or forward filling is used.
+    """
+    frames = {}
+    ready_trends = []
+    for name, seconds in TIMEFRAMES.items():
+        aggregated = candles if name == "1m" else aggregate_candles(candles, seconds)
+        result = calculate_indicators(aggregated)
+        result["timeframe"] = name
+        frames[name] = result
+        if result.get("ready"):
+            ready_trends.append(result.get("trend"))
+    bullish = sum(1 for trend in ready_trends if trend == "bullish")
+    bearish = sum(1 for trend in ready_trends if trend == "bearish")
+    consensus = (
+        "bullish" if bullish > bearish else
+        "bearish" if bearish > bullish else
+        "mixed" if ready_trends else "unavailable"
+    )
+    primary = frames["1m"]
+    return {
+        **primary,
+        "timeframes": frames,
+        "timeframe_ready_count": len(ready_trends),
+        "timeframe_count": len(TIMEFRAMES),
+        "trend_consensus": consensus,
+        "bullish_timeframes": bullish,
+        "bearish_timeframes": bearish,
+        "source": "geckoterminal_ohlcv_multi_timeframe"
     }
 
 
@@ -113,7 +249,7 @@ def fetch_pool_indicators(pool_address, force=False):
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         attributes = data.get("attributes", {}) if isinstance(data, dict) else {}
         raw = attributes.get("ohlcv_list", [])
-        indicators = calculate_indicators(raw)
+        indicators = calculate_multi_timeframe_indicators(raw)
         indicators["pool_address"] = key
         _cache[key] = {"time": time.time(), "data": indicators}
         if indicators.get("ready"):

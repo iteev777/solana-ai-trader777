@@ -26,7 +26,10 @@ ALLOWED_FIELDS = {
     "price_change_m5", "price_change_h1", "price_change_h24",
     "buy_ratio", "score", "source_count", "txns_m5_total",
     "pair_age_minutes", "rsi_14", "ema_9", "ema_21",
-    "ema_cross_bullish", "breakout_20", "volume_spike_ratio"
+    "ema_cross_bullish", "breakout_20", "volume_spike_ratio",
+    "timeframe_ready_count", "bullish_timeframes", "bearish_timeframes",
+    "macd_histogram", "macd_bullish", "bollinger_percent_b",
+    "atr_percent", "stochastic_k", "above_vwap"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
 
@@ -76,7 +79,16 @@ def _context(token, score):
         "ema_21": _number(indicators.get("ema_21")),
         "ema_cross_bullish": 1.0 if indicators.get("ema_cross_bullish") is True else 0.0 if indicators.get("ema_cross_bullish") is False else None,
         "breakout_20": 1.0 if indicators.get("breakout_20") is True else 0.0 if indicators.get("breakout_20") is False else None,
-        "volume_spike_ratio": _number(indicators.get("volume_spike_ratio"))
+        "volume_spike_ratio": _number(indicators.get("volume_spike_ratio")),
+        "timeframe_ready_count": _number(indicators.get("timeframe_ready_count")),
+        "bullish_timeframes": _number(indicators.get("bullish_timeframes")),
+        "bearish_timeframes": _number(indicators.get("bearish_timeframes")),
+        "macd_histogram": _number(indicators.get("macd_histogram")),
+        "macd_bullish": 1.0 if indicators.get("macd_bullish") is True else 0.0 if indicators.get("macd_bullish") is False else None,
+        "bollinger_percent_b": _number(indicators.get("bollinger_percent_b")),
+        "atr_percent": _number(indicators.get("atr_percent")),
+        "stochastic_k": _number(indicators.get("stochastic_k")),
+        "above_vwap": 1.0 if indicators.get("above_vwap") is True else 0.0 if indicators.get("above_vwap") is False else None
     }
 
 
