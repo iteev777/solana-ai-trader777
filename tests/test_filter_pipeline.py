@@ -23,7 +23,7 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(
             [row["stage"] for row in result["decisions"]],
-            ["metadata", "market", "activity", "momentum"],
+            ["metadata", "market", "age", "valuation", "activity", "momentum", "provenance", "quality"],
         )
 
     def test_numeric_symbol_is_rejected(self):
@@ -84,6 +84,40 @@ class FilterPipelineTests(unittest.TestCase):
             result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "REJECT")
         self.assertEqual(result["reason"], "M5_MOVE_EXTENDED")
+
+
+    def test_pool_age_minimum_holds_too_new_pool(self):
+        import time
+        token = dict(self.token, pairCreatedAt=(time.time() - 30) * 1000)
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_POOL_AGE_MINUTES": "2"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "WAIT")
+        self.assertEqual(result["reason"], "POOL_TOO_NEW")
+
+    def test_negative_valuation_is_rejected(self):
+        token = dict(self.token, fdv=-1)
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "NEGATIVE_VALUATION")
+
+    def test_source_agreement_threshold_waits_when_not_met(self):
+        token = dict(self.token, discovery_sources=["dexscreener"])
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_DISCOVERY_SOURCES": "2"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "WAIT")
+        self.assertEqual(result["reason"], "SOURCE_AGREEMENT_BELOW_MINIMUM")
+
+    def test_quality_threshold_requires_a_real_quality_score(self):
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_QUALITY_SCORE": "60"}):
+            result = filter_pipeline.evaluate_token(self.token, "Mint111")
+        self.assertEqual(result["status"], "WAIT")
+        self.assertEqual(result["reason"], "CANDIDATE_QUALITY_UNKNOWN")
+
+    def test_quality_threshold_accepts_sufficient_score(self):
+        token = dict(self.token, candidate_quality={"score": 82, "tier": "strong"})
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_QUALITY_SCORE": "60"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
 
     def test_missing_optional_momentum_does_not_block_by_default(self):
         token = dict(self.token)
