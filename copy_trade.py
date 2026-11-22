@@ -91,11 +91,20 @@ def _fetch_wallet_transaction(signature, wallet):
     token_deltas = {mint: delta for mint, delta in token_deltas.items() if abs(delta) > 1e-12}
     if not token_deltas:
         return None
-    mint, delta = max(token_deltas.items(), key=lambda item: abs(item[1]))
-    # Ignore tiny SOL fee movements: they do not prove a swap took place.
-    if delta > 0 and sol_delta is not None and sol_delta < -0.0001:
+    quote_mints = {
+        "So11111111111111111111111111111111111111112",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+    }
+    quote_delta = sum(delta for mint, delta in token_deltas.items() if mint in quote_mints)
+    traded = {mint: delta for mint, delta in token_deltas.items() if mint not in quote_mints}
+    if not traded:
+        return None
+    mint, delta = max(traded.items(), key=lambda item: abs(item[1]))
+    # Detect quote-token flow as well as SOL; ignore tiny SOL fee movements.
+    if delta > 0 and ((sol_delta is not None and sol_delta < -0.0001) or quote_delta < 0):
         action = "BUY"
-    elif delta < 0 and sol_delta is not None and sol_delta > 0.0001:
+    elif delta < 0 and ((sol_delta is not None and sol_delta > 0.0001) or quote_delta > 0):
         action = "SELL"
     else:
         action = "TOKEN TRANSFER / UNKNOWN"
