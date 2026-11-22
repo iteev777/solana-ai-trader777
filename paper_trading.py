@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 import database
 from position_policy import get_dca_steps, get_exit_steps
+import exit_policy
 
 
 # ==========================================
@@ -301,7 +302,8 @@ def update_position(token_address, current_price):
         # blocked at/beyond the hard stop. The default remains disabled.
         dca_steps = get_dca_steps()
         dca_count = int(metadata.get("dca_count", 0) or 0)
-        if dca_count < len(dca_steps) and change > -STOP_LOSS:
+        exit_config = exit_policy.get_exit_policy()
+        if dca_count < len(dca_steps) and change > -(exit_config["stop_loss_pct"] / 100.0):
             step = dca_steps[dca_count]
             if change <= -(step["drop_pct"] / 100.0):
                 result = database.add_position_investment_atomic(
@@ -339,32 +341,11 @@ def update_position(token_address, current_price):
                     return result
                 break
 
-        if change <= -STOP_LOSS:
-            return close_position(token_address, current_price, "STOP LOSS")
-
-        if change >= TAKE_PROFIT:
-            return close_position(token_address, current_price, "SCALP TAKE PROFIT")
-
-        peak_gain = (peak_price / entry) - 1
-        if peak_gain >= TRAILING_ACTIVATION:
-            trailing_floor = peak_price * (1 - TRAILING_DISTANCE)
-            if current_price <= trailing_floor:
-                return close_position(
-                    token_address, current_price, "TRAILING PROFIT EXIT"
-                )
-
-        opened_at = position.get("opened_at")
-        if opened_at:
-            try:
-                opened_timestamp = datetime.fromisoformat(
-                    str(opened_at).replace("Z", "+00:00")
-                ).timestamp()
-                if time.time() - opened_timestamp >= MAX_HOLD_SECONDS:
-                    return close_position(
-                        token_address, current_price, "15 MINUTE ROTATION EXIT"
-                    )
-            except (ValueError, TypeError, OverflowError):
-                pass
+        exit_reason = exit_policy.evaluate_exit(
+            position, current_price, policy=exit_config
+        )
+        if exit_reason:
+            return close_position(token_address, current_price, exit_reason)
 
         return "Position still open"
 
