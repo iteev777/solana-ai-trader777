@@ -1574,6 +1574,88 @@ def get_recent_copy_trade_events(limit=50):
 # HEALTH CHECK
 # ==========================================
 
+def list_database_backups(backup_dir=None):
+    directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
+    if not os.path.isdir(directory):
+        return []
+    backups = []
+    for name in os.listdir(directory):
+        if not name.endswith(".sqlite3"):
+            continue
+        path = os.path.join(directory, name)
+        try:
+            stat = os.stat(path)
+            if not os.path.isfile(path):
+                continue
+            backups.append({
+                "name": name,
+                "size_bytes": int(stat.st_size),
+                "created_at": datetime.fromtimestamp(
+                    stat.st_mtime, timezone.utc
+                ).isoformat()
+            })
+        except OSError:
+            continue
+    return sorted(backups, key=lambda item: item["created_at"], reverse=True)
+
+
+def backup_database(backup_dir=None, keep=7):
+    """Create a consistent SQLite online backup and prune old verified snapshots."""
+    if isinstance(keep, bool) or not isinstance(keep, int) or not 1 <= keep <= 90:
+        raise ValueError("keep must be an integer between 1 and 90")
+    if not os.path.isfile(DATABASE):
+        raise FileNotFoundError("Database file does not exist")
+
+    directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
+    os.makedirs(directory, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    destination = os.path.join(directory, "trojan-" + stamp + ".sqlite3")
+    temporary = destination + ".tmp"
+
+    source = None
+    target = None
+    try:
+        source = sqlite3.connect(DATABASE, timeout=30)
+        target = sqlite3.connect(temporary, timeout=30)
+        source.backup(target, pages=256, sleep=0.01)
+        check = target.execute("PRAGMA integrity_check").fetchone()
+        if not check or check[0] != "ok":
+            raise sqlite3.DatabaseError("Backup integrity check failed")
+        target.commit()
+    except Exception:
+        if target is not None:
+            target.close()
+            target = None
+        if source is not None:
+            source.close()
+            source = None
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
+    finally:
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
+
+    os.replace(temporary, destination)
+    backups = list_database_backups(directory)
+    for obsolete in backups[keep:]:
+        try:
+            os.remove(os.path.join(directory, obsolete["name"]))
+        except OSError:
+            pass
+    return {
+        "created": True,
+        "backup": os.path.basename(destination),
+        "size_bytes": os.path.getsize(destination),
+        "integrity": "ok",
+        "retained": len(list_database_backups(directory)),
+    }
+
+
 def get_database_health():
 
     with connect() as connection:
@@ -1594,10 +1676,26 @@ def get_database_health():
             FROM schema_meta
             WHERE key = 'schema_version'
         """).fetchone()
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
 
+    backup_dir = os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
+    backups = list_database_backups(backup_dir)
+    storage_backend = (
+        "railway_volume" if os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+        else "custom_data_dir" if os.getenv("BOT_DATA_DIR")
+        else "ephemeral_default"
+    )
     return {
         "database": DATABASE,
         "integrity": integrity,
+        "journal_mode": str(journal_mode).lower(),
+        "database_size_bytes": os.path.getsize(DATABASE) if os.path.isfile(DATABASE) else 0,
+        "wal_size_bytes": os.path.getsize(DATABASE + "-wal") if os.path.isfile(DATABASE + "-wal") else 0,
+        "storage_backend": storage_backend,
+        "persistent_storage_configured": storage_backend != "ephemeral_default",
+        "backup_directory": backup_dir,
+        "backup_count": len(backups),
+        "latest_backup": backups[0] if backups else None,
         "schema_version": (
             int(version["value"])
             if version else None

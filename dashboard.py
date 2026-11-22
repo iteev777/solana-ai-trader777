@@ -617,6 +617,23 @@ def api_performance():
     })
 
 
+@app.get("/api/database")
+def api_database_health():
+    return jsonify(database.get_database_health())
+
+
+@app.post("/api/database/backup")
+def api_database_backup():
+    payload = request.get_json(silent=True) or {}
+    keep = payload.get("keep", 7)
+    try:
+        return jsonify(database.backup_database(keep=keep))
+    except (ValueError, TypeError) as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": "Database backup failed: " + type(error).__name__}), 500
+
+
 @app.get("/api/health")
 def api_health():
     return jsonify({
@@ -695,6 +712,7 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 </section><section class="app-view" id="view-system"><section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, breakdown_20, volume_spike_ratio, timeframe_ready_count, bullish_timeframes, bearish_timeframes, macd_histogram, macd_bullish, bollinger_percent_b, atr_percent, stochastic_k, above_vwap, candle_body_pct, candle_range_pct, consecutive_green_candles, consecutive_red_candles, volume_spike, position_holding_minutes. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not. Named conditions: {\"condition\":\"Rsi\",\"params\":{\"comparison\":\"BELOW\",\"threshold\":30}}. The strategy catalog lists 24 named market, technical, and position conditions; missing inputs fail closed.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
 <section class="panel section" id="system-panel"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
+<section class="panel section"><h2>DATABASE INTEGRITY & BACKUPS</h2><div class="health" id="database-health"><div class="muted">Loading database health…</div></div><div class="actions" style="margin-top:12px"><button class="refresh" type="button" onclick="createDatabaseBackup()">Create verified backup</button><span class="muted" id="database-backup-status"></span></div></section>
 <section class="panel section"><h2>ADAPTIVE LEARNING · PAPER ONLY</h2><div class="muted" style="margin-bottom:10px">Closed paper outcomes adjust future paper position size only after the minimum sample; live execution remains locked.</div><div class="health" id="adaptive-learning"><div class="muted">Loading adaptive profile…</div></div></section>
 <section class="panel section"><h2>TOKEN DISCOVERY SOURCES</h2><div class="muted" style="margin-bottom:10px">Per-source candidate counts from the latest completed scan. A zero count can mean no matches or a provider outage; check the status.</div><div class="health" id="discovery-sources"><div class="muted">Loading discovery sources…</div></div></section>
 <section class="panel section"><h2>COPY WALLET PAPER PERFORMANCE</h2><div class="muted" style="margin-bottom:10px">Wallet-attributed realized paper P/L, win rate, open exposure and observed activity.</div><div class="health" id="copy-performance"><div class="muted">Loading wallet performance…</div></div></section>
@@ -784,6 +802,33 @@ async function loadAnalytics(){
   document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
   document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
  }catch(err){document.getElementById('performance').textContent='Analytics unavailable: '+err.message;}
+}
+async function loadDatabaseHealth(){
+ try{
+  const d=await get('/api/database');
+  const rows=[
+   ['Integrity',d.integrity],
+   ['Journal',d.journal_mode],
+   ['Storage',d.storage_backend],
+   ['Persistent storage',d.persistent_storage_configured?'configured':'NOT CONFIGURED'],
+   ['Database size',fmt((d.database_size_bytes||0)/1048576,2)+' MB'],
+   ['WAL size',fmt((d.wal_size_bytes||0)/1048576,2)+' MB'],
+   ['Verified backups',d.backup_count],
+   ['Latest backup',d.latest_backup?d.latest_backup.name:'none']
+  ];
+  document.getElementById('database-health').innerHTML=rows.map(x=>'<div><b>'+esc(x[0])+'</b><span class="'+(x[0]==='Integrity'&&x[1]==='ok'?'good':x[0]==='Persistent storage'&&!d.persistent_storage_configured?'bad':'muted')+'">'+esc(x[1])+'</span></div>').join('');
+ }catch(err){document.getElementById('database-health').textContent='Database health unavailable: '+err.message;}
+}
+async function createDatabaseBackup(){
+ const status=document.getElementById('database-backup-status');
+ status.textContent='Creating and verifying backup…';
+ try{
+  const response=await fetch('/api/database/backup',{method:'POST',headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},body:JSON.stringify({keep:7})});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Backup failed');
+  status.textContent='Verified '+data.backup+' · '+fmt(data.size_bytes/1048576,2)+' MB · '+data.retained+' retained';
+  await loadDatabaseHealth();
+ }catch(err){status.textContent='Backup failed: '+err.message;}
 }
 async function loadAdvanced(){
  try{
