@@ -32,6 +32,29 @@ PROGRAMS = {
     "pumpfun_legacy": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
     "moonit_amm": "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG",
 }
+
+PROTOCOL_ALIASES = {
+    "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap",
+    "pumpfun": "pumpfun_legacy", "pump.fun": "pumpfun_legacy",
+    "pumpfun_legacy": "pumpfun_legacy", "pump_fun": "pumpfun_legacy",
+    "raydium": "raydium_auto", "raydium_amm": "raydium_auto",
+    "raydium_amm_v4": "raydium_amm_v4", "raydium_cp_swap": "raydium_cpmm",
+    "raydium_clmm": "raydium_clmm",
+    "orca": "orca_whirlpool", "orca_whirlpools": "orca_whirlpool", "whirlpool": "orca_whirlpool",
+    "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm",
+    "meteora_damm": "meteora_damm_v2", "meteora_damm_v2": "meteora_damm_v2",
+    "damm_v2": "meteora_damm_v2", "meteora_dbc": "meteora_dbc", "dbc": "meteora_dbc",
+    "fluxbeam": "fluxbeam_amm", "fluxbeam_amm": "fluxbeam_amm",
+    "moonit": "moonit_amm", "moonit_amm": "moonit_amm",
+    "moonshot": "moonit_amm", "moonshot_amm": "moonit_amm"
+}
+
+
+def normalize_protocol(protocol):
+    value = str(protocol or "").strip().lower().replace("-", "_")
+    return PROTOCOL_ALIASES.get(value, value)
+
+
 STABLES = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
@@ -290,21 +313,7 @@ def _quote_usd(mint):
 
 def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _register_watch=True):
     """Return a verified pool snapshot in USD, or None if data is unavailable."""
-    protocol = str(protocol or "").lower().replace("-", "_")
-    aliases = {
-        "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap", "pump.fun": "pumpswap",
-        "raydium": "raydium_auto", "raydium_amm": "raydium_auto",
-        "raydium_amm_v4": "raydium_amm_v4", "raydium_cp_swap": "raydium_cpmm",
-        "raydium_clmm": "raydium_clmm",
-        "orca": "orca_whirlpool", "orca_whirlpools": "orca_whirlpool", "whirlpool": "orca_whirlpool",
-        "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm",
-        "meteora_damm": "meteora_damm_v2", "damm_v2": "meteora_damm_v2",
-        "meteora_dbc": "meteora_dbc", "dbc": "meteora_dbc",
-        "fluxbeam": "fluxbeam_amm", "fluxbeam_amm": "fluxbeam_amm",
-        "pumpfun_legacy": "pumpfun_legacy", "pump_fun": "pumpfun_legacy",
-        "moonit": "moonit_amm", "moonit_amm": "moonit_amm"
-    }
-    protocol = aliases.get(protocol, protocol)
+    protocol = normalize_protocol(protocol)
     if protocol == "raydium_auto":
         protocol = "raydium_auto"
     elif protocol not in PROGRAMS or not pool_address or not token_mint:
