@@ -1,5 +1,6 @@
 """Dashboard-friendly strategy condition catalog and safe presets."""
 import strategy_rules
+import strategy_conditions
 
 PRESETS = {
     "momentum_confirmation": {
@@ -32,6 +33,8 @@ def get_strategy_catalog():
     return {
         "fields": fields,
         "operators": sorted(strategy_rules.ALLOWED_OPERATORS),
+        "conditions": strategy_conditions.get_condition_catalog(),
+        "condition_types": list(strategy_conditions.CONDITION_TYPES),
         "presets": PRESETS,
         "timeframes": ["1m", "5m", "15m", "1h", "4h", "12h", "1d"],
         "logic": ["all", "any", "not"],
