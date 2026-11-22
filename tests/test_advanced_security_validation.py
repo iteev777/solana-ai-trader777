@@ -19,6 +19,27 @@ class TokenSecurityTests(unittest.TestCase):
         self.assertTrue(result["allowed"])
         self.assertTrue(result["warnings"])
 
+    @patch("solana_onchain._rpc")
+    def test_reads_mint_authorities_and_largest_account_concentration(self, rpc):
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": "100000000", "decimals": 6}},
+            {"value": {"value": [
+                {"address": "11111111111111111111111111111111", "amount": "30000000"}
+            ]}},
+            {"value": [{"data": {"parsed": {"info": {"owner": "11111111111111111111111111111111"}}}}]},
+        ]
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            report = token_security.get_token_security_report("MintAddress")
+        self.assertEqual(report["mint_authority"], "DISABLED")
+        self.assertEqual(report["freeze_authority"], "DISABLED")
+        self.assertEqual(report["top10_token_account_pct"], 30.0)
+        self.assertTrue(token_security.evaluate_token_security(report)["allowed"])
+
     def test_missing_report_fails_closed(self):
         self.assertFalse(token_security.evaluate_token_security(None)["allowed"])
 
