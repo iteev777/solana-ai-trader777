@@ -82,6 +82,60 @@ def _positions():
     return result
 
 
+
+@app.get("/manifest.webmanifest")
+def dashboard_manifest():
+    return jsonify({
+        "name": "Trojan V2 Command Center",
+        "short_name": "Trojan V2",
+        "description": "Solana trading bot monitoring dashboard",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#080d18",
+        "theme_color": "#080d18",
+        "orientation": "any",
+        "icons": [{"src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+    })
+
+
+@app.get("/app-icon.svg")
+def dashboard_app_icon():
+    return Response(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#080d18"/><path d="M118 128h276v58H292v198h-72V186h-102z" fill="#39e6a5"/><path d="M142 330l75-78 52 48 100-112" fill="none" stroke="#77aaff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        mimetype="image/svg+xml"
+    )
+
+
+@app.get("/sw.js")
+def dashboard_service_worker():
+    script = """
+const CACHE = "trojan-dashboard-v1";
+const SHELL = ["/", "/manifest.webmanifest", "/app-icon.svg"];
+self.addEventListener("install", event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  self.skipWaiting();
+});
+self.addEventListener("activate", event => {
+  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))));
+  self.clients.claim();
+});
+self.addEventListener("fetch", event => {
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  if (event.request.method !== "GET") return;
+  event.respondWith(fetch(event.request).then(response => {
+    if (response.ok) {
+      const copy = response.clone();
+      caches.open(CACHE).then(cache => cache.put(event.request, copy));
+    }
+    return response;
+  }).catch(() => caches.match(event.request)));
+});
+"""
+    return Response(script, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/"})
+
+
 @app.get("/")
 def dashboard_home():
     return Response(_HTML, mimetype="text/html")
@@ -239,7 +293,7 @@ def api_health():
 
 _HTML = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#090e1b"><title>Trojan V2 Command Center</title>
+<meta name="theme-color" content="#080d18"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Trojan V2"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/app-icon.svg"><title>Trojan V2 Command Center</title>
 <style>
 :root{color-scheme:dark;--bg:#090e1b;--panel:#111a2b;--line:#24324a;--muted:#91a0b8;--text:#edf3ff;--green:#37d6a0;--red:#ff6d7a}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,#14213a 0,var(--bg) 42%);color:var(--text);font:14px Inter,system-ui,-apple-system,sans-serif}
@@ -259,24 +313,46 @@ table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;colo
 footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 @media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}}
 @media(max-width:480px){.metric strong{font-size:21px}.section{padding:12px}table{font-size:11px}}
+/* Mobile app shell */
+:root{--bg:#080d18;--panel:#101a2b;--line:#22334d}
+body{background:radial-gradient(ellipse at 50% -15%,#1a3152 0,transparent 48%),#080d18;padding-bottom:88px}
+header{position:sticky;top:0;z-index:20;background:rgba(8,13,24,.88);backdrop-filter:blur(18px);padding:15px clamp(14px,4vw,34px)}
+h1{font-size:18px;letter-spacing:.08em}
+main{max-width:1440px;padding-top:16px}
+.metric,.panel{border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.14)}
+.metric{background:linear-gradient(145deg,rgba(22,36,58,.96),rgba(13,22,37,.96));padding:17px}
+.metric strong{font-size:clamp(20px,2.4vw,29px)}
+.section{padding:19px}
+.section h2{font-size:12px;letter-spacing:.12em;color:#b9c9e2}
+.refresh{border-radius:12px;padding:10px 14px;font-weight:700}
+.app-nav{position:fixed;z-index:30;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding:8px;background:rgba(13,23,39,.94);border:1px solid #2b405e;border-radius:20px;box-shadow:0 14px 40px #0009;backdrop-filter:blur(22px)}
+.app-nav a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:48px;color:#91a4c0;text-decoration:none;font-size:10px;font-weight:700;letter-spacing:.02em}
+.app-nav a span:first-child{font-size:17px;line-height:18px}
+.app-nav a:active,.app-nav a:focus{color:#42e5aa}
+.app-nav a.active{color:#42e5aa}
+#overview{scroll-margin-top:90px}
+#positions-panel,#trades-panel,#analytics-panel,#system-panel{scroll-margin-top:90px}
+@media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.split{grid-template-columns:1fr}.health{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){header{padding:13px 14px}.sub{font-size:10px}.pill{font-size:9px;padding:6px 8px}.metric{padding:13px;border-radius:15px}.metric small{font-size:9px}.metric strong{font-size:20px;margin-top:7px}.section{padding:13px;margin-top:12px}.panel{border-radius:15px}.app-nav{left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));padding:6px}.app-nav a{font-size:9px}.actions{gap:6px}}
+
 </style></head><body>
 <header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
 <div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadAll()">Refresh</button></div></header>
-<main><div class="grid">
+<main id="overview"><div class="grid">
 <div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
-<div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
+<div class="split"><section class="panel section" id="positions-panel"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
-<section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
-<section class="panel section"><h2>STRATEGY PERFORMANCE</h2><div class="health" id="performance"><div class="muted">Waiting for closed-trade data…</div></div></section>
+<section class="panel section" id="trades-panel"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+<section class="panel section" id="analytics-panel"><h2>STRATEGY PERFORMANCE</h2><div class="health" id="performance"><div class="muted">Waiting for closed-trade data…</div></div></section>
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 <section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, volume_spike_ratio. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
-<section class="panel section"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
+<section class="panel section" id="system-panel"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
 <section class="panel section"><h2>COPY WALLET ACTIVITY</h2><div class="muted" style="margin-bottom:10px">Read-only wallet monitoring. No transactions are copied or signed.</div><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Wallet</th><th>Action</th><th>Mint</th><th>Token Δ</th><th>SOL Δ</th></tr></thead><tbody id="copy-trades"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section>
-</main><footer>Paper trading controls · no wallet keys · live execution locked · Trojan V2</footer>
+</main><nav class="app-nav" aria-label="Main navigation"><a href="#overview" class="active"><span>⌂</span><span>HOME</span></a><a href="#positions-panel"><span>◫</span><span>POSITIONS</span></a><a href="#trades-panel"><span>⇄</span><span>TRADES</span></a><a href="#analytics-panel"><span>◈</span><span>AI / STATS</span></a><a href="#system-panel"><span>⌁</span><span>SYSTEM</span></a></nav><footer>Paper trading controls · no wallet keys · live execution locked · Trojan V2</footer>
 <script>
 const esc=v=>String(v===null||v===undefined?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=(v,n=2)=>v===null||v===undefined?'—':Number(v).toFixed(n);
@@ -284,6 +360,8 @@ const usd=v=>v===null||v===undefined?'—':'$'+fmt(v);
 const short=v=>v?String(v).slice(0,6)+'…'+String(v).slice(-5):'—';
 const time=v=>v?new Date(v).toLocaleTimeString():'—';
 async function get(path){const r=await fetch(path);if(r.status===401){document.body.innerHTML='<main><h2>Authentication required</h2><p>Reload and sign in using your dashboard token.</p></main>';throw Error('auth');}if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));}
+document.querySelectorAll(".app-nav a").forEach(link=>link.addEventListener("click",()=>{document.querySelectorAll(".app-nav a").forEach(item=>item.classList.remove("active"));link.classList.add("active");}));
 async function loadAll(){try{
 const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering'),get('/api/performance')]);
 const o=data[0],t=data[1],e=data[2],f=data[3],p=data[4],a=o.account,s=o.stats;
