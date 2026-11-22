@@ -40,7 +40,7 @@ def evaluate_trade(
         }
 
     try:
-        analysis = analyze_token(token)
+        analysis = analyze_token(token, strategy=strategy)
 
         if not isinstance(analysis, dict):
             raise ValueError("Invalid AI analysis")
