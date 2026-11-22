@@ -1,6 +1,6 @@
 # ==========================================
 # TROJAN V2 - MAIN TRADING ENGINE
-# QUEUE OPTIMIZATION UPDATE
+# BATCH MARKET DATA OPTIMIZATION
 # ==========================================
 
 import time
@@ -13,12 +13,16 @@ import sniper_scanner as sniper
 import trading_manager as manager
 import strategy as trading_strategy
 
-from api_client import get_json
 from scanner import scan_tokens
 from discovery.token_aggregator import collect_tokens
 
 from rugcheck import get_rugcheck_report
 from liquidity_monitor import check_liquidity
+
+from market_data import (
+    get_market_data,
+    get_market_data_batch
+)
 
 from database import (
     initialize_database,
@@ -31,12 +35,7 @@ from database import (
 # CONFIGURATION
 # ==========================================
 
-API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
-
-# Increased from 4 to 10
 WORKERS = 10
-
-# Keep queue limit unchanged
 MAX_PENDING_TASKS = 100
 
 SCAN_INTERVAL = 60
@@ -196,81 +195,6 @@ def queue_retry(
         address,
         str(reason) + " | ATTEMPT: " + str(attempts + 1)
     )
-
-
-# ==========================================
-# MARKET DATA
-# ==========================================
-
-def get_market_data(token_address):
-
-    if not isinstance(token_address, str) or not token_address:
-        log_event("MARKET DATA ERROR", token_address, "INVALID ADDRESS")
-        return None
-
-    try:
-
-        pairs = get_json(
-            API_URL + token_address,
-            timeout=15,
-            cache_ttl=10,
-            max_retries=1
-        )
-
-        if not isinstance(pairs, list) or not pairs:
-
-            log_event(
-                "MARKET DATA WAIT",
-                token_address,
-                "NO PAIRS RETURNED"
-            )
-
-            return None
-
-        valid_pairs = []
-
-        for pair in pairs:
-
-            if not isinstance(pair, dict):
-                continue
-
-            price = safe_float(pair.get("priceUsd"))
-
-            if price is None or price <= 0:
-                continue
-
-            liquidity = get_liquidity(pair)
-
-            liquidity_rank = (
-                liquidity if liquidity is not None else -1
-            )
-
-            valid_pairs.append((liquidity_rank, pair))
-
-        if not valid_pairs:
-
-            log_event(
-                "MARKET DATA WAIT",
-                token_address,
-                "NO VALID PRICE PAIR"
-            )
-
-            return None
-
-        return max(
-            valid_pairs,
-            key=lambda item: item[0]
-        )[1]
-
-    except Exception as error:
-
-        log_event(
-            "MARKET DATA EXCEPTION",
-            token_address,
-            repr(error)
-        )
-
-        return None
 
 
 # ==========================================
@@ -539,7 +463,9 @@ def schedule_token(
         return False
 
     if len(pending_tasks) >= MAX_PENDING_TASKS:
+
         log_event("TASK LIMIT REACHED", address)
+
         return False
 
     if address in paper.get_positions():
@@ -939,9 +865,35 @@ def monitor_positions():
 
     positions = list(paper.get_positions().items())
 
+    if not positions:
+        return
+
+    addresses = [
+        address
+        for address, position in positions
+        if isinstance(address, str) and address
+    ]
+
+    try:
+
+        market_data = get_market_data_batch(addresses)
+
+        if not isinstance(market_data, dict):
+            log_event("POSITION BATCH ERROR", reason="INVALID RESPONSE")
+            return
+
+    except Exception as error:
+
+        log_event(
+            "POSITION BATCH ERROR",
+            reason=repr(error)
+        )
+
+        return
+
     for address, position in positions:
 
-        pair = get_market_data(address)
+        pair = market_data.get(address)
 
         if not pair:
             continue
@@ -1064,6 +1016,7 @@ def run_bot():
     print("PAPER TRADING: ENABLED")
     print("WORKERS:", WORKERS)
     print("MAX PENDING TASKS:", MAX_PENDING_TASKS)
+    print("MARKET DATA: BATCH ENABLED")
     print("LIVE EXECUTION: LOCKED")
     print("====================================")
 
@@ -1081,12 +1034,11 @@ def run_bot():
 
         try:
 
-            # IMPORTANT:
-            # Free completed task slots BEFORE scheduling new work.
+            # Free completed task slots first.
 
             process_completed_tasks()
 
-            # Then receive and schedule new tokens.
+            # Receive and schedule new tokens.
 
             receive_sniper_tokens()
             process_sniper_tokens()
@@ -1096,6 +1048,8 @@ def run_bot():
 
                 add_discovery_tokens()
                 last_scan_time = time.time()
+
+            # Monitor all positions through batch market data.
 
             monitor_positions()
 
