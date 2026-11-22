@@ -33,8 +33,8 @@ from database import (
 
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
-# Increased from 4 to 6
-WORKERS = 6
+# Increased from 4 to 10
+WORKERS = 10
 
 # Keep queue limit unchanged
 MAX_PENDING_TASKS = 100
