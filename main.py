@@ -657,7 +657,7 @@ def schedule_token(
 # ==========================================
 
 def queue_copy_signal(event):
-    if not isinstance(event, dict) or event.get("action") != "BUY":
+    if not isinstance(event, dict) or event.get("action") not in ("BUY", "SELL"):
         return False
     if not isinstance(event.get("token_mint"), str) or not event["token_mint"]:
         return False
@@ -678,18 +678,42 @@ def process_copy_signals():
             break
         processed += 1
         address = event.get("token_mint")
+        wallet = event.get("wallet")
+        action = event.get("action")
+
+        # Mirror a followed wallet's SELL only against the paper position
+        # opened from that same wallet's BUY signal. Never close unrelated
+        # manual or strategy positions just because a watched wallet sold.
+        if action == "SELL":
+            position = paper.get_position(address)
+            metadata = position.get("metadata", {}) if isinstance(position, dict) else {}
+            if not isinstance(metadata, dict) or metadata.get("copy_wallet") != wallet:
+                log_event("COPY SELL SKIPPED", address, "no matching wallet-owned paper position")
+                continue
+            try:
+                pair = get_market_data(address)
+                price = safe_float(pair.get("priceUsd")) if isinstance(pair, dict) else None
+                if price is None or price <= 0:
+                    log_event("COPY SELL WAITING", address, "current price unavailable")
+                    continue
+                result = paper.close_position(address, price, "COPY WALLET MIRROR SELL")
+                log_event("COPY SELL MIRRORED", address, str(result))
+            except Exception as error:
+                log_event("COPY SELL ERROR", address, repr(error))
+            continue
+
         token = {
             "tokenAddress": address,
             "chainId": "solana",
             "discovery_sources": ["copy_wallet"],
-            "copy_wallet": event.get("wallet"),
+            "copy_wallet": wallet,
             "copy_signature": event.get("signature")
         }
         queued = schedule_token(address, "sniper", token)
         log_event(
             "COPY BUY SIGNAL QUEUED" if queued else "COPY BUY SIGNAL SKIPPED",
             address,
-            "wallet=" + str(event.get("wallet"))
+            "wallet=" + str(wallet)
         )
 
 
