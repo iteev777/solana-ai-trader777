@@ -312,3 +312,8 @@ Configurable risk thresholds:
 - `TROJAN_RUGCHECK_MAX_MEDIUM_RISKS` (3)
 
 Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the existing buy gate. Missing optional extended fields are exposed as unknown rather than fabricated. A positive transfer fee or active transfer-fee authority adds risk; a rugged token, critical concentration/creator share, excessive transfer fee, or other high-severity signal rejects the report.
+
+
+## Dynamic copy-wallet watchlist
+
+The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite schema v7 and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass wallet-specific risk limits and the conservative swap-event classifier.
