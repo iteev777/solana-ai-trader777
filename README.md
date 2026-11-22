@@ -297,3 +297,8 @@ The deterministic candidate filter now evaluates volume, transaction activity an
 Each window is checked independently, one-sided transaction counts are retained as reported, and absent measurements are only held when the corresponding floor/requirement is enabled. The filter report includes per-window raw measurements and derived buy ratios. Existing 5m environment variables and rejection codes remain compatible.
 
 
+
+
+## Dynamic copy-wallet watchlist
+
+The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in the environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass the existing wallet-specific risk limits and conservative swap-event classifier.
