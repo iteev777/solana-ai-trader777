@@ -274,3 +274,8 @@ Optional environment settings (defaults preserve the previous 9% stop, 10% take-
 - `TROJAN_BREAK_EVEN_OFFSET_PCT`
 
 These settings affect the paper engine only. They do not authorize live trading or alter the live execution lock.
+
+
+## Copy-wallet event classification
+
+Copy-watch now derives token changes from the watched wallet's raw SPL/Token-2022 balance deltas (aggregated by mint before UI conversion), removes the transaction fee from the wallet's native-SOL economic delta, and records the invoked swap programs. A BUY/SELL signal is emitted only when the watched wallet is the transaction fee payer, a recognised swap program was invoked, and token movement is paired with an opposing quote-asset movement. Ordinary transfers, sponsored transactions and ambiguous balance flows remain `TOKEN TRANSFER / UNKNOWN` and are never queued as paper-copy trades. Additional supported router/program IDs can be supplied with `TROJAN_COPY_SWAP_PROGRAM_IDS` (comma-separated). This is conservative classification, not a guarantee that every DEX route can be recognized.
