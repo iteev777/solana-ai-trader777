@@ -289,3 +289,11 @@ FluxBeam is also available as a read-only direct quote adapter for the verified 
 The dashboard's System page exposes SQLite integrity, WAL mode, storage backend, database/WAL size and verified backup count. **Create verified backup** uses SQLite's online backup API (safe with WAL and active readers/writers), runs `PRAGMA integrity_check` on the snapshot, and retains the newest seven snapshots by default. The authenticated endpoint is `POST /api/database/backup`; `TROJAN_BACKUP_DIR` can select a separate backup directory.
 
 Railway durability still requires an attached persistent volume. The health panel reports `ephemeral_default` when neither `RAILWAY_VOLUME_MOUNT_PATH` nor `BOT_DATA_DIR` is configured. A backup stored on the same ephemeral filesystem is not disaster recovery; attach a Railway volume or configure an external backup destination before relying on long-term retention.
+
+## Multi-window market filtering
+
+The deterministic candidate filter now evaluates volume, transaction activity and price momentum independently across 5m, 1h, 6h and 24h windows. Optional volume floors use `TROJAN_FILTER_MIN_VOLUME_5M_USD`, `TROJAN_FILTER_MIN_VOLUME_1H_USD`, `TROJAN_FILTER_MIN_VOLUME_6H_USD` and `TROJAN_FILTER_MIN_VOLUME_24H_USD`; transaction floors use `TROJAN_FILTER_MIN_TXNS_5M`, `TROJAN_FILTER_MIN_TXNS_1H`, `TROJAN_FILTER_MIN_TXNS_6H` and `TROJAN_FILTER_MIN_TXNS_24H`. Buy-pressure floors use `TROJAN_FILTER_MIN_BUY_RATIO` for 5m (backward compatible) and `TROJAN_FILTER_MIN_BUY_RATIO_1H`, `_6H`, `_24H` for longer windows. Momentum bands use `TROJAN_FILTER_MIN_CHANGE_{5M,1H,6H,24H}_PCT` and `TROJAN_FILTER_MAX_CHANGE_{5M,1H,6H,24H}_PCT`; missing-window requirements can be enabled with `TROJAN_FILTER_REQUIRE_{5M,1H,6H,24H}_CHANGE=true`.
+
+Each window is checked independently, one-sided transaction counts are retained as reported, and absent measurements are only held when the corresponding floor/requirement is enabled. The filter report includes per-window raw measurements and derived buy ratios. Existing 5m environment variables and rejection codes remain compatible.
+
+
