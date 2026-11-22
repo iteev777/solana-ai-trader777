@@ -483,6 +483,43 @@ def _quote_usd(mint):
         return None
 
 
+def _register_pool_price_watch(pool_address, protocol, token_mint):
+    """Register a successfully decoded pool for reserve-account notifications."""
+    try:
+        from onchain_stream import watch_pool_price
+        watch_pool_price(pool_address, protocol, token_mint)
+    except Exception as error:
+        print("[TROJAN V2] POOL WATCH REGISTRATION FAILED:", str(error)[:180], flush=True)
+
+
+def get_pool_watch_accounts(pool_address, protocol):
+    """Return the verified pool state and reserve accounts to subscribe to.
+
+    Pool state is included for curve/CLMM/DLMM state changes; vault accounts
+    are included because CPMM swaps primarily mutate vault balances.
+    """
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("pool address is required for account watching")
+    declared = normalize_protocol(protocol)
+    account = _account(pool_address.strip())
+    owner_protocol = next(
+        (name for name, program_id in PROGRAMS.items()
+         if account.get("owner") == program_id),
+        None
+    )
+    if owner_protocol is None:
+        raise ValueError("pool owner is not a supported Solana DEX program")
+    decoded = _decode_pool(owner_protocol, account["data"])
+    if decoded.get("status") != "active":
+        raise ValueError("pool is not active for account watching")
+    accounts = [pool_address.strip()]
+    for field in ("vault_base", "vault_quote"):
+        address = decoded.get(field)
+        if isinstance(address, str) and address and address not in accounts:
+            accounts.append(address)
+    return accounts
+
+
 def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _register_watch=True):
     """Return a verified pool snapshot in USD, or None if data is unavailable."""
     protocol = normalize_protocol(protocol)
@@ -500,6 +537,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
             cached_data["snapshotAgeSeconds"] = round(
                 max(0.0, time.time() - cached_data["observedAt"]), 3
             )
+        if _register_watch:
+            _register_pool_price_watch(pool_address, protocol, token_mint)
         return cached_data
     pool = _account(pool_address)
 
@@ -595,6 +634,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         }
         _cache[key] = {"time": snapshot_observed_at, "data": result}
         _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
+        if _register_watch:
+            _register_pool_price_watch(pool_address, protocol, token_mint)
         return result
 
     if protocol == "meteora_dbc":
@@ -714,6 +755,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
     }
     _cache[key] = {"time": snapshot_observed_at, "data": result}
     _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
+    if _register_watch:
+        _register_pool_price_watch(pool_address, protocol, token_mint)
     return result
 
 
