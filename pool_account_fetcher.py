@@ -6,11 +6,13 @@ getMultipleAccounts calls, mirroring a shared reserve-account fetcher.
 """
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 MAX_ACCOUNTS_PER_BATCH = 50
 ACCOUNT_SET_TTL_SECONDS = 60.0
 
 _lock = threading.RLock()
+_batch_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="pool-account-rpc")
 _pool_account_sets = {}
 _pool_account_set_times = {}
 _status = {
@@ -18,6 +20,7 @@ _status = {
     "last_refresh_pools": 0,
     "last_priced_pools": 0,
     "last_failed_pools": 0,
+    "last_skipped_pools": 0,
     "last_rpc_batches": 0,
     "last_accounts_requested": 0,
     "total_refreshes": 0,
@@ -77,24 +80,27 @@ def _normalize_pool_key(item):
 
 
 def refresh_pools(pool_keys, prune_unwatched=False):
-    """Refresh a group of pools with deduplicated, bounded RPC account batches."""
+    """Refresh whole pool bundles in parallel confirmed RPC batches with failure backoff."""
     from solana_onchain import (
         decode_pool_snapshot, fetch_pool_account_batch, get_pool_snapshot_accounts
     )
+    import pool_analysis
 
-    keys = list(dict.fromkeys(
+    all_keys = list(dict.fromkeys(
         key for key in (_normalize_pool_key(item) for item in (pool_keys or []))
         if key is not None
     ))
     now = time.time()
     with _lock:
-        active = set(keys)
+        active = set(all_keys)
         if prune_unwatched:
             for key in list(_pool_account_sets):
                 if key not in active:
                     _pool_account_sets.pop(key, None)
                     _pool_account_set_times.pop(key, None)
 
+    keys = [key for key in all_keys if not pool_analysis.should_skip_pool(key[0])]
+    skipped = len(all_keys) - len(keys)
     account_sets = {}
     discovery_failures = 0
     for key in keys:
@@ -112,21 +118,39 @@ def refresh_pools(pool_keys, prune_unwatched=False):
                 _pool_account_sets[key] = list(accounts)
                 _pool_account_set_times[key] = now
             account_sets[key] = list(accounts)
-        except Exception:
+        except Exception as error:
+            if pool_analysis.classify_pool_error(error) == "transient":
+                pool_analysis.record_transient_failure(key[0], error)
+            else:
+                pool_analysis.record_structural_failure(key[0], error)
             discovery_failures += 1
 
     batches = plan_account_batches(account_sets)
     priced = 0
     failed = discovery_failures
     requested = 0
-    for batch in batches:
-        account_keys = batch["account_keys"]
-        requested += len(account_keys)
+
+    def fetch_one(batch):
         try:
-            account_map, slot, observed_at = fetch_pool_account_batch(account_keys)
-        except Exception:
+            account_map, slot, observed_at = fetch_pool_account_batch(batch["account_keys"])
+            return batch, (account_map, slot, observed_at), None
+        except Exception as error:
+            return batch, None, error
+
+    futures = [_batch_executor.submit(fetch_one, batch) for batch in batches]
+    for future in as_completed(futures):
+        batch, payload, batch_error = future.result()
+        requested += len(batch["account_keys"])
+        if batch_error is not None:
+            for key in batch["pool_accounts"]:
+                if pool_analysis.classify_pool_error(batch_error) == "transient":
+                    pool_analysis.record_transient_failure(key[0], batch_error)
+                else:
+                    pool_analysis.record_structural_failure(key[0], batch_error)
             failed += len(batch["pool_accounts"])
             continue
+
+        account_map, slot, observed_at = payload
         for key, required_accounts in batch["pool_accounts"].items():
             subset = {account: account_map.get(account) for account in required_accounts}
             try:
@@ -139,20 +163,25 @@ def refresh_pools(pool_keys, prune_unwatched=False):
                     _prefetched_observed_at=observed_at,
                 )
                 if not isinstance(snapshot, dict):
-                    failed += 1
-                    continue
+                    raise ValueError("pool snapshot decoder returned no verified snapshot")
                 from onchain_stream import store_pool_snapshot
                 store_pool_snapshot(key, snapshot)
+                pool_analysis.record_success(key[0])
                 priced += 1
-            except Exception:
+            except Exception as error:
+                if pool_analysis.classify_pool_error(error) == "transient":
+                    pool_analysis.record_transient_failure(key[0], error)
+                else:
+                    pool_analysis.record_structural_failure(key[0], error)
                 failed += 1
 
     with _lock:
         _status.update({
             "last_refresh_at": time.time(),
-            "last_refresh_pools": len(keys),
+            "last_refresh_pools": len(all_keys),
             "last_priced_pools": priced,
             "last_failed_pools": failed,
+            "last_skipped_pools": skipped,
             "last_rpc_batches": len(batches),
             "last_accounts_requested": requested,
             "total_refreshes": _status["total_refreshes"] + 1,
