@@ -5,6 +5,7 @@
 import time
 import threading
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from api_client import get_json
 
@@ -27,8 +28,8 @@ REQUEST_TIMEOUT = 15
 CACHE_TTL = 25
 MAX_RETRIES = 1
 
-MAX_RESULTS = 200
-SCAN_COOLDOWN = 5
+MAX_RESULTS = 400
+SCAN_COOLDOWN = 3
 
 _last_scan_time = 0
 _scan_lock = threading.Lock()
@@ -115,14 +116,29 @@ def scan_tokens():
         discovered = {}
         source_stats = {}
 
-        for source_name, url in SOURCES.items():
-            tokens = fetch_source(source_name, url)
+        # Fetch independent discovery endpoints concurrently.
+        with ThreadPoolExecutor(max_workers=len(SOURCES)) as source_pool:
+            futures = {
+                source_pool.submit(fetch_source, name, url): name
+                for name, url in SOURCES.items()
+            }
 
+            source_results = {}
+            for future in as_completed(futures):
+                source_name = futures[future]
+                try:
+                    source_results[source_name] = future.result()
+                except Exception as error:
+                    print("SOURCE WORKER ERROR:", source_name, repr(error))
+                    source_results[source_name] = []
+
+        # Merge deterministically after all source requests complete.
+        for source_name in SOURCES:
+            tokens = source_results.get(source_name, [])
             source_stats[source_name] = len(tokens)
 
             for token in tokens:
                 address = normalize_token(token)
-
                 if not address:
                     continue
 
@@ -135,11 +151,9 @@ def scan_tokens():
                     }
 
                 candidate = discovered[address]
-
                 if source_name not in candidate["discovery_sources"]:
                     candidate["discovery_sources"].append(source_name)
 
-                # Preserve useful original DexScreener fields.
                 for key, value in token.items():
                     if key not in candidate:
                         candidate[key] = value
