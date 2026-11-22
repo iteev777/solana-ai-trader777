@@ -26,7 +26,7 @@ ALLOWED_FIELDS = {
     "price_change_m5", "price_change_h1", "price_change_h24",
     "buy_ratio", "score", "source_count", "txns_m5_total",
     "pair_age_minutes", "rsi_14", "ema_9", "ema_21",
-    "ema_cross_bullish", "breakout_20", "volume_spike_ratio"
+    "ema_cross_bullish", "breakout_20", "volume_spike_ratio",\n    "timeframe_ready_count", "bullish_timeframes", "bearish_timeframes"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
 
