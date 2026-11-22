@@ -75,6 +75,19 @@ class PoolAnalysisResilienceTests(unittest.TestCase):
             1,
         )
 
+    def test_pool_state_distinguishes_transient_from_structural_block(self):
+        pool_analysis.record_transient_failure("rpc-pool", RuntimeError("timeout"), now=10.0)
+        pool_analysis.record_structural_failure("bad-pool", ValueError("invalid layout"), now=10.0)
+        self.assertEqual(
+            pool_analysis.get_pool_analysis_state("rpc-pool", now=11.0)["state"],
+            "transient_backoff",
+        )
+        self.assertEqual(
+            pool_analysis.get_pool_analysis_state("bad-pool", now=11.0)["state"],
+            "structural_quarantine",
+        )
+        self.assertTrue(pool_analysis.is_structurally_blocked("bad-pool", now=11.0))
+
     def test_status_reports_separate_transient_and_structural_states(self):
         pool_analysis.record_transient_failure("rpc-pool", RuntimeError("timeout"), now=1.0)
         pool_analysis.record_structural_failure("bad-pool", ValueError("invalid layout"), now=1.0)
