@@ -26,10 +26,11 @@ MAX_CACHE_ENTRIES = 2000
 
 BATCH_WAIT_SECONDS = 0.15
 
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 10
 MAX_RETRIES = 1
 
-WAIT_TIMEOUT = 45
+# Do not let slow market endpoints freeze the rapid position monitor.
+WAIT_TIMEOUT = 12
 
 
 # ==========================================
