@@ -39,6 +39,38 @@ class DatabaseDashboardApiTests(unittest.TestCase):
         self.assertEqual(response.get_json(), expected)
         backup.assert_called_once_with(keep=3)
 
+
+    def test_copy_watchlist_api_requires_authentication(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False):
+            response = self.client.get("/api/copy-watchlist")
+        self.assertEqual(response.status_code, 401)
+
+    def test_copy_watchlist_api_adds_wallet_and_returns_watchlist(self):
+        expected = {"wallet": "Wallet", "label": "Alpha", "enabled": True}
+        watchlist = {"wallets": [expected], "active_count": 1, "maximum": 20, "monitor": {}}
+        with (
+            patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False),
+            patch("copy_trade.add_copy_watch_wallet", return_value=expected),
+            patch("copy_trade.get_copy_watchlist", return_value=watchlist),
+        ):
+            response = self.client.post(
+                "/api/copy-watchlist",
+                json={"wallet": "Wallet", "label": "Alpha"},
+                headers=self.headers
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["watchlist"]["active_count"], 1)
+
+    def test_copy_watchlist_api_remove_returns_not_found(self):
+        with (
+            patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False),
+            patch("copy_trade.remove_copy_watch_wallet", return_value=False),
+        ):
+            response = self.client.delete(
+                "/api/copy-watchlist/Wallet", headers=self.headers
+            )
+        self.assertEqual(response.status_code, 404)
+
     def test_invalid_backup_retention_returns_bad_request(self):
         with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False), \
              patch.object(dashboard.database, "backup_database", side_effect=ValueError("keep invalid")):
