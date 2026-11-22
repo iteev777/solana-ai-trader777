@@ -3,6 +3,7 @@
 # ==========================================
 
 from ai_analyzer import analyze_token
+from strategy_rules import evaluate_strategy_rules
 from risk_manager import check_trade_risk
 import paper_trading as paper
 
@@ -77,6 +78,16 @@ def evaluate_trade(
             "action": "WAIT",
             "score": score,
             "reason": "; ".join(analysis.get("reasons", [])) or "Waiting for stronger entry"
+        }
+
+    rules_passed, rules_reason = evaluate_strategy_rules(
+        token, score, strategy
+    )
+    if not rules_passed:
+        return {
+            "action": "WAIT",
+            "score": score,
+            "reason": rules_reason
         }
 
     if score < MINIMUM_SCORES[strategy]:
