@@ -25,7 +25,8 @@ ALLOWED_FIELDS = {
     "liquidity_usd", "volume_m5", "volume_h24",
     "price_change_m5", "price_change_h1", "price_change_h24",
     "buy_ratio", "score", "source_count", "txns_m5_total",
-    "pair_age_minutes"
+    "pair_age_minutes", "rsi_14", "ema_9", "ema_21",
+    "ema_cross_bullish", "breakout_20", "volume_spike_ratio"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
 
@@ -57,6 +58,7 @@ def _context(token, score):
     pair_created = _number(token.get("pairCreatedAt"))
     age = max(0, (time.time() * 1000 - pair_created) / 60000) if pair_created else None
     sources = token.get("discovery_sources", [])
+    indicators = token.get("indicators") if isinstance(token.get("indicators"), dict) else {}
     return {
         "liquidity_usd": _number(liquidity.get("usd")),
         "volume_m5": _number(volume.get("m5")),
@@ -68,7 +70,13 @@ def _context(token, score):
         "score": _number(score),
         "source_count": len(sources) if isinstance(sources, list) else 0,
         "txns_m5_total": total,
-        "pair_age_minutes": age
+        "pair_age_minutes": age,
+        "rsi_14": _number(indicators.get("rsi_14")),
+        "ema_9": _number(indicators.get("ema_9")),
+        "ema_21": _number(indicators.get("ema_21")),
+        "ema_cross_bullish": 1.0 if indicators.get("ema_cross_bullish") is True else 0.0 if indicators.get("ema_cross_bullish") is False else None,
+        "breakout_20": 1.0 if indicators.get("breakout_20") is True else 0.0 if indicators.get("breakout_20") is False else None,
+        "volume_spike_ratio": _number(indicators.get("volume_spike_ratio"))
     }
 
 
@@ -123,18 +131,64 @@ def _evaluate(node, context, path="root"):
     return passed, ([] if passed else [field + " failed (" + str(actual) + " " + description + ")"])
 
 
+def _validate_node(node, path="root"):
+    if not isinstance(node, dict):
+        raise ValueError(path + ": rule must be an object")
+    groups = [key for key in ("all", "any", "not") if key in node]
+    if groups:
+        if len(groups) != 1 or len(node) != 1:
+            raise ValueError(path + ": use exactly one group operator")
+        key = groups[0]
+        children = node[key]
+        if not isinstance(children, list) or not children or len(children) > 30:
+            raise ValueError(path + ": group must contain 1-30 rules")
+        if key == "not" and len(children) != 1:
+            raise ValueError(path + ": not requires one rule")
+        for index, child in enumerate(children):
+            _validate_node(child, path + "." + key + "[" + str(index) + "]")
+        return
+    if set(node) != {"field", "op", "value"}:
+        raise ValueError(path + ": condition needs field, op and value")
+    if node["field"] not in ALLOWED_FIELDS or node["op"] not in ALLOWED_OPERATORS:
+        raise ValueError(path + ": unsupported field or operator")
+    if node["op"] == "between":
+        value = node["value"]
+        if not isinstance(value, list) or len(value) != 2:
+            raise ValueError(path + ": between needs two numeric values")
+        low, high = _number(value[0]), _number(value[1])
+        if low is None or high is None or low > high:
+            raise ValueError(path + ": invalid between range")
+    elif _number(node["value"]) is None:
+        raise ValueError(path + ": value must be finite numeric")
+
+
+def validate_rules_config(config):
+    if not isinstance(config, dict):
+        raise ValueError("Top-level JSON must be an object")
+    unknown = set(config) - {"main", "sniper"}
+    if unknown:
+        raise ValueError("Unknown strategy names: " + ", ".join(sorted(unknown)))
+    for name, rule in config.items():
+        _validate_node(rule, name)
+    return config
+
+
 def get_config():
     raw = os.getenv("TROJAN_STRATEGY_RULES", "").strip()
-    if not raw:
-        return {"enabled": False, "valid": True, "rules": {}, "error": None}
     try:
-        config = json.loads(raw)
+        config = json.loads(raw) if raw else {}
         if not isinstance(config, dict):
             raise ValueError("Top-level JSON must be an object")
-        unknown = set(config) - {"main", "sniper"}
-        if unknown:
-            raise ValueError("Unknown strategy names: " + ", ".join(sorted(unknown)))
-        return {"enabled": True, "valid": True, "rules": config, "error": None}
+        # Dashboard-saved rules override environment rules per strategy.
+        try:
+            import database
+            saved = database.get_strategy_configs()
+            for name, item in saved.items():
+                config[name] = item.get("config")
+        except Exception:
+            pass
+        validate_rules_config(config)
+        return {"enabled": bool(config), "valid": True, "rules": config, "error": None}
     except (ValueError, TypeError) as error:
         return {"enabled": True, "valid": False, "rules": {}, "error": str(error)[:300]}
 
