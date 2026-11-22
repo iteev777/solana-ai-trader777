@@ -91,6 +91,19 @@ def get_stream_status():
                 "watched_pools": len(_watches)}
 
 
+def should_refresh_pool(key, now=None):
+    """Coalesce bursts to at most one snapshot refresh per pool per interval."""
+    now = time.monotonic() if now is None else float(now)
+    with _lock:
+        last = _last_refresh_at.get(key, 0.0)
+        if key in _refreshing or now - last < MIN_POOL_REFRESH_INTERVAL:
+            _status["coalesced_notifications"] += 1
+            return False
+        _refreshing.add(key)
+        _last_refresh_at[key] = now
+        return True
+
+
 def _refresh(key):
     started = time.perf_counter()
     try:
@@ -176,16 +189,10 @@ def _run():
                 params = payload.get("params") or {}
                 key = subscriptions.get(params.get("subscription"))
                 if key and isinstance(params.get("result"), dict):
-                    now = time.monotonic()
                     with _lock:
                         _status["notifications"] += 1
-                        last = _last_refresh_at.get(key, 0.0)
-                        if key in _refreshing or now - last < MIN_POOL_REFRESH_INTERVAL:
-                            _status["coalesced_notifications"] += 1
-                            continue
-                        _refreshing.add(key)
-                        _last_refresh_at[key] = now
-                    _refresh_pool.submit(_refresh, key)
+                    if should_refresh_pool(key):
+                        _refresh_pool.submit(_refresh, key)
             delay = 1
         except Exception as error:
             with _lock:
