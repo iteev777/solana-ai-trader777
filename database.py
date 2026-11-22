@@ -2,6 +2,7 @@ import os
 import sqlite3
 import json
 import math
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -1797,7 +1798,7 @@ def save_pool_registry(mint, pools, updated_at=None):
     payload = json.dumps(
         pools, separators=(",", ":"), ensure_ascii=False, allow_nan=False
     )
-    timestamp = float(updated_at) if updated_at is not None else __import__("time").time()
+    timestamp = float(updated_at) if updated_at is not None else time.time()
     with connect() as connection:
         connection.execute("""
             CREATE TABLE IF NOT EXISTS pool_registry (
@@ -1841,6 +1842,13 @@ def load_pool_registry(mint):
 
 def delete_pool_registry(mint=None):
     with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS pool_registry (
+                mint TEXT PRIMARY KEY,
+                pools_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
         if mint is None:
             connection.execute("DELETE FROM pool_registry")
         else:
