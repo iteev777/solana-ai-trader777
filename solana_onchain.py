@@ -495,7 +495,12 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
     key = (pool_address, protocol, token_mint)
     cached = _cache.get(key)
     if not _force and cached and time.time() - cached["time"] < 0.5:
-        return dict(cached["data"])
+        cached_data = dict(cached["data"])
+        if cached_data.get("observedAt") is not None:
+            cached_data["snapshotAgeSeconds"] = round(
+                max(0.0, time.time() - cached_data["observedAt"]), 3
+            )
+        return cached_data
     pool = _account(pool_address)
 
     # The account owner is the authoritative protocol identifier.
@@ -529,8 +534,23 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
 
     # Launch curves have no conventional two-vault AMM layout.
     if protocol in ("pumpfun_legacy", "moonit_amm"):
+        # Re-read the curve and mint together. The initial account read only
+        # discovers the protocol; the published quote is tied to this one
+        # confirmed RPC context and never combines independently-timed reads.
+        curve_accounts, snapshot_slot = _multiple_accounts_with_context(
+            [pool_address, token_mint]
+        )
+        curve_account, mint_account = curve_accounts
+        if curve_account is None or mint_account is None:
+            raise ValueError("curve snapshot is missing its pool or mint account")
+        if curve_account.get("owner") != PROGRAMS[protocol]:
+            raise ValueError("curve account owner changed during snapshot")
+        decoded = _decode_pool(protocol, curve_account["data"])
+        if decoded["status"] != "active":
+            raise ValueError("curve is no longer active in the confirmed snapshot")
+        snapshot_observed_at = time.time()
+        decimals = _mint_decimals(mint_account)
         if protocol == "pumpfun_legacy":
-            decimals = _mint_decimals(_account(token_mint))
             virtual_tokens = decoded["virtual_token_reserves"] / (10 ** decimals)
             virtual_quote = decoded["virtual_quote_reserves"] / 1_000_000_000
             real_tokens = decoded["real_token_reserves"] / (10 ** decimals)
@@ -544,8 +564,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
                 raise ValueError("requested mint does not match Moonit curve mint")
             if decoded["curve_type"] != 1 or decoded["collateral_currency"] != 0:
                 raise ValueError("unsupported Moonit curve type or collateral currency")
-            decimals = decoded["token_decimals"]
-            if _mint_decimals(_account(token_mint)) != decimals:
+            if decimals != decoded["token_decimals"]:
                 raise ValueError("Moonit curve decimals disagree with mint account")
             total_supply, curve_amount = decoded["total_supply"], decoded["curve_amount"]
             if curve_amount <= 0 or total_supply <= curve_amount:
@@ -570,23 +589,44 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
             "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
             "marketSource": "solana_rpc_" + protocol,
             "poolAddress": pool_address, "onchainVerified": True,
-            "observedAt": time.time()
+            "snapshotSlot": snapshot_slot,
+            "observedAt": snapshot_observed_at,
+            "snapshotAgeSeconds": round(max(0.0, time.time() - snapshot_observed_at), 3)
         }
-        _cache[key] = {"time": time.time(), "data": result}
-        _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
+        _cache[key] = {"time": snapshot_observed_at, "data": result}
+        _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
         return result
 
     if protocol == "meteora_dbc":
         if decoded["base_mint"] != token_mint:
             raise ValueError("requested mint is not the Meteora DBC base mint")
-        config = _account(decoded["config"])
-        if config["owner"] != PROGRAMS["meteora_dbc"] or len(config["data"]) < 40:
+        config_first = _account(decoded["config"])
+        if config_first["owner"] != PROGRAMS["meteora_dbc"] or len(config_first["data"]) < 40:
             raise ValueError("invalid Meteora DBC PoolConfig account")
-        if config["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
+        if config_first["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
             raise ValueError("invalid Meteora DBC PoolConfig discriminator")
-        quote_mint = _key(config["data"], 8)
-        base_decimals = _mint_decimals(_account(decoded["base_mint"]))
-        quote_decimals = _mint_decimals(_account(quote_mint))
+        quote_mint = _key(config_first["data"], 8)
+        # Pool, config and both mints are read in one confirmed context.
+        dbc_accounts, snapshot_slot = _multiple_accounts_with_context(
+            [pool_address, decoded["config"], decoded["base_mint"], quote_mint]
+        )
+        pool_acc, config_acc, base_mint_acc, quote_mint_acc = dbc_accounts
+        if any(item is None for item in dbc_accounts):
+            raise ValueError("Meteora DBC snapshot is missing a required account")
+        if pool_acc["owner"] != PROGRAMS["meteora_dbc"]:
+            raise ValueError("Meteora DBC pool owner changed during snapshot")
+        if config_acc["owner"] != PROGRAMS["meteora_dbc"]:
+            raise ValueError("Meteora DBC config owner changed during snapshot")
+        decoded = _decode_pool("meteora_dbc", pool_acc["data"])
+        if decoded["status"] != "active":
+            raise ValueError("Meteora DBC pool is no longer active")
+        if config_acc["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
+            raise ValueError("Meteora DBC config changed to an unsupported layout")
+        if _key(config_acc["data"], 8) != quote_mint or decoded["base_mint"] != token_mint:
+            raise ValueError("Meteora DBC pool/config mint relationship changed")
+        snapshot_observed_at = time.time()
+        base_decimals = _mint_decimals(base_mint_acc)
+        quote_decimals = _mint_decimals(quote_mint_acc)
         quote_usd = _quote_usd(quote_mint)
         if quote_usd is None:
             return None
@@ -603,18 +643,38 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
             "baseToken": {"address": token_mint}, "quoteToken": {"address": quote_mint},
             "marketSource": "solana_rpc_meteora_dbc",
             "poolAddress": pool_address, "onchainVerified": True,
-            "observedAt": time.time()
+            "snapshotSlot": snapshot_slot,
+            "observedAt": snapshot_observed_at,
+            "snapshotAgeSeconds": round(max(0.0, time.time() - snapshot_observed_at), 3)
         }
-        _cache[key] = {"time": time.time(), "data": result}
-        _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
+        _cache[key] = {"time": snapshot_observed_at, "data": result}
+        _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
         return result
 
     if token_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("requested mint is not part of decoded pool")
-    vaults = _multiple_accounts([
-        decoded["vault_base"], decoded["vault_quote"],
+    # Re-fetch the pool state, vaults and mints in a single RPC context. The
+    # initial getAccountInfo is only for protocol/address discovery; it is
+    # never mixed with the later reserve snapshot used to publish a price.
+    snapshot_keys = [
+        pool_address, decoded["vault_base"], decoded["vault_quote"],
         decoded["base_mint"], decoded["quote_mint"]
-    ])
+    ]
+    snapshot_accounts, snapshot_slot = _multiple_accounts_with_context(snapshot_keys)
+    pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = snapshot_accounts
+    if any(item is None for item in snapshot_accounts):
+        raise ValueError("pool snapshot is missing its pool, vault or mint account")
+    if pool_acc["owner"] != PROGRAMS[protocol]:
+        raise ValueError("pool account owner changed during confirmed snapshot")
+    snapshot_decoded = _decode_pool(protocol, pool_acc["data"])
+    for field in ("base_mint", "quote_mint", "vault_base", "vault_quote"):
+        if snapshot_decoded.get(field) != decoded.get(field):
+            raise ValueError("pool account relationships changed during confirmed snapshot")
+    if snapshot_decoded["status"] != "active":
+        raise ValueError("pool swaps are disabled in the confirmed snapshot")
+    decoded = snapshot_decoded
+    snapshot_observed_at = time.time()
+    vaults = [vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc]
     base_amount = _token_amount(vaults[0], decoded["base_mint"]) / (10 ** _mint_decimals(vaults[2]))
     quote_amount = _token_amount(vaults[1], decoded["quote_mint"]) / (10 ** _mint_decimals(vaults[3]))
     if base_amount <= 0 or quote_amount <= 0:
@@ -645,10 +705,12 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _regi
         "marketSource": "solana_rpc_" + protocol,
         "poolAddress": pool_address,
         "onchainVerified": True,
-        "observedAt": time.time()
+        "snapshotSlot": snapshot_slot,
+        "observedAt": snapshot_observed_at,
+        "snapshotAgeSeconds": round(max(0.0, time.time() - snapshot_observed_at), 3)
     }
-    _cache[key] = {"time": time.time(), "data": result}
-    _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
+    _cache[key] = {"time": snapshot_observed_at, "data": result}
+    _last_status.update({"configured": True, "last_success": snapshot_observed_at, "last_error": None})
     return result
 
 
