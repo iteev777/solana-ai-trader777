@@ -12,6 +12,7 @@ import websocket
 
 import database
 from telegram_alerts import send_alert
+from copy_event_parser import parse_wallet_transaction
 
 _lock = threading.Lock()
 _thread = None
@@ -62,59 +63,11 @@ def _fetch_wallet_transaction(signature, wallet):
     if payload.get("error"):
         raise RuntimeError(str(payload["error"])[:200])
     tx = payload.get("result")
-    if not isinstance(tx, dict) or not isinstance(tx.get("meta"), dict):
+    if not isinstance(tx, dict):
         return None
-    meta = tx["meta"]
-    message = tx.get("transaction", {}).get("message", {})
-    keys = message.get("accountKeys", [])
-    wallet_index = next((
-        index for index, item in enumerate(keys)
-        if (item.get("pubkey") if isinstance(item, dict) else item) == wallet
-    ), None)
-    sol_delta = None
-    if wallet_index is not None:
-        before, after = meta.get("preBalances", []), meta.get("postBalances", [])
-        if wallet_index < len(before) and wallet_index < len(after):
-            sol_delta = (float(after[wallet_index]) - float(before[wallet_index])) / 1e9
-    token_deltas = {}
-    for side, sign in (("preTokenBalances", -1), ("postTokenBalances", 1)):
-        for item in meta.get(side, []) or []:
-            if item.get("owner") != wallet:
-                continue
-            mint = item.get("mint")
-            ui_amount = item.get("uiTokenAmount", {})
-            amount = ui_amount.get("uiAmount")
-            if amount is None:
-                amount = ui_amount.get("uiAmountString")
-            if mint and amount is not None:
-                token_deltas[mint] = token_deltas.get(mint, 0.0) + sign * float(amount)
-    token_deltas = {mint: delta for mint, delta in token_deltas.items() if abs(delta) > 1e-12}
-    if not token_deltas:
-        return None
-    quote_mints = {
-        "So11111111111111111111111111111111111111112",
-        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
-    }
-    quote_delta = sum(delta for mint, delta in token_deltas.items() if mint in quote_mints)
-    traded = {mint: delta for mint, delta in token_deltas.items() if mint not in quote_mints}
-    if not traded:
-        return None
-    mint, delta = max(traded.items(), key=lambda item: abs(item[1]))
-    # Detect quote-token flow as well as SOL; ignore tiny SOL fee movements.
-    if delta > 0 and ((sol_delta is not None and sol_delta < -0.0001) or quote_delta < 0):
-        action = "BUY"
-    elif delta < 0 and ((sol_delta is not None and sol_delta > 0.0001) or quote_delta > 0):
-        action = "SELL"
-    else:
-        action = "TOKEN TRANSFER / UNKNOWN"
-    return {
-        "wallet": wallet, "signature": signature, "action": action,
-        "token_mint": mint, "token_delta": delta, "sol_delta": sol_delta,
-        "block_time": tx.get("blockTime"),
-        "received_at": time.time(),
-        "logs": (meta.get("logMessages") or [])[-5:]
-    }
+    return parse_wallet_transaction(
+        tx, wallet, signature=signature, received_at=time.time()
+    )
 
 
 def _monitor_loop():
@@ -175,7 +128,13 @@ def _monitor_loop():
                 inserted = database.record_copy_trade_event(
                     event["wallet"], event["signature"], event["action"],
                     event["token_mint"], event["token_delta"], event["sol_delta"],
-                    json.dumps({"logs": event["logs"]})
+                    json.dumps({
+                        "logs": event["logs"],
+                        "classification_reason": event.get("classification_reason"),
+                        "economic_sol_delta": event.get("economic_sol_delta"),
+                        "quote_delta": event.get("quote_delta"),
+                        "invoked_programs": event.get("invoked_programs", [])
+                    })
                 )
                 if not inserted:
                     continue
@@ -196,6 +155,7 @@ def _monitor_loop():
                         str(round(event["sol_delta"], 6))
                         if event["sol_delta"] is not None else "n/a"
                     )
+                    + "\nClassification: " + event.get("classification_reason", "unknown")
                     + "\nSignature: " + signature
                 )
         except Exception as error:
