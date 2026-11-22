@@ -5,6 +5,7 @@
 import requests
 
 from api_client import get_json
+from market_data import normalize_gecko_pool
 
 
 API_URL = (
@@ -121,13 +122,17 @@ def scan_new_pools():
 
             seen_in_scan.add(token_address)
 
-            found_tokens.append({
+            market_snapshot = normalize_gecko_pool(pool)
+            candidate = {
                 "tokenAddress": token_address,
                 "chainId": "solana",
                 "poolAddress": pool_address,
                 "poolName": attributes.get("name"),
                 "discovery_sources": ["geckoterminal"]
-            })
+            }
+            if market_snapshot and market_snapshot.get("baseToken", {}).get("address") == token_address:
+                candidate["market_data"] = market_snapshot
+            found_tokens.append(candidate)
 
         print("================================")
         print("TROJAN V2 GECKOTERMINAL")
