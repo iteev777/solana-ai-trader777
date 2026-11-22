@@ -538,7 +538,7 @@ main{max-width:1440px;padding-top:16px}
 
 </style></head><body>
 <header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
-<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadAll()">Refresh</button></div></header>
+<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadHome();loadWallet()">Refresh</button></div></header>
 <main id="overview"><section class="app-view active" id="view-home"><div class="grid">
 <div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric wallet-metric"><small>Phantom wallet · SOL</small><strong id="wallet-sol">—</strong><span class="sub" id="wallet-usd">Loading wallet…</span></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
