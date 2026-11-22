@@ -57,6 +57,7 @@ def calculate_indicators(candles):
     ema9 = ema(closes[-60:], 9)
     ema21 = ema(closes[-100:], 21)
     previous_high = max(row["high"] for row in rows[-21:-1])
+    previous_low = min(row["low"] for row in rows[-21:-1])
     volume_base = sum(volumes[-21:-1]) / 20
     volume_spike = volumes[-1] / volume_base if volume_base > 0 else None
     current_close = closes[-1]
@@ -133,7 +134,9 @@ def calculate_indicators(candles):
         "ema_21": ema21,
         "ema_cross_bullish": ema9 > ema21,
         "breakout_20": current_close > previous_high,
+        "breakdown_20": current_close < previous_low,
         "previous_high_20": previous_high,
+        "previous_low_20": previous_low,
         "volume_spike_ratio": round(volume_spike, 3) if volume_spike is not None else None,
         "volume_spike": volume_spike is not None and volume_spike >= 2.0,
         "candle_body_pct": round(candle_body_pct, 5),
