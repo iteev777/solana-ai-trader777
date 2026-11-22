@@ -25,10 +25,11 @@ CACHE_TTL = 10
 MAX_CACHE_ENTRIES = 2000
 
 BATCH_WAIT_SECONDS = 0.15
+
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 1
 
-WAIT_TIMEOUT = REQUEST_TIMEOUT + 20
+WAIT_TIMEOUT = 45
 
 
 # ==========================================
@@ -41,6 +42,7 @@ _cache_lock = threading.Lock()
 _batch_condition = threading.Condition()
 
 _pending_addresses = OrderedDict()
+_inflight_addresses = {}
 
 _batch_thread = None
 _batch_thread_lock = threading.Lock()
@@ -76,7 +78,11 @@ def safe_float(value):
 
         return number
 
-    except (ValueError, TypeError, OverflowError):
+    except (
+        ValueError,
+        TypeError,
+        OverflowError
+    ):
 
         return None
 
@@ -337,7 +343,6 @@ def batch_worker():
 
                 _batch_condition.wait()
 
-            # Allow concurrent requests to join the batch.
             deadline = (
                 time.monotonic()
                 + BATCH_WAIT_SECONDS
@@ -369,11 +374,17 @@ def batch_worker():
 
             for address in addresses:
 
-                waiters[address] = (
+                address_waiters = (
                     _pending_addresses.pop(address)
                 )
 
-        # Network request outside the condition lock.
+                waiters[address] = address_waiters
+
+                _inflight_addresses[address] = (
+                    address_waiters
+                )
+
+        # Network request outside the lock.
         try:
 
             results = fetch_batch(addresses)
@@ -388,20 +399,34 @@ def batch_worker():
 
             results = {}
 
-        # Notify every caller waiting for each address.
-        for address in addresses:
+        # Resolve all callers, including callers
+        # that joined while the request was running.
+        with _batch_condition:
 
-            result = results.get(address)
+            for address in addresses:
 
-            for event, result_holder in waiters[address]:
-
-                result_holder["data"] = (
-                    copy.deepcopy(result)
-                    if isinstance(result, dict)
-                    else None
+                address_waiters = (
+                    _inflight_addresses.pop(
+                        address,
+                        []
+                    )
                 )
 
-                event.set()
+                result = results.get(address)
+
+                for event, result_holder in (
+                    address_waiters
+                ):
+
+                    result_holder["data"] = (
+                        copy.deepcopy(result)
+                        if isinstance(result, dict)
+                        else None
+                    )
+
+                    event.set()
+
+            _batch_condition.notify_all()
 
 
 # ==========================================
@@ -445,8 +470,8 @@ def request_addresses(addresses):
 
     start_batch_worker()
 
-    waiters = {}
     results = {}
+    waiters = {}
 
     # Check cache first.
     missing = []
@@ -466,37 +491,53 @@ def request_addresses(addresses):
     if not missing:
         return results
 
-    # Enqueue all missing addresses together.
+    # Register all requests together.
     with _batch_condition:
 
         for address in missing:
 
-            event = threading.Event()
+            # Another request is already fetching
+            # this token. Join that request.
+            if address in _inflight_addresses:
 
-            result_holder = {
-                "data": None
-            }
+                event = threading.Event()
+
+                result_holder = {
+                    "data": None
+                }
+
+                _inflight_addresses[address].append(
+                    (event, result_holder)
+                )
+
+            else:
+
+                event = threading.Event()
+
+                result_holder = {
+                    "data": None
+                }
+
+                if address in _pending_addresses:
+
+                    _pending_addresses[address].append(
+                        (event, result_holder)
+                    )
+
+                else:
+
+                    _pending_addresses[address] = [
+                        (event, result_holder)
+                    ]
 
             waiters[address] = (
                 event,
                 result_holder
             )
 
-            if address in _pending_addresses:
-
-                _pending_addresses[address].append(
-                    (event, result_holder)
-                )
-
-            else:
-
-                _pending_addresses[address] = [
-                    (event, result_holder)
-                ]
-
         _batch_condition.notify_all()
 
-    # Wait for all requested addresses.
+    # Use one shared deadline for this call.
     deadline = (
         time.monotonic() + WAIT_TIMEOUT
     )
@@ -526,7 +567,9 @@ def request_addresses(addresses):
         result = result_holder.get("data")
 
         if isinstance(result, dict):
-            results[address] = copy.deepcopy(result)
+            results[address] = copy.deepcopy(
+                result
+            )
 
     return results
 
@@ -593,6 +636,10 @@ def get_market_data_status():
             _pending_addresses
         )
 
+        inflight_count = len(
+            _inflight_addresses
+        )
+
     with _batch_thread_lock:
 
         worker_running = (
@@ -603,6 +650,7 @@ def get_market_data_status():
     return {
         "cache_entries": cache_entries,
         "pending_addresses": pending_count,
+        "inflight_addresses": inflight_count,
         "max_batch_size": MAX_BATCH_SIZE,
         "cache_ttl": CACHE_TTL,
         "batch_wait_seconds": BATCH_WAIT_SECONDS,
@@ -624,4 +672,5 @@ if __name__ == "__main__":
     print("BATCH SIZE:", MAX_BATCH_SIZE)
     print("CACHE TTL:", CACHE_TTL)
     print("BATCH WAIT:", BATCH_WAIT_SECONDS)
+    print("WAIT TIMEOUT:", WAIT_TIMEOUT)
     print("================================")
