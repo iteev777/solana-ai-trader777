@@ -1,0 +1,251 @@
+import hmac
+import os
+import threading
+from datetime import datetime, timezone
+
+from flask import Flask, Response, jsonify, request
+from werkzeug.serving import make_server
+
+import database
+
+app = Flask(__name__)
+_server = None
+_server_thread = None
+_server_lock = threading.Lock()
+
+
+def _authorized():
+    expected = os.getenv("TROJAN_DASHBOARD_TOKEN", "")
+    if not expected:
+        return False
+    auth = request.authorization
+    supplied = auth.password if auth and auth.password else ""
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+@app.before_request
+def require_dashboard_auth():
+    if not _authorized():
+        return Response(
+            "Dashboard authentication required",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Trojan V2 Dashboard"'}
+        )
+
+
+def _rows(query, params=()):
+    with database.connect() as connection:
+        return [
+            dict(row)
+            for row in connection.execute(query, params).fetchall()
+        ]
+
+
+def _runtime():
+    try:
+        import main
+        return {
+            "pending_analyses": len(main.pending_tasks),
+            "discovery_pending": len(main.pending_discovery_tokens),
+            "sniper_pending": len(main.pending_sniper_tokens),
+            "seen_tokens": len(main.seen_tokens),
+            "last_scan_time": main.last_scan_time,
+            "position_check_interval": main.POSITION_CHECK_INTERVAL,
+            "scan_interval": main.SCAN_INTERVAL,
+        }
+    except Exception as error:
+        return {"runtime_status": "unavailable", "error": str(error)[:180]}
+
+
+def _positions():
+    import paper_trading as paper
+    import main
+
+    result = []
+    for address, position in paper.get_positions().items():
+        entry = float(position.get("entry_price") or 0)
+        current = main.last_prices.get(address)
+        current = float(current) if current else None
+        roi = ((current / entry) - 1) * 100 if current and entry > 0 else None
+        result.append({
+            "token": address,
+            "strategy": position.get("strategy", "main"),
+            "entry_price": entry,
+            "current_price": current,
+            "invested": float(position.get("invested") or 0),
+            "roi_percent": round(roi, 2) if roi is not None else None,
+            "opened_at": position.get("opened_at"),
+            "peak_price": (position.get("metadata") or {}).get("peak_price"),
+        })
+    return result
+
+
+@app.get("/")
+def dashboard_home():
+    return Response(_HTML, mimetype="text/html")
+
+
+@app.get("/api/overview")
+def api_overview():
+    import trading_manager as manager
+    import risk_manager
+    from api_client import get_api_status
+    from market_data import get_market_data_status
+
+    account = manager.get_account_summary("paper")
+    stats = database.get_trade_stats("paper")
+    positions = _positions()
+
+    with database.connect() as connection:
+        trade_count = connection.execute(
+            "SELECT COUNT(*) FROM trades WHERE mode='paper'"
+        ).fetchone()[0]
+        event_count = connection.execute(
+            "SELECT COUNT(*) FROM bot_events"
+        ).fetchone()[0]
+
+    return jsonify({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": "PAPER TRADING",
+        "live_execution": "LOCKED",
+        "account": account,
+        "stats": stats,
+        "risk": risk_manager.get_risk_summary(),
+        "positions": positions,
+        "position_count": len(positions),
+        "trade_rows": trade_count,
+        "event_rows": event_count,
+        "runtime": _runtime(),
+        "market_data": get_market_data_status(),
+        "api": get_api_status(),
+    })
+
+
+@app.get("/api/trades")
+def api_trades():
+    limit = min(max(request.args.get("limit", 50, type=int), 1), 200)
+    return jsonify(_rows(
+        """SELECT id, token_address, action, price, amount, profit_loss,
+                  timestamp, strategy
+           FROM trades WHERE mode='paper'
+           ORDER BY id DESC LIMIT ?""",
+        (limit,)
+    ))
+
+
+@app.get("/api/events")
+def api_events():
+    limit = min(max(request.args.get("limit", 80, type=int), 1), 250)
+    return jsonify(_rows(
+        """SELECT id, event_type, message, token_address, timestamp
+           FROM bot_events ORDER BY id DESC LIMIT ?""",
+        (limit,)
+    ))
+
+
+@app.get("/api/health")
+def api_health():
+    return jsonify({
+        "status": "ok",
+        "database": os.path.basename(database.DATABASE),
+        "live_execution": "locked",
+        "dashboard": "read-only",
+    })
+
+
+_HTML = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#090e1b"><title>Trojan V2 Command Center</title>
+<style>
+:root{color-scheme:dark;--bg:#090e1b;--panel:#111a2b;--line:#24324a;--muted:#91a0b8;--text:#edf3ff;--green:#37d6a0;--red:#ff6d7a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 10% 0,#14213a 0,var(--bg) 42%);color:var(--text);font:14px Inter,system-ui,-apple-system,sans-serif}
+header{padding:22px clamp(16px,4vw,42px);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+h1{font-size:20px;margin:0;letter-spacing:.04em}.sub{color:var(--muted);font-size:12px;margin-top:5px}
+.pill{border:1px solid #236b58;color:var(--green);padding:7px 11px;border-radius:30px;font-size:11px;font-weight:700;letter-spacing:.08em}
+main{max-width:1400px;margin:auto;padding:22px clamp(12px,3vw,34px) 50px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.panel,.metric{background:linear-gradient(145deg,#131e31,#0f1727);border:1px solid var(--line);border-radius:14px}
+.metric{padding:16px}.metric small{color:var(--muted);display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em}.metric strong{display:block;font-size:25px;margin-top:9px;font-variant-numeric:tabular-nums}
+.section{margin-top:18px;padding:17px}.section h2{font-size:14px;margin:0 0 14px;letter-spacing:.04em}
+.split{display:grid;grid-template-columns:1.2fr .8fr;gap:12px;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:600;padding:9px 8px;border-bottom:1px solid var(--line)}td{padding:10px 8px;border-bottom:1px solid #1b2940;vertical-align:top}
+.token{max-width:210px;overflow-wrap:anywhere;color:#b9d3ff}.good{color:var(--green)}.bad{color:var(--red)}.muted{color:var(--muted)}
+.health{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}.health div{padding:11px;background:#0b1423;border:1px solid var(--line);border-radius:9px}.health b{display:block;font-size:12px;margin-bottom:5px}
+.actions{display:flex;align-items:center;gap:10px}.refresh{background:#1c3152;border:1px solid #35527c;color:var(--text);padding:8px 12px;border-radius:8px}
+footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
+@media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.split{grid-template-columns:1fr}}
+@media(max-width:480px){.metric strong{font-size:21px}.section{padding:12px}table{font-size:11px}}
+</style></head><body>
+<header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
+<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadAll()">Refresh</button></div></header>
+<main><div class="grid">
+<div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
+<div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
+<div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
+<div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
+<div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th></tr></thead><tbody id="positions"></tbody></table></div></section>
+<section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
+<section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+<section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section>
+</main><footer>Read-only dashboard · no wallet keys · no live trade controls · Trojan V2</footer>
+<script>
+const fmt=(v,n=2)=>v===null||v===undefined?'—':Number(v).toFixed(n);
+const usd=v=>v===null||v===undefined?'—':'$'+fmt(v);
+const short=v=>v?String(v).slice(0,6)+'…'+String(v).slice(-5):'—';
+const time=v=>v?new Date(v).toLocaleTimeString():'—';
+async function get(path){const r=await fetch(path);if(r.status===401){document.body.innerHTML='<main><h2>Authentication required</h2><p>Reload and sign in using your dashboard token.</p></main>';throw Error('auth');}if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
+async function loadAll(){try{
+const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45')]);
+const o=data[0],t=data[1],e=data[2],a=o.account,s=o.stats;
+document.getElementById('balance').textContent=usd(a.balance);
+document.getElementById('pnl').textContent=usd(s.total_profit);
+document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
+document.getElementById('winrate').textContent=fmt(s.win_rate,1)+'%';
+document.getElementById('open').textContent=o.position_count;
+document.getElementById('daily').textContent=usd(a.daily_realized_pnl);
+document.getElementById('loss').textContent=usd(a.daily_loss)+' / '+usd(o.risk.max_daily_loss);
+document.getElementById('closed').textContent=s.total_trades;
+document.getElementById('invested').textContent=usd(a.invested);
+document.getElementById('positions').innerHTML=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+p.token+'</td><td>'+p.strategy+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No open positions</td></tr>';
+const m=o.market_data,r=o.runtime;
+const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
+document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
+document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
+document.getElementById('trades').innerHTML=t.length?t.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td class="'+(x.action==='SELL'?'bad':'good')+'">'+x.action+'</td><td class="token">'+short(x.token_address)+'</td><td>'+fmt(x.price,8)+'</td><td>'+usd(x.amount)+'</td><td class="'+(x.profit_loss>=0?'good':'bad')+'">'+usd(x.profit_loss)+'</td><td>'+x.strategy+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No trades recorded</td></tr>';
+document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+x.event_type+'</td><td>'+(x.message||'').slice(0,180)+'</td><td class="token">'+short(x.token_address)+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';
+}catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}}
+loadAll();setInterval(loadAll,5000);
+</script></body></html>"""
+
+
+def start_dashboard():
+    global _server, _server_thread
+
+    if not os.getenv("TROJAN_DASHBOARD_TOKEN"):
+        print(
+            "[TROJAN V2] DASHBOARD DISABLED: set TROJAN_DASHBOARD_TOKEN",
+            flush=True
+        )
+        return False
+
+    with _server_lock:
+        if _server_thread and _server_thread.is_alive():
+            return True
+
+        host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+        port = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080")))
+        _server = make_server(host, port, app, threaded=True)
+        _server_thread = threading.Thread(
+            target=_server.serve_forever,
+            name="trojan-dashboard",
+            daemon=True
+        )
+        _server_thread.start()
+
+    print(
+        "[TROJAN V2] DASHBOARD STARTED | HOST: "
+        + host + " | PORT: " + str(port)
+        + " | AUTH: BASIC TOKEN | MODE: READ ONLY",
+        flush=True
+    )
+    return True
