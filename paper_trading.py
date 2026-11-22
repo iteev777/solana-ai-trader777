@@ -167,7 +167,7 @@ def open_position(
             "| PRICE:",
             entry_price,
             "| SIZE:",
-            TRADE_SIZE,
+            position_size,
             "| BALANCE:",
             round(balance, 2)
         )
