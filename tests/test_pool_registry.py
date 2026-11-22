@@ -137,6 +137,57 @@ class MultiSourcePoolRegistryTests(unittest.TestCase):
             [native] * pool_registry.DEXSCREENER_TOKEN_PAIRS_CAP
         ))
 
+    def test_full_dexscreener_pool_list_merges_all_pairs_and_skips_gecko_when_complete(self):
+        native = {
+            "pairAddress": "native-pool",
+            "baseToken": {"address": TOKEN},
+            "quoteToken": {"address": WSOL},
+            "priceUsd": "0.01",
+            "liquidity": {"usd": 100000, "quote": 500},
+            "volume": {"h24": 50000},
+        }
+        stable = {
+            "pairAddress": "stable-pool",
+            "baseToken": {"address": TOKEN},
+            "quoteToken": {"address": USDC},
+            "priceUsd": "0.01",
+            "liquidity": {"usd": 200000},
+            "volume": {"h24": 70000},
+        }
+        with patch.object(pool_registry, "get_json", return_value=[native, stable]), \
+             patch.object(pool_registry, "enqueue_gecko_pool_fetch") as gecko, \
+             patch.object(market_data, "refresh_market_data_from_pool_registry",
+                          return_value={"pairAddress": "native-pool"}):
+            result = pool_registry.fetch_dexscreener_token_pools(TOKEN)
+        self.assertEqual(result["received"], 2)
+        self.assertEqual(result["usable"], 2)
+        self.assertFalse(result["incomplete"])
+        self.assertEqual(len(pool_registry.get_pool_candidates(TOKEN)), 2)
+        gecko.assert_not_called()
+
+    def test_full_dexscreener_list_without_native_pool_enqueues_gecko_completion(self):
+        stable = {
+            "pairAddress": "stable-only",
+            "baseToken": {"address": TOKEN},
+            "quoteToken": {"address": USDC},
+            "priceUsd": "0.01",
+            "liquidity": {"usd": 100000},
+        }
+        with patch.object(pool_registry, "get_json", return_value=[stable]), \
+             patch.object(pool_registry, "enqueue_gecko_pool_fetch", return_value=True) as gecko, \
+             patch.object(market_data, "refresh_market_data_from_pool_registry", return_value=None):
+            result = pool_registry.fetch_dexscreener_token_pools(TOKEN)
+        self.assertTrue(result["incomplete"])
+        gecko.assert_called_once_with(TOKEN)
+
+    def test_dex_full_pool_refresh_has_a_sixty_second_ttl(self):
+        with patch.object(pool_registry.time, "time", return_value=100.0):
+            self.assertTrue(pool_registry.needs_dexscreener_refresh(TOKEN))
+            pool_registry._full_refresh_at[TOKEN] = 100.0
+            self.assertFalse(pool_registry.needs_dexscreener_refresh(TOKEN))
+        with patch.object(pool_registry.time, "time", return_value=161.0):
+            self.assertTrue(pool_registry.needs_dexscreener_refresh(TOKEN))
+
     def test_gecko_fetch_merges_candidates_and_refreshes_canonical_cache(self):
         payload = {"data": [gecko_pool(WSOL, TOKEN)]}
         with patch.object(pool_registry, "get_json", return_value=payload), \
