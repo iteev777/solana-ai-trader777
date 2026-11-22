@@ -496,12 +496,18 @@ def check_rpc_health(force=False):
 
 def get_onchain_status():
     healthy, error = check_rpc_health()
+    try:
+        from onchain_stream import get_stream_status
+        stream = get_stream_status()
+    except Exception as stream_error:
+        stream = {"running": False, "last_error": str(stream_error)[:120]}
     return {
         **_last_status,
         "supported_protocols": sorted(list(PROGRAMS.keys()) + ["raydium_auto"]),
         "rpc_configured": bool(RPC_URL),
         "rpc_healthy": healthy,
-        "rpc_error": error
+        "rpc_error": error,
+        "price_stream": stream
     }
 
 
