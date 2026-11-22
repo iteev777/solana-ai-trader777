@@ -78,6 +78,76 @@ def calculate_indicators(candles):
     }
 
 
+
+def aggregate_candles(candles, interval_seconds):
+    """Aggregate 1m OHLCV rows into a larger timeframe without look-ahead."""
+    interval_seconds = int(interval_seconds)
+    if interval_seconds < 60 or interval_seconds % 60:
+        raise ValueError("Timeframe must be a whole number of minutes")
+    buckets = {}
+    for item in _normalize(candles):
+        timestamp = int(item["timestamp"])
+        bucket = timestamp - (timestamp % interval_seconds)
+        current = buckets.get(bucket)
+        if current is None:
+            buckets[bucket] = {
+                "timestamp": bucket, "open": item["open"],
+                "high": item["high"], "low": item["low"],
+                "close": item["close"], "volume": item["volume"]
+            }
+        else:
+            current["high"] = max(current["high"], item["high"])
+            current["low"] = min(current["low"], item["low"])
+            current["close"] = item["close"]
+            current["volume"] += item["volume"]
+    return [
+        [row["timestamp"], row["open"], row["high"], row["low"],
+         row["close"], row["volume"]]
+        for _, row in sorted(buckets.items())
+    ]
+
+
+TIMEFRAMES = {
+    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
+    "30m": 1800, "1h": 3600, "4h": 14400
+}
+
+
+def calculate_multi_timeframe_indicators(candles):
+    """Calculate seven timeframe views from the same ordered 1m source candles.
+
+    Higher timeframes remain explicitly not-ready until enough complete
+    aggregate candles exist; no synthetic history or forward filling is used.
+    """
+    frames = {}
+    ready_trends = []
+    for name, seconds in TIMEFRAMES.items():
+        aggregated = candles if name == "1m" else aggregate_candles(candles, seconds)
+        result = calculate_indicators(aggregated)
+        result["timeframe"] = name
+        frames[name] = result
+        if result.get("ready"):
+            ready_trends.append(result.get("trend"))
+    bullish = sum(1 for trend in ready_trends if trend == "bullish")
+    bearish = sum(1 for trend in ready_trends if trend == "bearish")
+    consensus = (
+        "bullish" if bullish > bearish else
+        "bearish" if bearish > bullish else
+        "mixed" if ready_trends else "unavailable"
+    )
+    primary = frames["1m"]
+    return {
+        **primary,
+        "timeframes": frames,
+        "timeframe_ready_count": len(ready_trends),
+        "timeframe_count": len(TIMEFRAMES),
+        "trend_consensus": consensus,
+        "bullish_timeframes": bullish,
+        "bearish_timeframes": bearish,
+        "source": "geckoterminal_ohlcv_multi_timeframe"
+    }
+
+
 def fetch_pool_indicators(pool_address, force=False):
     global _last_fetch
     if not pool_address:
@@ -113,7 +183,7 @@ def fetch_pool_indicators(pool_address, force=False):
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         attributes = data.get("attributes", {}) if isinstance(data, dict) else {}
         raw = attributes.get("ohlcv_list", [])
-        indicators = calculate_indicators(raw)
+        indicators = calculate_multi_timeframe_indicators(raw)
         indicators["pool_address"] = key
         _cache[key] = {"time": time.time(), "data": indicators}
         if indicators.get("ready"):
