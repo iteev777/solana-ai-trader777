@@ -121,7 +121,7 @@ class OnchainDecoderTests(unittest.TestCase):
                 quote_raydium_cpmm_pool("pool", "mint", 1000)
 
     def test_raydium_cpmm_pool_layout(self):
-        raw = bytearray(400)
+        raw = bytearray(420)
         raw[:8] = _discriminator("PoolState")
         put_key(raw, 72, 1)
         put_key(raw, 104, 2)
