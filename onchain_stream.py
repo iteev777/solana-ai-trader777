@@ -257,11 +257,22 @@ def _run():
             account_cache = {}
             subscription_retry_after = {}
             request_id = 1
+            next_batch_poll = 0.0
             with _lock:
                 _status.update({"running": True, "configured": True, "last_error": None})
             while True:
                 with _lock:
                     current = _active_watch_keys_locked()
+                    now_mono = time.monotonic()
+                    poll_due = bool(current) and now_mono >= next_batch_poll
+                    batch_keys = None
+                    if current and not _batch_refreshing and (_dirty_pools or poll_due):
+                        batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
+                        _dirty_pools.difference_update(batch_keys)
+                        _batch_refreshing = True
+                        next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
+                if batch_keys:
+                    _batch_refresh_pool.submit(_refresh_many, batch_keys)
 
                 # Remove every pool's state and reserve subscriptions when it leaves
                 # both the position set and the candidate LRU.
@@ -294,7 +305,7 @@ def _run():
                 for key in current:
                     if key not in account_cache:
                         try:
-                            accounts = get_pool_watch_accounts(key[0], key[1])
+                            accounts = get_pool_watch_accounts(key[0], key[1], key[2])
                             if not accounts:
                                 raise ValueError("pool returned no watchable accounts")
                             account_cache[key] = accounts
@@ -349,8 +360,9 @@ def _run():
                     key = pair[0]
                     with _lock:
                         _status["notifications"] += 1
-                    if should_refresh_pool(key):
-                        _refresh_pool.submit(_refresh, key)
+                        if key in _dirty_pools:
+                            _status["coalesced_notifications"] += 1
+                        _dirty_pools.add(key)
             delay = 1
         except Exception as error:
             with _lock:
