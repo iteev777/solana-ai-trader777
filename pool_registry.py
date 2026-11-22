@@ -20,6 +20,7 @@ MAX_TOKENS = 5000
 MAX_POOLS_PER_TOKEN = 50
 MAX_PENDING_GECKO_REQUESTS = 500
 CACHE_TTL_SECONDS = 60
+POOL_STALE_TTL_SECONDS = 300
 
 _lock = threading.RLock()
 _candidates = OrderedDict()
@@ -111,8 +112,14 @@ def merge_pool_candidates(mint, pairs, source):
 def get_pool_candidates(mint):
     if not isinstance(mint, str) or not mint.strip():
         return []
+    normalized = mint.strip()
     with _lock:
-        rows = _candidates.get(mint.strip())
+        updated_at = _candidate_updated_at.get(normalized, 0.0)
+        if updated_at and time.time() - updated_at > POOL_STALE_TTL_SECONDS:
+            _candidates.pop(normalized, None)
+            _candidate_updated_at.pop(normalized, None)
+            return []
+        rows = _candidates.get(normalized)
         return [copy.deepcopy(value) for value in rows.values()] if rows else []
 
 
