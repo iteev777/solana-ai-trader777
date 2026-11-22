@@ -151,7 +151,7 @@ def analyze_token(token, strategy="main"):
             return reject("Pair creation timestamp is in the future")
         age_minutes = (current_ms - pair_created) / 60000
         if age_minutes < MIN_TOKEN_AGE_MINUTES[strategy]:
-            return reject("Trading pair too new")
+            return watch("New pair; waiting until minimum age is reached")
 
     buy_ratio = buys / total_transactions
     sources = get_discovery_sources(token)
