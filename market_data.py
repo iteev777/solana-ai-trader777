@@ -264,12 +264,19 @@ def normalize_gecko_pool(pool, requested_mint=None):
 
     if token_is_base:
         token_address, counter_address = base_address, quote_address
-        price = safe_float(attributes.get("base_token_price_usd"))
-        price_native = safe_float(attributes.get("base_token_price_native_currency"))
+        price_raw = attributes.get("base_token_price_usd")
+        price_native_raw = attributes.get("base_token_price_native_currency")
     else:
         token_address, counter_address = quote_address, base_address
-        price = safe_float(attributes.get("quote_token_price_usd"))
-        price_native = safe_float(attributes.get("quote_token_price_native_currency"))
+        price_raw = attributes.get("quote_token_price_usd")
+        price_native_raw = attributes.get("quote_token_price_native_currency")
+    price = safe_float(price_raw)
+    price_native = safe_float(price_native_raw)
+    price_text = str(price_raw).strip() if isinstance(price_raw, (str, int, float)) else str(price)
+    price_native_text = (
+        str(price_native_raw).strip()
+        if isinstance(price_native_raw, (str, int, float)) else None
+    )
 
     reserve = safe_float(attributes.get("reserve_in_usd"))
     if price is None or price <= 0 or reserve is None or reserve < 0:
@@ -305,8 +312,8 @@ def normalize_gecko_pool(pool, requested_mint=None):
             {"address": counter_address, "name": "Unknown", "symbol": "Unknown"}
             if counter_address else {}
         ),
-        "priceUsd": str(price),
-        "priceNative": str(price_native) if price_native is not None and price_native > 0 else None,
+        "priceUsd": price_text,
+        "priceNative": price_native_text if price_native is not None and price_native > 0 else None,
         "liquidity": {"usd": reserve},
         "volume": {"m5": safe_float(volumes.get("m5")), "h24": safe_float(volumes.get("h24"))},
         "priceChange": {
