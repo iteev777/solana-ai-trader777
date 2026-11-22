@@ -184,7 +184,11 @@ def get_config():
             import database
             saved = database.get_strategy_configs()
             for name, item in saved.items():
-                config[name] = item.get("config")
+                saved_rule = item.get("config")
+                if saved_rule == {}:
+                    config.pop(name, None)
+                else:
+                    config[name] = saved_rule
         except Exception:
             pass
         validate_rules_config(config)
