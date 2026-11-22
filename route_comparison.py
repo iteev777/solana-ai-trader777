@@ -174,7 +174,7 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_addr
     if pool_address:
         try:
             import solana_onchain
-            direct = solana_onchain.quote_raydium_cpmm_pool(
+            direct = solana_onchain.quote_direct_pool(
                 pool_address, input_mint, amount, slip
             )
             results["direct_pool"] = {
@@ -186,11 +186,11 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_addr
                 "price_impact_percent": direct["price_impact_percent"],
                 "slot": direct["slot"],
                 "pool_id": direct["pool_id"],
-                "creator_fee_on_input": direct["creator_fee_on_input"],
+                "creator_fee_on_input": direct.get("creator_fee_on_input"),
                 "fee_amounts": {
-                    "trade": direct["trade_fee_amount"],
-                    "creator_input": direct["creator_fee_input_amount"],
-                    "creator_output": direct["creator_fee_output_amount"],
+                    "trade": direct.get("trade_fee_amount", direct.get("trade_fee_amount")),
+                    "creator_input": direct.get("creator_fee_input_amount", 0),
+                    "creator_output": direct.get("creator_fee_output_amount", 0),
                 },
                 "execution": "DISABLED",
             }
@@ -198,9 +198,9 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_addr
             results["direct_pool"] = _failed("raydium_cpmm_direct", error)
     else:
         results["direct_pool"] = {
-            "provider": "raydium_cpmm_direct",
+            "provider": "solana_direct_pool",
             "status": "POOL_ADDRESS_REQUIRED",
-            "reason": "Pass pool_address to request a native Raydium CPMM quote.",
+            "reason": "Pass pool_address to request a supported native Solana pool quote.",
             "out_amount": None,
             "minimum_out_amount": None,
         }
@@ -231,13 +231,13 @@ def get_router_status():
         "jupiter": {"available": True, "mode": "quote_only"},
         "raptor": {"available": True, "endpoint": RAPTOR_BASE_URL, "mode": "quote_only"},
         "direct_pool": {
-            "available": False,
-            "mode": "not_implemented",
+            "available": True,
+            "mode": "read_only_partial",
             "supported_protocol_decoders": [
                 "Raydium CPMM", "Orca Whirlpool", "Meteora", "PumpSwap",
                 "Pump.fun bonding curve", "FluxBeam", "Moonit"
             ],
-            "quote_adapters": ["Raydium CPMM"],
+            "quote_adapters": ["Raydium CPMM", "Raydium AMM v4"],
             "requires_pool_address": True,
         },
         "execution_locked": True,

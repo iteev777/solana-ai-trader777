@@ -177,9 +177,18 @@ def _decode_pool(protocol, raw):
         status = _u64(raw, 0)
         if status not in (1, 6, 7):
             raise ValueError("Raydium AMM v4 pool status does not allow swaps")
+        swap_fee_numerator = _u64(raw, 176)
+        swap_fee_denominator = _u64(raw, 184)
+        if swap_fee_denominator <= 0 or swap_fee_numerator >= swap_fee_denominator:
+            raise ValueError("Raydium AMM v4 swap fee configuration is invalid")
         return {
             "vault_base": _key(raw, 336), "vault_quote": _key(raw, 368),
             "base_mint": _key(raw, 400), "quote_mint": _key(raw, 432),
+            "swap_fee_numerator": swap_fee_numerator,
+            "swap_fee_denominator": swap_fee_denominator,
+            "need_take_pnl_base": _u64(raw, 192),
+            "need_take_pnl_quote": _u64(raw, 200),
+            "pool_open_time": _u64(raw, 224),
             "status": "active", "price_mode": "reserves"
         }
     if protocol == "raydium_clmm":
@@ -449,6 +458,115 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         "signing": "DISABLED",
         "broadcast": "DISABLED",
     }
+
+
+def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
+                                    slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only exact-input quote from a confirmed Raydium AMM v4 snapshot."""
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("Raydium AMM v4 pool address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
+        raise ValueError("Input amount must be a positive integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+        raise ValueError("Maximum snapshot age must be positive and finite")
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["raydium_amm_v4"]:
+        raise ValueError("Pool account is not owned by the Raydium AMM v4 program")
+    first = _decode_pool("raydium_amm_v4", discovered["data"])
+    keys = [pool_address, first["vault_base"], first["vault_quote"],
+            first["base_mint"], first["quote_mint"]]
+    snapshot_started = time.time()
+    accounts, slot = _multiple_accounts_with_context(keys)
+    if any(item is None for item in accounts):
+        raise ValueError("Raydium AMM v4 snapshot is missing a required account")
+    pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
+    if pool_acc.get("owner") != PROGRAMS["raydium_amm_v4"]:
+        raise ValueError("Raydium AMM v4 pool owner changed during snapshot")
+    decoded = _decode_pool("raydium_amm_v4", pool_acc["data"])
+    for field in ("vault_base", "vault_quote", "base_mint", "quote_mint"):
+        if decoded.get(field) != first.get(field):
+            raise ValueError("Raydium AMM v4 pool relationships changed during snapshot")
+    if decoded["pool_open_time"] > int(time.time()) and decoded["status"] == "active":
+        raise ValueError("Raydium AMM v4 pool is not open for swaps yet")
+    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
+
+    base_decimals = _mint_decimals(mint_base_acc)
+    quote_decimals = _mint_decimals(mint_quote_acc)
+    base_vault = _token_amount(vault_base_acc, decoded["base_mint"])
+    quote_vault = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    reserve_base = base_vault - decoded["need_take_pnl_base"]
+    reserve_quote = quote_vault - decoded["need_take_pnl_quote"]
+    if reserve_base <= 0 or reserve_quote <= 0:
+        raise ValueError("Raydium AMM v4 tradable reserves are empty after accrued PnL")
+
+    if input_mint == decoded["base_mint"]:
+        reserve_in, reserve_out = reserve_base, reserve_quote
+        output_mint = decoded["quote_mint"]
+    elif input_mint == decoded["quote_mint"]:
+        reserve_in, reserve_out = reserve_quote, reserve_base
+        output_mint = decoded["base_mint"]
+    else:
+        raise ValueError("Input mint does not belong to this Raydium AMM v4 pool")
+
+    fee = (amount_in * decoded["swap_fee_numerator"] + decoded["swap_fee_denominator"] - 1) // decoded["swap_fee_denominator"]
+    net_input = amount_in - fee
+    if net_input <= 0:
+        raise ValueError("Input is fully consumed by Raydium AMM v4 fees")
+    output_amount = (reserve_out * net_input) // (reserve_in + net_input)
+    if output_amount <= 0 or output_amount >= reserve_out:
+        raise ValueError("Raydium AMM v4 quote rounds to zero or drains the pool")
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    spot_price = reserve_out / reserve_in
+    execution_price = output_amount / net_input
+    impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Raydium AMM v4 snapshot is stale")
+    if not math.isfinite(impact):
+        raise ValueError("Raydium AMM v4 price impact is invalid")
+
+    return {
+        "provider": "raydium_amm_v4_direct",
+        "protocol": "raydium_amm_v4",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "trade_fee_numerator": decoded["swap_fee_numerator"],
+        "trade_fee_denominator": decoded["swap_fee_denominator"],
+        "trade_fee_amount": fee,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "price_impact_percent": round(impact, 6),
+        "base_decimals": base_decimals,
+        "quote_decimals": quote_decimals,
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
+
+
+def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
+    """Dispatch read-only direct quotes from the actual pool account owner."""
+    discovered = _account(pool_address)
+    owner = discovered.get("owner")
+    protocol = next((name for name, program in PROGRAMS.items() if program == owner), None)
+    if protocol == "raydium_cpmm":
+        return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol == "raydium_amm_v4":
+        return quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol is None:
+        raise ValueError("Pool owner is not a supported Solana DEX program")
+    raise ValueError("Direct quote adapter is not implemented for " + protocol)
 
 
 def _token_amount(account, expected_mint):

@@ -133,6 +133,8 @@ class OnchainDecoderTests(unittest.TestCase):
     def test_raydium_amm_v4_pool_layout(self):
         raw = bytearray(752)
         struct.pack_into("<Q", raw, 0, 6)
+        struct.pack_into("<Q", raw, 176, 25)
+        struct.pack_into("<Q", raw, 184, 10000)
         put_key(raw, 336, 1)
         put_key(raw, 368, 2)
         put_key(raw, 400, 3)
