@@ -20,6 +20,7 @@ import json
 import os
 import time
 import math
+import strategy_conditions
 
 ALLOWED_FIELDS = {
     "liquidity_usd", "volume_m5", "volume_h24",
@@ -96,7 +97,22 @@ def _context(token, score):
         "consecutive_green_candles": _number(indicators.get("consecutive_green_candles")),
         "consecutive_red_candles": _number(indicators.get("consecutive_red_candles")),
         "volume_spike": 1.0 if indicators.get("volume_spike") is True else 0.0 if indicators.get("volume_spike") is False else None,
-        "position_holding_minutes": _number(token.get("position_holding_minutes"))
+        "position_holding_minutes": _number(token.get("position_holding_minutes")),
+        "price_usd": _number(token.get("priceUsd")),
+        "market_cap_usd": _number(token.get("marketCap")),
+        "fdv_usd": _number(token.get("fdv")),
+        "trade_size_usd": _number(token.get("trade_size_usd")),
+        "liquidity_change_since_entry_pct": _number(token.get("liquidity_change_since_entry_pct")),
+        "position_profit_pct": _number(token.get("position_profit_pct")),
+        "profit_giveback_pct": _number(token.get("profit_giveback_pct")),
+        "position_add_count": _number(token.get("position_add_count")),
+        "drawdown_from_peak_pct": _number(token.get("drawdown_from_peak_pct")),
+        "pullback_from_high_pct": _number(token.get("pullback_from_high_pct")),
+        "previous_high_20": _number(indicators.get("previous_high_20")),
+        "token": token,
+        "indicators": indicators,
+        "txns": txns,
+        "evaluated_at": time.time()
     }
 
 
@@ -122,6 +138,11 @@ def _evaluate(node, context, path="root"):
             passed = not results[0][0]
         reasons = [reason for ok, messages in results if not ok for reason in messages]
         return passed, ([] if passed else reasons or [path + ": group failed"])
+    if "condition" in node:
+        try:
+            return strategy_conditions.evaluate_condition(node, context)
+        except (TypeError, ValueError) as error:
+            return False, [path + ": " + str(error)[:180]]
     field = node.get("field")
     op = node.get("op")
     if field not in ALLOWED_FIELDS or op not in ALLOWED_OPERATORS:
@@ -166,6 +187,14 @@ def _validate_node(node, path="root"):
             raise ValueError(path + ": not requires one rule")
         for index, child in enumerate(children):
             _validate_node(child, path + "." + key + "[" + str(index) + "]")
+        return
+    if "condition" in node:
+        if path.count("[") > 30:
+            raise ValueError(path + ": rule nesting is too deep")
+        try:
+            strategy_conditions.validate_condition(node)
+        except (TypeError, ValueError) as error:
+            raise ValueError(path + ": " + str(error)) from error
         return
     if set(node) != {"field", "op", "value"}:
         raise ValueError(path + ": condition needs field, op and value")
