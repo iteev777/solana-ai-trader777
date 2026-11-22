@@ -42,7 +42,7 @@ class RouteComparisonTests(unittest.TestCase):
         self.assertEqual(result["execution"], "DISABLED")
 
 
-    def test_direct_raydium_quote_is_included_when_pool_address_is_supplied(self):
+    def test_direct_pool_quote_is_included_when_pool_address_is_supplied(self):
         jupiter = {
             "provider": "jupiter", "out_amount": 1000,
             "minimum_out_amount": 990, "price_impact_percent": 0.1,
@@ -64,7 +64,7 @@ class RouteComparisonTests(unittest.TestCase):
         }
         with patch("live_execution.get_jupiter_quote", return_value=jupiter), \
              patch.object(route_comparison, "_raptor", return_value=raptor), \
-             patch("solana_onchain.quote_raydium_cpmm_pool", return_value=direct):
+             patch("solana_onchain.quote_direct_pool", return_value=direct):
             result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
         self.assertEqual(result["best_provider"], "raydium_cpmm_direct")
         self.assertEqual(result["best_minimum_output"], 1180)
