@@ -149,7 +149,7 @@ def _failed(provider, error):
     }
 
 
-def compare_quotes(input_mint, output_mint, amount, slippage_bps=None):
+def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
     """Compare best available quotes; lower bound (min-out) wins.
 
     Direct pool routes remain explicitly unquoted rather than being guessed.
@@ -171,13 +171,39 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None):
             except Exception as error:
                 results[name] = _failed(name, error)
 
-    results["direct_pool"] = {
-        "provider": "direct_pool",
-        "status": "NOT_IMPLEMENTED",
-        "reason": "Protocol-specific direct pool quote adapters are not yet implemented; no synthetic quote is generated.",
-        "out_amount": None,
-        "minimum_out_amount": None,
-    }
+    if pool_address:
+        try:
+            import solana_onchain
+            direct = solana_onchain.quote_raydium_cpmm_pool(
+                pool_address, input_mint, amount, slip
+            )
+            results["direct_pool"] = {
+                "provider": direct["provider"],
+                "protocol": direct["protocol"],
+                "status": "QUOTED",
+                "out_amount": direct["out_amount"],
+                "minimum_out_amount": direct["minimum_out_amount"],
+                "price_impact_percent": direct["price_impact_percent"],
+                "slot": direct["slot"],
+                "pool_id": direct["pool_id"],
+                "creator_fee_on_input": direct["creator_fee_on_input"],
+                "fee_amounts": {
+                    "trade": direct["trade_fee_amount"],
+                    "creator_input": direct["creator_fee_input_amount"],
+                    "creator_output": direct["creator_fee_output_amount"],
+                },
+                "execution": "DISABLED",
+            }
+        except Exception as error:
+            results["direct_pool"] = _failed("raydium_cpmm_direct", error)
+    else:
+        results["direct_pool"] = {
+            "provider": "raydium_cpmm_direct",
+            "status": "POOL_ADDRESS_REQUIRED",
+            "reason": "Pass pool_address to request a native Raydium CPMM quote.",
+            "out_amount": None,
+            "minimum_out_amount": None,
+        }
     available = [
         item for item in results.values()
         if item.get("status") == "QUOTED"
@@ -208,9 +234,11 @@ def get_router_status():
             "available": False,
             "mode": "not_implemented",
             "supported_protocol_decoders": [
-                "Raydium", "Orca Whirlpool", "Meteora", "PumpSwap",
+                "Raydium CPMM", "Orca Whirlpool", "Meteora", "PumpSwap",
                 "Pump.fun bonding curve", "FluxBeam", "Moonit"
             ],
+            "quote_adapters": ["Raydium CPMM"],
+            "requires_pool_address": True,
         },
         "execution_locked": True,
         "signing_available": False,
