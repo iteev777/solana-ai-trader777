@@ -762,7 +762,8 @@ def get_market_data_status():
         "max_batch_size": MAX_BATCH_SIZE,
         "cache_ttl": CACHE_TTL,
         "batch_wait_seconds": BATCH_WAIT_SECONDS,
-        "worker_running": worker_running
+        "worker_running": worker_running,
+        "pool_registry": __import__("pool_registry").get_pool_registry_status()
     }
 
 
