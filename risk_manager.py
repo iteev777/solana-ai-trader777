@@ -36,11 +36,11 @@ MAX_MAIN_POSITIONS = _env_count("TROJAN_MAX_MAIN_POSITIONS", 10)
 MAX_SNIPER_POSITIONS = _env_count("TROJAN_MAX_SNIPER_POSITIONS", 10)
 MAX_TOTAL_POSITIONS = _env_count("TROJAN_MAX_TOTAL_POSITIONS", 15)
 
-# Default daily loss cap is 10% of the paper starting balance. It can be
+# Default daily loss cap is $50 for paper trading. It can be
 # overridden explicitly in Railway without editing the source.
 MAX_DAILY_LOSS = _env_number(
     "TROJAN_MAX_DAILY_LOSS_USD",
-    STARTING_BALANCE * 0.10,
+    50.00,
     0.01
 )
 MAX_TRADE_BALANCE_FRACTION = min(
