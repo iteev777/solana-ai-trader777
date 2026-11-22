@@ -1645,11 +1645,13 @@ def get_copy_wallet_performance():
                    SUM(CASE WHEN action='SELL' AND profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
                    SUM(CASE WHEN action='SELL' AND profit_loss <= 0 THEN 1 ELSE 0 END) AS losses,
                    COALESCE(SUM(CASE WHEN action='SELL' THEN profit_loss ELSE 0 END), 0) AS realized_pnl,
-                   COALESCE(SUM(CASE WHEN action='BUY' THEN amount ELSE 0 END), 0) AS gross_buys
+                   COALESCE(SUM(CASE WHEN action='BUY' THEN amount ELSE 0 END), 0) AS gross_buys,
+                   COALESCE(SUM(CASE WHEN action='SELL' AND date(timestamp)=? THEN profit_loss ELSE 0 END), 0) AS daily_realized_pnl,
+                   COALESCE(SUM(CASE WHEN action='SELL' AND date(timestamp)=? AND profit_loss < 0 THEN -profit_loss ELSE 0 END), 0) AS daily_loss
             FROM trades
             WHERE mode='paper' AND copy_wallet IS NOT NULL AND copy_wallet <> ''
             GROUP BY copy_wallet
-        """).fetchall()
+        """, (today(), today())).fetchall()
         event_rows = connection.execute("""
             SELECT wallet,
                    COUNT(*) AS observed_events,
@@ -1672,6 +1674,8 @@ def get_copy_wallet_performance():
             "losses": int(row["losses"] or 0),
             "win_rate": round(wins / closed * 100, 2) if closed else 0.0,
             "realized_pnl": round(float(row["realized_pnl"] or 0), 4),
+            "daily_realized_pnl": round(float(row["daily_realized_pnl"] or 0), 4),
+            "daily_loss": round(float(row["daily_loss"] or 0), 4),
             "gross_buys": round(float(row["gross_buys"] or 0), 4),
             "open_positions": 0, "open_exposure_usd": 0.0,
             "observed_events": 0, "observed_buys": 0, "observed_sells": 0,
