@@ -3,6 +3,7 @@ import os
 import time
 from datetime import datetime
 import database
+from position_policy import get_dca_steps, get_exit_steps
 
 
 # ==========================================
@@ -281,42 +282,47 @@ def update_position(token_address, current_price):
                 MODE, token_address, metadata
             )
 
-        # Optional single DCA add. It is disabled unless explicitly enabled
-        # in the environment and never triggers at or beyond the hard stop.
+        # Configurable DCA tiers. Every tier is one-shot, ordered, and
+        # blocked at/beyond the hard stop. The default remains disabled.
+        dca_steps = get_dca_steps()
         dca_count = int(metadata.get("dca_count", 0) or 0)
-        if (
-            DCA_ENABLED
-            and dca_count < DCA_MAX_ADDS
-            and -STOP_LOSS < change <= -DCA_TRIGGER_DROP
-        ):
-            result = database.add_position_investment_atomic(
-                MODE, token_address, current_price, DCA_ADD_SIZE,
-                metadata={"dca_count": dca_count + 1}
-            )
-            if isinstance(result, dict):
-                refresh_account()
-                print("PAPER DCA:", token_address, "|", result, flush=True)
-                return result
+        if dca_count < len(dca_steps) and change > -STOP_LOSS:
+            step = dca_steps[dca_count]
+            if change <= -(step["drop_pct"] / 100.0):
+                result = database.add_position_investment_atomic(
+                    MODE, token_address, current_price, step["add_usd"],
+                    metadata={"dca_count": dca_count + 1}
+                )
+                if isinstance(result, dict):
+                    refresh_account()
+                    print("PAPER DCA TIER:", token_address, "|", result, flush=True)
+                    return result
 
-        # Secure a portion of a profitable move while leaving the rest
-        # of the paper position open for the normal trailing/target logic.
-        if (
-            PARTIAL_TAKE_PROFIT_ENABLED
-            and not metadata.get("partial_take_profit_done")
-            and change >= PARTIAL_TAKE_PROFIT_TRIGGER
-        ):
-            result = database.partial_close_position_atomic(
-                MODE, token_address, current_price,
-                fraction=PARTIAL_SELL_FRACTION,
-                reason="PARTIAL TAKE PROFIT"
-            )
-            if isinstance(result, dict):
-                metadata["partial_take_profit_done"] = True
-                metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0) or 0) + 1
-                database.update_position_metadata(MODE, token_address, metadata)
-                refresh_account()
-                print("PAPER PARTIAL SELL:", token_address, "|", result, flush=True)
-                return result
+        # Configurable multi-step exit ladder. Each fraction applies to
+        # the remaining position, so successive sells cannot over-close it.
+        exit_steps = get_exit_steps() if PARTIAL_TAKE_PROFIT_ENABLED else []
+        completed = metadata.get("exit_ladder_completed", [])
+        if not isinstance(completed, list):
+            completed = []
+        for step_index, step in enumerate(exit_steps):
+            if step_index in completed:
+                continue
+            if change >= step["profit_pct"] / 100.0:
+                result = database.partial_close_position_atomic(
+                    MODE, token_address, current_price,
+                    fraction=step["sell_fraction"],
+                    reason="EXIT LADDER TIER " + str(step_index + 1)
+                )
+                if isinstance(result, dict):
+                    completed.append(step_index)
+                    metadata["exit_ladder_completed"] = completed
+                    metadata["partial_take_profit_done"] = True
+                    metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0) or 0) + 1
+                    database.update_position_metadata(MODE, token_address, metadata)
+                    refresh_account()
+                    print("PAPER EXIT LADDER:", token_address, "|", result, flush=True)
+                    return result
+                break
 
         if change <= -STOP_LOSS:
             return close_position(token_address, current_price, "STOP LOSS")
