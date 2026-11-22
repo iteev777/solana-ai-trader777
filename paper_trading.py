@@ -127,6 +127,18 @@ def open_position(
     if not __import__("math").isfinite(position_size) or position_size <= 0:
         return "Invalid trade size"
 
+    # Adaptive sizing is paper-only and starts at 1.0x until enough closed
+    # paper outcomes exist. The multiplier is bounded to avoid runaway risk.
+    adaptive_multiplier = 1.0
+    try:
+        import adaptive_learning
+        adaptive_multiplier = adaptive_learning.get_size_multiplier(strategy)
+    except Exception as error:
+        print("ADAPTIVE LEARNING SIZE FALLBACK:", type(error).__name__, flush=True)
+    position_size = round(position_size * adaptive_multiplier, 2)
+    if position_size <= 0:
+        return "Invalid adaptive trade size"
+
     with _lock:
 
         refresh_account()
@@ -149,6 +161,7 @@ def open_position(
             metadata={
                 "engine": "trojan_v2",
                 "strategy": strategy,
+                "adaptive_size_multiplier": adaptive_multiplier,
                 **(metadata if isinstance(metadata, dict) else {})
             }
         )
@@ -168,6 +181,8 @@ def open_position(
             entry_price,
             "| SIZE:",
             position_size,
+            "| ADAPTIVE:",
+            adaptive_multiplier,
             "| BALANCE:",
             round(balance, 2)
         )

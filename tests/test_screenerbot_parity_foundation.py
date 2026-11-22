@@ -49,6 +49,15 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
             ]}
         })
 
+    def test_candle_structure_and_streak_indicators_are_available(self):
+        result = indicators.calculate_indicators(self._candles(80))
+        self.assertTrue(result["ready"])
+        self.assertIn("candle_body_pct", result)
+        self.assertIn("candle_range_pct", result)
+        self.assertGreaterEqual(result["consecutive_green_candles"], 0)
+        self.assertGreaterEqual(result["consecutive_red_candles"], 0)
+        self.assertIn("volume_spike", result)
+
     def test_aggregation_rejects_invalid_interval(self):
         with self.assertRaises(ValueError):
             indicators.aggregate_candles(self._candles(), 90)

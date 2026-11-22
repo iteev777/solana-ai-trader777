@@ -14,10 +14,13 @@ import websocket
 _lock = threading.RLock()
 _watches = {}
 _snapshots = {}
+_refreshing = set()
+_last_refresh_at = {}
+MIN_POOL_REFRESH_INTERVAL = max(0.25, float(os.getenv("TROJAN_POOL_REFRESH_INTERVAL", "0.5")))
 _thread = None
 _status = {
     "configured": False, "running": False, "subscriptions": 0,
-    "notifications": 0, "refresh_errors": 0, "last_update": None,
+    "notifications": 0, "coalesced_notifications": 0, "refresh_errors": 0, "last_update": None,
     "last_error": None, "last_latency_ms": None
 }
 _refresh_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="onchain-price")
@@ -88,6 +91,19 @@ def get_stream_status():
                 "watched_pools": len(_watches)}
 
 
+def should_refresh_pool(key, now=None):
+    """Coalesce bursts to at most one snapshot refresh per pool per interval."""
+    now = time.monotonic() if now is None else float(now)
+    with _lock:
+        last = _last_refresh_at.get(key, 0.0)
+        if key in _refreshing or now - last < MIN_POOL_REFRESH_INTERVAL:
+            _status["coalesced_notifications"] += 1
+            return False
+        _refreshing.add(key)
+        _last_refresh_at[key] = now
+        return True
+
+
 def _refresh(key):
     started = time.perf_counter()
     try:
@@ -106,6 +122,9 @@ def _refresh(key):
         with _lock:
             _status["refresh_errors"] += 1
             _status["last_error"] = str(error)[:200]
+    finally:
+        with _lock:
+            _refreshing.discard(key)
 
 
 def _run():
@@ -172,7 +191,8 @@ def _run():
                 if key and isinstance(params.get("result"), dict):
                     with _lock:
                         _status["notifications"] += 1
-                    _refresh_pool.submit(_refresh, key)
+                    if should_refresh_pool(key):
+                        _refresh_pool.submit(_refresh, key)
             delay = 1
         except Exception as error:
             with _lock:
