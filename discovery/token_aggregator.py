@@ -4,6 +4,7 @@
 
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from discovery.gecko_scanner import scan_new_pools
 from discovery.pumpfun_scanner import scan_pumpfun
@@ -73,84 +74,56 @@ def collect_tokens():
 
         current_time = time.time()
 
+        # Run independent providers concurrently, as ScreenerBot does.
+        # Merge in configured source order so results stay deterministic.
+        source_results = {}
+        with ThreadPoolExecutor(max_workers=max(1, len(SCANNERS))) as pool:
+            futures = {
+                pool.submit(scanner): source_name
+                for source_name, scanner in SCANNERS
+            }
+            for future in as_completed(futures):
+                source_name = futures[future]
+                try:
+                    result = future.result()
+                    source_results[source_name] = result if isinstance(result, list) else []
+                except Exception as error:
+                    print("TOKEN SOURCE WORKER ERROR:", source_name, repr(error), flush=True)
+                    source_results[source_name] = []
+
         for source_name, scanner in SCANNERS:
-
-            try:
-
-                tokens = scanner()
-
-                if not isinstance(tokens, list):
-
-                    print("INVALID SCANNER RESULT:", source_name)
-                    source_stats[source_name] = 0
+            tokens = source_results.get(source_name, [])
+            source_stats[source_name] = len(tokens)
+            for token in tokens:
+                address = normalize_token(token)
+                if not address:
                     continue
-
-                source_stats[source_name] = len(tokens)
-
-                for token in tokens:
-
-                    address = normalize_token(token)
-
-                    if not address:
-                        continue
-
-                    if address not in discovered:
-
-                        discovered[address] = {
-                            "tokenAddress": address,
-                            "chainId": "solana",
-                            "discovery_sources": [],
-                            "discovery_timestamp": current_time
-                        }
-
-                    candidate = discovered[address]
-
-                    sources = token.get("discovery_sources", [])
-
-                    if isinstance(sources, str):
-                        sources = [sources]
-
-                    if not isinstance(sources, list):
-                        sources = []
-
-                    # Use the scanner's actual source labels.
-                    # Add a fallback only when none are supplied.
-
-                    valid_sources = []
-
-                    for source in sources:
-
-                        if isinstance(source, str) and source.strip():
-
-                            valid_sources.append(
-                                source.strip().lower()
-                            )
-
-                    if not valid_sources:
-                        valid_sources = [source_name]
-
-                    for source in valid_sources:
-
-                        if source not in candidate["discovery_sources"]:
-
-                            candidate["discovery_sources"].append(source)
-
-                    # Preserve scanner-specific token information.
-
-                    for key, value in token.items():
-
-                        if key not in candidate:
-                            candidate[key] = value
-
-            except Exception as error:
-
-                print(
-                    "TOKEN AGGREGATOR ERROR:",
-                    source_name,
-                    repr(error)
-                )
-
-                source_stats[source_name] = 0
+                if address not in discovered:
+                    discovered[address] = {
+                        "tokenAddress": address,
+                        "chainId": "solana",
+                        "discovery_sources": [],
+                        "discovery_timestamp": current_time
+                    }
+                candidate = discovered[address]
+                sources = token.get("discovery_sources", [])
+                if isinstance(sources, str):
+                    sources = [sources]
+                if not isinstance(sources, list):
+                    sources = []
+                valid_sources = [
+                    source.strip().lower()
+                    for source in sources
+                    if isinstance(source, str) and source.strip()
+                ]
+                if not valid_sources:
+                    valid_sources = [source_name]
+                for source in valid_sources:
+                    if source not in candidate["discovery_sources"]:
+                        candidate["discovery_sources"].append(source)
+                for key, value in token.items():
+                    if key not in candidate:
+                        candidate[key] = value
 
         results = list(discovered.values())
 
