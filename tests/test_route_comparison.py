@@ -57,6 +57,7 @@ class RouteComparisonTests(unittest.TestCase):
         }
         direct = {
             "provider": "raydium_cpmm_direct", "protocol": "raydium_cpmm",
+            "output_mint": "out",
             "out_amount": 1200, "minimum_out_amount": 1180,
             "price_impact_percent": 0.2, "slot": 777, "pool_id": "pool",
             "creator_fee_on_input": True, "trade_fee_amount": 2,
@@ -69,6 +70,33 @@ class RouteComparisonTests(unittest.TestCase):
         self.assertEqual(result["best_provider"], "raydium_cpmm_direct")
         self.assertEqual(result["best_minimum_output"], 1180)
         self.assertEqual(result["quotes"]["direct_pool"]["slot"], 777)
+
+
+    def test_direct_quote_with_wrong_output_mint_is_not_compared(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "fluxbeam_direct", "protocol": "fluxbeam_amm",
+            "output_mint": "wrong-output",
+            "out_amount": 9000, "minimum_out_amount": 8900,
+            "price_impact_percent": 0.2, "slot": 777, "pool_id": "pool",
+        }
+        with patch("live_execution.get_jupiter_quote", return_value=jupiter), \\
+             patch.object(route_comparison, "_raptor", return_value=raptor), \\
+             patch("solana_onchain.quote_direct_pool", return_value=direct):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
+        self.assertEqual(result["best_provider"], "jupiter")
+        self.assertEqual(result["quotes"]["direct_pool"]["status"], "FAILED")
 
     def test_invalid_slippage_rejected(self):
         with self.assertRaises(ValueError):
