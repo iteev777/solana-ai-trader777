@@ -154,11 +154,13 @@ def _activity_stage(token):
         )
         if min_txns > 0:
             if total is None:
-                return _result("WAIT", "activity", "TRANSACTION_FLOW_" + label + "_UNKNOWN", {
+                reason = "TRANSACTION_FLOW_UNKNOWN" if key == "m5" else "TRANSACTION_FLOW_" + label + "_UNKNOWN"
+                return _result("WAIT", "activity", reason, {
                     "window": key, "minimum": min_txns
                 })
             if total < min_txns:
-                return _result("WAIT", "activity", "TRANSACTION_COUNT_" + label + "_BELOW_MINIMUM", {
+                reason = "TRANSACTION_COUNT_BELOW_MINIMUM" if key == "m5" else "TRANSACTION_COUNT_" + label + "_BELOW_MINIMUM"
+                return _result("WAIT", "activity", reason, {
                     "window": key, "transactions": total, "minimum": min_txns
                 })
 
