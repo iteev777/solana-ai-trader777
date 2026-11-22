@@ -15,6 +15,13 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["route_labels"], ["Raydium", "Orca"])
         self.assertTrue(result["is_split_route"])
 
+    def test_sequential_full_weight_hops_are_not_split_routes(self):
+        result = live_execution._route_diagnostics([
+            {"percent": 100, "swapInfo": {"label": "Raydium"}},
+            {"percent": 100, "swapInfo": {"label": "Orca"}},
+        ])
+        self.assertFalse(result["is_split_route"])
+
     def test_base_unit_amount_preserves_large_integer_precision(self):
         amount = "18446744073709551615"
         self.assertEqual(live_execution._amount(amount, "amount"), 18446744073709551615)
