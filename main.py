@@ -53,7 +53,9 @@ ERROR_RETRY_INTERVAL = 30
 MAX_ANALYSIS_RETRIES = 2
 
 executor = ThreadPoolExecutor(max_workers=WORKERS)
+discovery_executor = ThreadPoolExecutor(max_workers=1)
 
+discovery_future = None
 pending_tasks = {}
 seen_tokens = set()
 
@@ -1009,6 +1011,7 @@ def run_bot():
 
     global last_scan_time
     global last_statistics_time
+    global discovery_future
 
     print("====================================")
     print("TROJAN V2 - SOLANA AI TRADING BOT")
@@ -1044,10 +1047,28 @@ def run_bot():
             process_sniper_tokens()
             process_discovery_pending()
 
-            if time.time() - last_scan_time >= SCAN_INTERVAL:
+            # Run network-heavy discovery separately so API latency cannot
+            # block the position monitor and stop-loss checks.
+            if discovery_future is not None and discovery_future.done():
 
-                add_discovery_tokens()
+                try:
+                    discovery_future.result()
+                except Exception as error:
+                    log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
+
+                discovery_future = None
+
+            if (
+                discovery_future is None
+                and time.time() - last_scan_time >= SCAN_INTERVAL
+            ):
+
+                discovery_future = discovery_executor.submit(
+                    add_discovery_tokens
+                )
+
                 last_scan_time = time.time()
+                log_event("BACKGROUND DISCOVERY STARTED")
 
             # Monitor all positions through batch market data.
 
@@ -1084,6 +1105,11 @@ if __name__ == "__main__":
         log_event("BOT SHUTTING DOWN")
 
         executor.shutdown(
+            wait=False,
+            cancel_futures=True
+        )
+
+        discovery_executor.shutdown(
             wait=False,
             cancel_futures=True
         )
