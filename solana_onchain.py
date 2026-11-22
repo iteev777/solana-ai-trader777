@@ -770,8 +770,8 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
     else:
         raise ValueError("Input mint does not belong to this Moonit SOL curve")
 
-    if output_amount <= 0 or output_amount >= reserve_out:
-        raise ValueError("Moonit quote rounds to zero or exceeds curve reserves")
+    if output_amount <= 0 or output_amount >= reserve_out or output_amount > 2**64 - 1:
+        raise ValueError("Moonit quote rounds to zero, exceeds u64, or exceeds curve reserves")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     net_for_impact = max(1, amount_in - fee_in_input)
     spot_price = reserve_out / reserve_in
