@@ -19,6 +19,20 @@ def _normalize(value):
 
 def record_validation(declared_protocol, pool_address, mint, snapshot=None, error=None):
     protocol = _normalize(declared_protocol)
+    import pool_analysis
+    if error is not None and pool_address:
+        failure_class = pool_analysis.classify_pool_error(error)
+        if failure_class == "transient":
+            pool_analysis.record_transient_failure(pool_address, error)
+            return {
+                "protocol": protocol,
+                "success": False,
+                "failure_class": "transient",
+                "recorded": False,
+            }
+        pool_analysis.record_structural_failure(pool_address, error)
+    elif isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True and pool_address:
+        pool_analysis.record_success(pool_address)
     if isinstance(snapshot, dict):
         source = str(snapshot.get("marketSource") or "")
         if source.startswith("solana_rpc_"):

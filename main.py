@@ -401,24 +401,39 @@ def analyze_token_task(address, strategy_name, token):
         onchain_error = None
         rpc_configured = get_onchain_status().get("rpc_configured")
         if pool_address and rpc_configured:
-            try:
-                onchain_snapshot = decode_pool_snapshot(
-                    pool_address, pool_protocol, address
-                )
-                import protocol_validation
-                protocol_validation.record_validation(
-                    pool_protocol, pool_address, address,
-                    snapshot=onchain_snapshot
-                )
-            except Exception as error:
-                onchain_error = error
-                from solana_onchain import record_onchain_error
-                record_onchain_error(error)
-                import protocol_validation
-                protocol_validation.record_validation(
-                    pool_protocol, pool_address, address, error=error
-                )
-                log_event("ONCHAIN POOL READ FAILED", address, repr(error))
+            import pool_analysis
+            pool_state = pool_analysis.get_pool_analysis_state(pool_address)
+            if pool_state["state"] == "structural_quarantine":
+                return {
+                    "status": "rejected",
+                    "reason": "POOL_STRUCTURE_INVALID",
+                    "address": address,
+                }
+            if pool_state["state"] == "ready":
+                try:
+                    onchain_snapshot = decode_pool_snapshot(
+                        pool_address, pool_protocol, address
+                    )
+                    import protocol_validation
+                    protocol_validation.record_validation(
+                        pool_protocol, pool_address, address,
+                        snapshot=onchain_snapshot
+                    )
+                except Exception as error:
+                    onchain_error = error
+                    from solana_onchain import record_onchain_error
+                    record_onchain_error(error)
+                    import protocol_validation
+                    protocol_validation.record_validation(
+                        pool_protocol, pool_address, address, error=error
+                    )
+                    log_event("ONCHAIN POOL READ FAILED", address, repr(error))
+                    if pool_analysis.classify_pool_error(error) == "structural":
+                        return {
+                            "status": "rejected",
+                            "reason": "POOL_STRUCTURE_INVALID",
+                            "address": address,
+                        }
         if isinstance(onchain_snapshot, dict):
             pair = dict(pair)
             pair.update(onchain_snapshot)
