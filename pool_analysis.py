@@ -91,6 +91,13 @@ def record_transient_failure(pool_address, error=None, now=None):
     key = pool_address.strip()
     with _lock:
         previous = _transient.get(key)
+        if previous and now < previous["retry_at"]:
+            previous["last_error"] = str(error)[:180] if error is not None else previous["last_error"]
+            return {
+                "retry_at": previous["retry_at"],
+                "retry_in_seconds": max(0.0, previous["retry_at"] - now),
+                "failures": previous["failures"],
+            }
         delay = (
             min(TRANSIENT_MAX_SECONDS, previous["next_delay"])
             if previous else TRANSIENT_INITIAL_SECONDS
