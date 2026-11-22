@@ -17,7 +17,8 @@ TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 PROGRAMS = {
     "pumpswap": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
-    "raydium_cpmm": "CPMMoo8L3F4NbTegBCKVNq2z9x4p6xW9gG9Z",
+    "raydium_cpmm": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+    "raydium_clmm": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
     "orca_whirlpool": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
     "meteora_dlmm": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
 }
@@ -131,6 +132,18 @@ def _decode_pool(protocol, raw):
             "status": "disabled" if status & 4 else "active",
             "price_mode": "reserves"
         }
+    if protocol == "raydium_clmm":
+        if len(raw) < 269 or raw[:8] != _discriminator("PoolState"):
+            raise ValueError("invalid Raydium CLMM PoolState discriminator/layout")
+        sqrt_price = _u128(raw, 253)
+        if sqrt_price <= 0:
+            raise ValueError("Raydium CLMM sqrt price is zero")
+        return {
+            "base_mint": _key(raw, 73), "quote_mint": _key(raw, 105),
+            "vault_base": _key(raw, 137), "vault_quote": _key(raw, 169),
+            "sqrt_price_x64": sqrt_price,
+            "status": "active", "price_mode": "sqrt_price"
+        }
     if protocol == "orca_whirlpool":
         if len(raw) < 245 or raw[:8] != _discriminator("Whirlpool"):
             raise ValueError("invalid Orca Whirlpool discriminator/layout")
@@ -192,18 +205,28 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     protocol = str(protocol or "").lower().replace("-", "_")
     aliases = {
         "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap",
-        "raydium": "raydium_cpmm", "raydium_cp_swap": "raydium_cpmm",
+        "raydium": "raydium_auto", "raydium_cp_swap": "raydium_cpmm",
+        "raydium_clmm": "raydium_clmm",
         "orca": "orca_whirlpool", "whirlpool": "orca_whirlpool",
         "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm"
     }
     protocol = aliases.get(protocol, protocol)
-    if protocol not in PROGRAMS or not pool_address or not token_mint:
+    if protocol == "raydium_auto":
+        protocol = "raydium_auto"
+    elif protocol not in PROGRAMS or not pool_address or not token_mint:
+        return None
+    if not pool_address or not token_mint:
         return None
     key = (pool_address, protocol, token_mint)
     cached = _cache.get(key)
     if cached and time.time() - cached["time"] < 3:
         return dict(cached["data"])
     pool = _account(pool_address)
+    if protocol == "raydium_auto":
+        protocol = next((name for name in ("raydium_cpmm", "raydium_clmm")
+                         if pool["owner"] == PROGRAMS[name]), None)
+        if protocol is None:
+            raise ValueError("Raydium pool owner is not a supported CPMM or CLMM program")
     if pool["owner"] != PROGRAMS[protocol]:
         raise ValueError("pool account owner does not match " + protocol)
     decoded = _decode_pool(protocol, pool["data"])
@@ -251,7 +274,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
 def get_onchain_status():
     return {
         **_last_status,
-        "supported_protocols": sorted(PROGRAMS.keys()),
+        "supported_protocols": sorted(list(PROGRAMS.keys()) + ["raydium_auto"]),
         "rpc_configured": bool(RPC_URL)
     }
 
