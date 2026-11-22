@@ -59,7 +59,7 @@ def _metadata_stage(token, mint):
         return _result("REJECT", "metadata", "MINT_MISSING")
     if not isinstance(symbol, str) or not symbol.strip():
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
-    normalized = symbol.strip().strip("\\x00").strip()
+    normalized = symbol.strip().strip("\x00").strip()
     if not normalized:
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
     if normalized.isdigit():
