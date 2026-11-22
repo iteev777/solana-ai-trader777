@@ -214,9 +214,9 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     protocol = str(protocol or "").lower().replace("-", "_")
     aliases = {
         "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap", "pump.fun": "pumpswap",
-        "raydium": "raydium_auto", "raydium_cp_swap": "raydium_cpmm",
+        "raydium": "raydium_auto", "raydium_amm": "raydium_auto", "raydium_cp_swap": "raydium_cpmm",
         "raydium_clmm": "raydium_clmm",
-        "orca": "orca_whirlpool", "whirlpool": "orca_whirlpool",
+        "orca": "orca_whirlpool", "orca_whirlpools": "orca_whirlpool", "whirlpool": "orca_whirlpool",
         "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm"
     }
     protocol = aliases.get(protocol, protocol)
