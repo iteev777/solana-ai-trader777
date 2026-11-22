@@ -3,7 +3,7 @@ import struct
 import unittest
 from unittest import mock
 
-from solana_onchain import _decode_pool, _discriminator, PROGRAMS
+from solana_onchain import _decode_pool, _discriminator, PROGRAMS, normalize_protocol
 from indicators import calculate_indicators
 from strategy_rules import validate_rules_config
 import onchain_stream
@@ -90,6 +90,12 @@ class OnchainDecoderTests(unittest.TestCase):
         self.assertEqual(len(PROGRAMS), 11)
         self.assertIn("meteora_dbc", PROGRAMS)
         self.assertIn("moonit_amm", PROGRAMS)
+
+    def test_common_dex_labels_map_to_their_actual_protocol_families(self):
+        self.assertEqual(normalize_protocol("pumpfun"), "pumpfun_legacy")
+        self.assertEqual(normalize_protocol("pumpfun-amm"), "pumpswap")
+        self.assertEqual(normalize_protocol("moonshot"), "moonit_amm")
+        self.assertEqual(normalize_protocol("meteora-damm-v2"), "meteora_damm_v2")
 
     def test_fluxbeam_amm_layout(self):
         raw = bytearray(324)
