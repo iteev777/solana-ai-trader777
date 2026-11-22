@@ -18,10 +18,16 @@ from email.utils import parsedate_to_datetime
 # ==========================================
 
 HOST_INTERVALS = {
-    "api.dexscreener.com": 1.0,
+    "api.dexscreener.com": 1.1,
     "public-api.birdeye.so": 3.0,
     "api.geckoterminal.com": 7.0,
     "api.rugcheck.xyz": 2.0,
+}
+
+# DexScreener endpoint-specific limits.
+# Batch endpoint supports a higher request rate.
+ENDPOINT_INTERVALS = {
+    ("api.dexscreener.com", "tokens_batch"): 0.25,
 }
 
 DEFAULT_429_COOLDOWN = 30
@@ -37,28 +43,59 @@ SLOW_REQUEST_THRESHOLD = 2.0
 # SHARED STATE
 # ==========================================
 
-host_locks = {}
-host_next_request = {}
+bucket_locks = {}
+bucket_next_request = {}
+
 host_blocked_until = {}
 
 cache = {}
 
 cache_lock = threading.Lock()
-locks_lock = threading.Lock()
+state_lock = threading.Lock()
 
 
 # ==========================================
-# HOST LOCK
+# ENDPOINT CLASSIFICATION
 # ==========================================
 
-def get_host_lock(host):
+def get_rate_bucket(url):
 
-    with locks_lock:
+    parsed = urlparse(url)
 
-        if host not in host_locks:
-            host_locks[host] = threading.Lock()
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.lower()
 
-        return host_locks[host]
+    if (
+        host == "api.dexscreener.com"
+        and path.startswith("/tokens/v1/")
+    ):
+        endpoint = "tokens_batch"
+
+    else:
+        endpoint = "default"
+
+    interval = ENDPOINT_INTERVALS.get(
+        (host, endpoint),
+        HOST_INTERVALS.get(host, 2.0)
+    )
+
+    return host, endpoint, interval
+
+
+# ==========================================
+# RATE LIMIT LOCK
+# ==========================================
+
+def get_bucket_lock(host, endpoint):
+
+    key = (host, endpoint)
+
+    with state_lock:
+
+        if key not in bucket_locks:
+            bucket_locks[key] = threading.Lock()
+
+        return bucket_locks[key]
 
 
 # ==========================================
@@ -154,17 +191,27 @@ def get_retry_delay(response, attempt):
 
             try:
 
-                retry_date = parsedate_to_datetime(retry_after)
+                retry_date = parsedate_to_datetime(
+                    retry_after
+                )
 
                 delay = retry_date.timestamp() - time.time()
 
-            except (ValueError, TypeError, OverflowError):
+            except (
+                ValueError,
+                TypeError,
+                OverflowError
+            ):
 
-                delay = DEFAULT_429_COOLDOWN * (2 ** attempt)
+                delay = DEFAULT_429_COOLDOWN * (
+                    2 ** attempt
+                )
 
     else:
 
-        delay = DEFAULT_429_COOLDOWN * (2 ** attempt)
+        delay = DEFAULT_429_COOLDOWN * (
+            2 ** attempt
+        )
 
     return min(
         max(delay, 1),
@@ -185,18 +232,18 @@ def get_json(
     max_retries=1
 ):
 
-    host = urlparse(url).hostname
+    host, endpoint, interval = get_rate_bucket(url)
 
     if not host:
         raise ValueError("Invalid API URL")
 
-    host = host.lower()
-
     max_retries = max(0, int(max_retries))
 
-    interval = HOST_INTERVALS.get(host, 2.0)
-
-    key = cache_key(url, params, headers)
+    key = cache_key(
+        url,
+        params,
+        headers
+    )
 
     # First cache check
     if cache_ttl > 0:
@@ -206,7 +253,10 @@ def get_json(
         if cached_data is not None:
             return cached_data
 
-    lock = get_host_lock(host)
+    lock = get_bucket_lock(
+        host,
+        endpoint
+    )
 
     with lock:
 
@@ -222,23 +272,34 @@ def get_json(
 
         while True:
 
-            now = time.time()
+            with state_lock:
 
-            blocked_until = host_blocked_until.get(host, 0)
+                now = time.time()
 
-            next_request = host_next_request.get(host, 0)
+                blocked_until = host_blocked_until.get(
+                    host,
+                    0
+                )
 
-            wait_time = max(
-                blocked_until - now,
-                next_request - now,
-                0
-            )
+                next_request = bucket_next_request.get(
+                    (host, endpoint),
+                    0
+                )
+
+                wait_time = max(
+                    blocked_until - now,
+                    next_request - now,
+                    0
+                )
 
             if wait_time > 0:
 
                 print(
                     "API WAIT:",
                     host,
+                    "| ENDPOINT:",
+                    endpoint,
+                    "| TIME:",
                     round(wait_time, 1),
                     "seconds"
                 )
@@ -246,7 +307,13 @@ def get_json(
                 time.sleep(wait_time)
 
             # Reserve next request slot
-            host_next_request[host] = time.time() + interval
+            with state_lock:
+
+                now = time.time()
+
+                bucket_next_request[
+                    (host, endpoint)
+                ] = now + interval
 
             request_started = time.monotonic()
 
@@ -261,7 +328,9 @@ def get_json(
 
             except requests.RequestException as error:
 
-                elapsed = time.monotonic() - request_started
+                elapsed = (
+                    time.monotonic() - request_started
+                )
 
                 print(
                     "API CONNECTION ERROR:",
@@ -295,7 +364,9 @@ def get_json(
 
                 continue
 
-            elapsed = time.monotonic() - request_started
+            elapsed = (
+                time.monotonic() - request_started
+            )
 
             # ----------------------------------
             # RATE LIMIT
@@ -308,9 +379,11 @@ def get_json(
                     attempt
                 )
 
-                host_blocked_until[host] = (
-                    time.time() + cooldown
-                )
+                with state_lock:
+
+                    host_blocked_until[host] = (
+                        time.time() + cooldown
+                    )
 
                 print(
                     "API RATE LIMIT:",
@@ -430,7 +503,9 @@ def clear_cache():
     with cache_lock:
         cache.clear()
 
-    print("TROJAN V2 API CACHE CLEARED")
+    print(
+        "TROJAN V2 API CACHE CLEARED"
+    )
 
 
 # ==========================================
@@ -441,33 +516,62 @@ def get_api_status():
 
     now = time.time()
 
-    with locks_lock:
-        hosts = list(host_locks.keys())
+    with state_lock:
+
+        hosts = set(
+            host for host, endpoint
+            in bucket_locks.keys()
+        )
+
+        bucket_data = {
+            key: value
+            for key, value
+            in bucket_next_request.items()
+        }
+
+        blocked_data = dict(
+            host_blocked_until
+        )
 
     status = {}
 
     for host in hosts:
 
-        lock = get_host_lock(host)
+        host_buckets = {}
 
-        with lock:
+        for (bucket_host, endpoint), next_time in (
+            bucket_data.items()
+        ):
 
-            status[host] = {
+            if bucket_host != host:
+                continue
+
+            host_buckets[endpoint] = {
                 "next_request_in": round(
-                    max(
-                        host_next_request.get(host, 0) - now,
-                        0
-                    ),
-                    1
-                ),
-                "blocked_for": round(
-                    max(
-                        host_blocked_until.get(host, 0) - now,
-                        0
-                    ),
+                    max(next_time - now, 0),
                     1
                 )
             }
+
+        next_request_in = max(
+            [
+                item["next_request_in"]
+                for item in host_buckets.values()
+            ],
+            default=0
+        )
+
+        status[host] = {
+            "next_request_in": next_request_in,
+            "blocked_for": round(
+                max(
+                    blocked_data.get(host, 0) - now,
+                    0
+                ),
+                1
+            ),
+            "buckets": host_buckets
+        }
 
     with cache_lock:
         cache_entries = len(cache)
@@ -493,6 +597,18 @@ if __name__ == "__main__":
         print(
             "API INTERVAL:",
             host,
+            interval,
+            "seconds"
+        )
+
+    for (host, endpoint), interval in (
+        ENDPOINT_INTERVALS.items()
+    ):
+
+        print(
+            "API ENDPOINT INTERVAL:",
+            host,
+            endpoint,
             interval,
             "seconds"
         )
