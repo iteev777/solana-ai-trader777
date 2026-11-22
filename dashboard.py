@@ -495,12 +495,14 @@ def api_readiness():
     from solana_onchain import get_onchain_status
     from indicators import get_indicator_status
     from copy_trade import get_copy_monitor_status
+    import live_execution
     return jsonify({
         "readiness": service_health.get_readiness_report(),
         "services": service_health.get_service_status(),
         "onchain": get_onchain_status(),
         "indicators": get_indicator_status(),
-        "copy_monitor": get_copy_monitor_status()
+        "copy_monitor": get_copy_monitor_status(),
+        "jupiter": live_execution.get_execution_status()
     })
 
 
@@ -687,6 +689,8 @@ async function loadAdvanced(){
   document.getElementById('readiness').innerHTML=r.checks.map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':(x.required?'bad':'muted'))+'">'+(x.ok?'OK':'NOT CONFIGURED / CHECK')+'</span><div class="muted">'+esc(x.details||'')+'</div></div>').join('');
   document.getElementById('onchain-status').textContent='On-chain RPC: '+(h.onchain.rpc_configured?'configured':'not configured')+' · protocols: '+h.onchain.supported_protocols.join(', ');
   document.getElementById('indicator-status').textContent='OHLCV cache: '+h.indicators.ready_pools+' ready pools / '+h.indicators.cached_pools+' cached pools';
+  const j=h.jupiter||{};
+  document.getElementById('indicator-status').textContent+=' · Jupiter: '+(j.quote_provider||'unavailable')+' · API key: '+(j.api_key_configured?'configured':'keyless / rate-limited')+' · max impact: '+(j.max_price_impact_percent??'—')+'% · live execution: LOCKED';
   const stream=h.onchain.price_stream||{};
   document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · price stream: '+(stream.running?'LIVE':'OFF')+' ('+(stream.subscriptions||0)+' pools, '+(stream.notifications||0)+' updates, '+(stream.last_latency_ms==null?'n/a':stream.last_latency_ms+' ms')+') · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
   document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
