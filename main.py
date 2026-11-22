@@ -725,7 +725,9 @@ def queue_copy_signal(event):
     if not isinstance(event.get("token_mint"), str) or not event["token_mint"]:
         return False
     try:
-        copy_signal_queue.put_nowait(dict(event))
+        queued = dict(event)
+        queued["queued_at"] = time.time()
+        copy_signal_queue.put_nowait(queued)
         return True
     except queue.Full:
         log_event("COPY SIGNAL QUEUE FULL", event.get("token_mint"))
@@ -743,6 +745,21 @@ def process_copy_signals():
         address = event.get("token_mint")
         wallet = event.get("wallet")
         action = event.get("action")
+
+        # Reject delayed/replayed wallet activity before either paper BUY or SELL.
+        from copy_freshness import evaluate_event_freshness
+        freshness = evaluate_event_freshness(
+            event.get("block_time"), event.get("received_at"),
+            now=time.time()
+        )
+        if not freshness.get("allowed"):
+            log_event(
+                "COPY SIGNAL SKIPPED",
+                address,
+                str(freshness.get("reason")) + " | age=" + str(freshness.get("age_seconds"))
+            )
+            continue
+        event["copy_latency_seconds"] = freshness.get("age_seconds")
 
         # Mirror a followed wallet's SELL only against the paper position
         # opened from that same wallet's BUY signal. Never close unrelated
@@ -777,9 +794,9 @@ def process_copy_signals():
         )
         if not decision.get("allowed"):
             log_event(
-                "COPY BUY RISK REJECTED", address,
-                "wallet=" + str(wallet),
-                "reason=" + str(decision.get("reason"))
+                "COPY BUY RISK REJECTED",
+                address,
+                "wallet=" + str(wallet) + " | reason=" + str(decision.get("reason"))
             )
             continue
         token = {
