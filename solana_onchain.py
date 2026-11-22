@@ -471,7 +471,7 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         raise ValueError("Input amount must be a positive integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
-    if not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
         raise ValueError("Maximum snapshot age must be positive and finite")
 
     discovered = _account(pool_address)
