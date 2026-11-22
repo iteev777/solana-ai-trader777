@@ -1,6 +1,7 @@
 import hmac
 import os
 import threading
+import time
 from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, request
@@ -75,6 +76,10 @@ def _positions():
             "entry_price": entry,
             "current_price": current,
             "invested": float(position.get("invested") or 0),
+            "market_value": (
+                float(position.get("invested") or 0) * current / entry
+                if current is not None and current > 0 and entry > 0 else None
+            ),
             "roi_percent": round(roi, 2) if roi is not None else None,
             "opened_at": position.get("opened_at"),
             "peak_price": (position.get("metadata") or {}).get("peak_price"),
@@ -171,6 +176,13 @@ def api_overview():
         "risk": risk_manager.get_risk_summary(),
         "positions": positions,
         "position_count": len(positions),
+        "positions_market_value": round(sum(
+            float(position["market_value"])
+            for position in positions if position.get("market_value") is not None
+        ), 2),
+        "positions_value_priced_count": sum(
+            1 for position in positions if position.get("market_value") is not None
+        ),
         "trade_rows": trade_count,
         "event_rows": event_count,
         "runtime": _runtime(),
@@ -543,7 +555,7 @@ main{max-width:1440px;padding-top:16px}
 <div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric wallet-metric"><small>Phantom wallet · SOL</small><strong id="wallet-sol">—</strong><span class="sub" id="wallet-usd">Loading wallet…</span></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
-<div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
+<div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Open positions · live value</small><strong id="invested">—</strong></div></div>
 <section class="panel section"><h2>PHANTOM WALLET ASSETS</h2><div class="muted" id="wallet-summary">Loading on-chain assets…</div><div style="overflow:auto;margin-top:10px"><table><thead><tr><th>Asset</th><th>Amount</th><th>Price</th><th>Value</th><th>Mint</th></tr></thead><tbody id="wallet-assets"><tr><td colspan="5" class="muted">Loading wallet…</td></tr></tbody></table></div></section>
 <div class="split"><section class="panel section" id="home-health"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
@@ -593,7 +605,7 @@ async function loadHome(){
   document.getElementById('daily').textContent=usd(a.daily_realized_pnl);
   document.getElementById('loss').textContent=usd(a.daily_loss)+' / '+usd(o.risk.max_daily_loss);
   document.getElementById('closed').textContent=s.total_trades;
-  document.getElementById('invested').textContent=usd(a.invested);
+  document.getElementById('invested').textContent=usd(o.positions_market_value)+(o.position_count>o.positions_value_priced_count?' · partial':'');
   const positionRows=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+esc(short(p.token))+'</td><td>'+esc(p.strategy)+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td><td>'+p.dca_count+'</td><td>'+(p.partial_take_profit_done?'Done':'—')+'</td></tr>';}).join(''):'<tr><td colspan="8" class="muted">No open positions</td></tr>';
   document.getElementById('positions').innerHTML=positionRows;
   document.getElementById('positions-copy').innerHTML=positionRows;
