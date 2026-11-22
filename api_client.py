@@ -24,6 +24,10 @@ HOST_INTERVALS = {
     "public-api.birdeye.so": 3.0,
     "api.geckoterminal.com": 7.0,
     "api.rugcheck.xyz": 2.0,
+    "lite-api.jup.ag": 1.2,
+    "api.jup.ag": 1.2,
+    "api.coingecko.com": 1.5,
+    "api.llama.fi": 2.0,
 }
 
 ENDPOINT_INTERVALS = {
