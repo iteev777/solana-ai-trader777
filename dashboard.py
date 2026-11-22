@@ -11,7 +11,7 @@ import database
 app = Flask(__name__)
 _server = None
 _server_thread = None
-_server_lock = threading.Lock()
+_server_lock = threading.Lock()\n_wallet_price_cache = {"checked_at": 0, "price_usd": None}
 
 
 def _authorized():
@@ -177,6 +177,78 @@ def api_overview():
     })
 
 
+@app.get("/api/wallet-balance")
+def api_wallet_balance():
+    """Read-only native SOL balance for the configured public wallet."""
+    wallet = os.getenv("TROJAN_PUBLIC_WALLET_ADDRESS", "").strip()
+    if not wallet:
+        return jsonify({"configured": False, "error": "Public wallet address is not configured"}), 503
+
+    try:
+        import solana_onchain
+        import requests
+
+        raw = solana_onchain._b58decode(wallet)
+        if len(raw) != 32:
+            raise ValueError("Wallet address is not a valid Solana public key")
+
+        result = solana_onchain._rpc(
+            "getBalance",
+            [wallet, {"commitment": "confirmed"}]
+        )
+        lamports = int((result or {}).get("value", 0))
+        sol_balance = lamports / 1_000_000_000
+
+        # Cache the public SOL/USD quote briefly to avoid unnecessary price API calls.
+        global _wallet_price_cache
+        now = datetime.now(timezone.utc).timestamp()
+        if now - _wallet_price_cache["checked_at"] >= 15:
+            price = None
+            try:
+                quote = requests.get(
+                    "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112",
+                    timeout=6
+                )
+                quote.raise_for_status()
+                pairs = (quote.json() or {}).get("pairs") or []
+                sol_pairs = [
+                    pair for pair in pairs
+                    if pair.get("chainId") == "solana"
+                    and pair.get("priceUsd")
+                    and float((pair.get("liquidity") or {}).get("usd") or 0) > 0
+                ]
+                if sol_pairs:
+                    best = max(
+                        sol_pairs,
+                        key=lambda pair: float((pair.get("liquidity") or {}).get("usd") or 0)
+                    )
+                    price = float(best["priceUsd"])
+            except Exception:
+                price = _wallet_price_cache["price_usd"]
+
+            _wallet_price_cache = {"checked_at": now, "price_usd": price}
+
+        price_usd = _wallet_price_cache["price_usd"]
+        return jsonify({
+            "configured": True,
+            "wallet": wallet,
+            "sol_balance": sol_balance,
+            "sol_price_usd": price_usd,
+            "sol_value_usd": sol_balance * price_usd if price_usd is not None else None,
+            "lamports": lamports,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "commitment": "confirmed",
+            "asset_scope": "native SOL only"
+        })
+    except Exception as error:
+        return jsonify({
+            "configured": True,
+            "wallet": wallet,
+            "error": str(error)[:220],
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }), 503
+
+
 @app.get("/api/trades")
 def api_trades():
     limit = min(max(request.args.get("limit", 50, type=int), 1), 200)
@@ -338,7 +410,7 @@ main{max-width:1440px;padding-top:16px}
 <header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
 <div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadAll()">Refresh</button></div></header>
 <main id="overview"><section class="app-view active" id="view-home"><div class="grid">
-<div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
+<div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric wallet-metric"><small>Phantom wallet · SOL</small><strong id="wallet-sol">—</strong><span class="sub" id="wallet-usd">Loading wallet…</span></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
@@ -361,6 +433,16 @@ const time=v=>v?new Date(v).toLocaleTimeString():'—';
 async function get(path){const r=await fetch(path);if(r.status===401){document.body.innerHTML='<main><h2>Authentication required</h2><p>Reload and sign in using your dashboard token.</p></main>';throw Error('auth');}if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
 if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));}
 document.querySelectorAll(".app-nav button").forEach(button=>button.addEventListener("click",()=>{const target=button.dataset.view;document.querySelectorAll(".app-view").forEach(view=>view.classList.toggle("active",view.id==="view-"+target));document.querySelectorAll(".app-nav button").forEach(item=>item.classList.toggle("active",item===button));window.scrollTo({top:0,behavior:"instant"});}));
+async function loadWallet(){
+ try{
+  const w=await get('/api/wallet-balance');
+  if(!w.configured){document.getElementById('wallet-sol').textContent='Not set';document.getElementById('wallet-usd').textContent='Set TROJAN_PUBLIC_WALLET_ADDRESS';return;}
+  if(w.error)throw Error(w.error);
+  document.getElementById('wallet-sol').textContent=fmt(w.sol_balance,4)+' SOL';
+  document.getElementById('wallet-usd').textContent=w.sol_value_usd===null?'USD quote unavailable':'≈ '+usd(w.sol_value_usd)+' · '+short(w.wallet);
+  document.getElementById('wallet-sol').title='Confirmed on-chain balance';
+ }catch(err){document.getElementById('wallet-usd').textContent='Wallet update failed: '+err.message;}
+}
 async function loadAll(){try{
 const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering'),get('/api/performance')]);
 const o=data[0],t=data[1],e=data[2],f=data[3],p=data[4],a=o.account,s=o.stats;
@@ -399,7 +481,7 @@ document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onc
 document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
 }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}}
 async function saveRules(strategy){try{const rules=JSON.parse(document.getElementById('rules-'+strategy).value);const response=await fetch('/api/strategies',{method:'POST',headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},body:JSON.stringify({strategy:strategy,rules:rules})});const data=await response.json();if(!response.ok)throw Error(data.error||'Save failed');document.getElementById('rules-status').textContent=strategy.toUpperCase()+' rules saved. New candidate evaluations will use them.';loadAdvanced();}catch(err){document.getElementById('rules-status').textContent='Could not save: '+err.message;}}
-loadAll();loadAdvanced();setInterval(loadAll,5000);setInterval(loadAdvanced,15000);
+loadAll();loadWallet();loadAdvanced();setInterval(loadAll,5000);setInterval(loadWallet,5000);setInterval(loadAdvanced,15000);
 </script></body></html>"""
 
 
