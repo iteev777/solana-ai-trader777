@@ -42,6 +42,8 @@ def get_token_security_report(mint, largest_limit=20):
     ).get("info") or {}
     if not isinstance(parsed, dict) or parsed.get("isInitialized") is not True:
         raise ValueError("Mint account is not initialized or parsed")
+    if "mintAuthority" not in parsed or "freezeAuthority" not in parsed:
+        raise ValueError("Mint authority fields are missing from parsed RPC data")
 
     mint_authority = parsed.get("mintAuthority")
     freeze_authority = parsed.get("freezeAuthority")
