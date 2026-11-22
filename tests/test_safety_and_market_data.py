@@ -6,6 +6,9 @@ import risk_manager
 
 
 class RiskManagerTests(unittest.TestCase):
+    def test_default_daily_loss_cap_is_50_usd(self):
+        self.assertEqual(risk_manager.MAX_DAILY_LOSS, 50.0)
+
     def test_normal_ticket_passes_with_full_balance(self):
         allowed, reason = risk_manager.check_trade_risk(
             balance=100, open_positions=0, daily_loss=0, trade_size=5,
