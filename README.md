@@ -30,3 +30,28 @@ Keep the bot in paper mode while validating signal quality, net P/L, drawdown, t
 ## Read-only dashboard
 
 The bot can serve an authenticated dashboard on Railway. Set the Railway variable `TROJAN_DASHBOARD_TOKEN` to a long random secret before starting the service. The dashboard uses HTTP Basic Authentication (username can be any value; password is the token), listens on Railway's `PORT`, and exposes read-only portfolio, paper-trading, queue, API, market-data and event information. No wallet keys or live-trading controls are exposed. If the token is not configured, the dashboard stays disabled.
+
+
+## Configurable strategy rules
+
+The optional strategy rule engine supports nested `all`, `any`, and `not` groups with numeric comparisons. Configure it in Railway with the `TROJAN_STRATEGY_RULES` environment variable (JSON). If the variable is empty, the existing strategy behavior is unchanged. Example:
+
+```json
+{
+  "main": {
+    "all": [
+      {"field": "liquidity_usd", "op": "gte", "value": 12000},
+      {"field": "buy_ratio", "op": "gte", "value": 0.58},
+      {"field": "price_change_m5", "op": "between", "value": [0.1, 4.0]}
+    ]
+  },
+  "sniper": {
+    "all": [
+      {"field": "liquidity_usd", "op": "gte", "value": 3000},
+      {"field": "buy_ratio", "op": "gte", "value": 0.55}
+    ]
+  }
+}
+```
+
+Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`, `price_change_h1`, `price_change_h24`, `buy_ratio`, `score`, `source_count`, `txns_m5_total`, and `pair_age_minutes`. Supported operators: `gt`, `gte`, `lt`, `lte`, `eq`, and `between`. The dashboard reports whether the custom rules are enabled and valid at `/api/strategies`. Live execution remains locked.
