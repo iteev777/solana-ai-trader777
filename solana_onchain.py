@@ -205,7 +205,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     """Return a verified pool snapshot in USD, or None if data is unavailable."""
     protocol = str(protocol or "").lower().replace("-", "_")
     aliases = {
-        "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap",
+        "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap", "pump.fun": "pumpswap",
         "raydium": "raydium_auto", "raydium_cp_swap": "raydium_cpmm",
         "raydium_clmm": "raydium_clmm",
         "orca": "orca_whirlpool", "whirlpool": "orca_whirlpool",
@@ -270,6 +270,10 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     _cache[key] = {"time": time.time(), "data": result}
     _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
     return result
+
+
+def record_onchain_error(error):
+    _last_status["last_error"] = str(error)[:250]
 
 
 def get_onchain_status():
