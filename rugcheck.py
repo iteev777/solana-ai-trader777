@@ -294,6 +294,7 @@ def analyze_rugcheck_report(data):
             reasons.append("Insider holder balance exceeds configured maximum")
 
     graph_insider_share_pct = None
+    insiders = get_number(data.get("graphInsidersDetected"))
     total_holders = get_number(data.get("totalHolders"))
     if insiders is not None and total_holders is not None and total_holders > 0:
         graph_insider_share_pct = min(100.0, max(0.0, insiders / total_holders * 100.0))
