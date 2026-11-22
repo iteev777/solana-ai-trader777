@@ -357,75 +357,80 @@ def get_gecko_pool_data_batch(pool_addresses):
 # BATCH API REQUEST
 # ==========================================
 
+def refresh_market_data_from_pool_registry(address):
+    """Re-select and cache a token's canonical pair after asynchronous source enrichment."""
+    from pool_registry import get_pool_candidates
+    candidates = get_pool_candidates(address)
+    selected = select_best_pairs(candidates, [address]).get(address)
+    if selected:
+        save_cached(address, selected)
+    return selected
+
+
 def fetch_batch(addresses):
-
-    addresses = list(
-        dict.fromkeys(addresses)
-    )
-
+    addresses = list(dict.fromkeys(addresses))
     if not addresses:
         return {}
 
     results = {}
+    from pool_registry import (
+        enqueue_gecko_pool_fetch, get_pool_candidates,
+        is_dexscreener_list_incomplete, merge_pool_candidates,
+    )
 
-    for start in range(
-        0,
-        len(addresses),
-        MAX_BATCH_SIZE
-    ):
-
-        batch = addresses[
-            start:start + MAX_BATCH_SIZE
-        ]
-
-        url = (
-            DEXSCREENER_BATCH_URL
-            + ",".join(batch)
-        )
-
+    for start in range(0, len(addresses), MAX_BATCH_SIZE):
+        batch = addresses[start:start + MAX_BATCH_SIZE]
+        url = DEXSCREENER_BATCH_URL + ",".join(batch)
         try:
-
             pairs = get_json(
                 url,
                 timeout=REQUEST_TIMEOUT,
                 cache_ttl=0,
                 max_retries=MAX_RETRIES
             )
+            if not isinstance(pairs, list):
+                pairs = []
 
-            selected = select_best_pairs(
-                pairs,
-                batch
-            )
+            # Keep every returned pair for each requested base mint, not just
+            # the one chosen for this response. The registry merges sources.
+            for address in batch:
+                token_pairs = [
+                    pair for pair in pairs
+                    if isinstance(pair, dict)
+                    and isinstance(pair.get("baseToken"), dict)
+                    and pair["baseToken"].get("address") == address
+                ]
+                merge_pool_candidates(address, token_pairs, "dexscreener")
+                if is_dexscreener_list_incomplete(token_pairs):
+                    enqueue_gecko_pool_fetch(address)
 
+            combined = []
+            for address in batch:
+                combined.extend(get_pool_candidates(address))
+            selected = select_best_pairs(combined, batch)
             results.update(selected)
 
             for address, pair in selected.items():
-
-                save_cached(
-                    address,
-                    pair
-                )
+                save_cached(address, pair)
 
             print(
                 "[TROJAN V2] MARKET BATCH COMPLETE",
-                "| REQUESTED:",
-                len(batch),
-                "| FOUND:",
-                len(selected),
+                "| REQUESTED:", len(batch),
+                "| FOUND:", len(selected),
+                "| POOL SOURCES: DEXSCREENER + GECKOTERMINAL",
                 flush=True
             )
-
         except Exception as error:
-
+            # If DexScreener is unavailable, still schedule a background
+            # GeckoTerminal lookup; never block the trading loop on it.
+            for address in batch:
+                enqueue_gecko_pool_fetch(address)
             print(
                 "[TROJAN V2] MARKET BATCH ERROR",
-                "| SIZE:",
-                len(batch),
-                "| ERROR:",
-                repr(error),
+                "| SIZE:", len(batch),
+                "| ERROR:", repr(error),
                 flush=True
             )
-
     return results
 
 
