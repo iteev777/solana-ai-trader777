@@ -190,7 +190,7 @@ def _validate_pair(input_mint, output_mint, amount, slippage_bps):
 
 def _normalize_quote(quote, input_mint, output_mint, raw_amount, slip, elapsed_ms):
     if quote.get("transaction"):
-        raise ValueError("Quote-only response unexpectedly contains a transaction")
+        raise ValueError("Refusing an unexpected transaction-bearing quote response")
     in_amount = _amount(quote.get("inAmount", 0), "inAmount")
     out_amount = _amount(quote.get("outAmount", 0), "outAmount")
     if in_amount != raw_amount or out_amount <= 0:
