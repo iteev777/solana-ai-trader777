@@ -168,3 +168,17 @@ Raptor. This remains quote-only: no transaction is built, signed or broadcast.
 Example:
 `/api/route-comparison?input_mint=...&output_mint=...&amount=1000000&pool_address=...`
 
+
+
+## Pool account monitoring
+
+The read-only Solana pool monitor tracks active discovery candidates and open positions. It subscribes to pool state and reserve vault accounts, then refreshes complete per-pool snapshots in shared confirmed RPC batches (50 accounts per batch). Candidate watches expire automatically and the batch heartbeat recovers missed WebSocket notifications.
+
+Optional Railway environment variables:
+
+- `TROJAN_POOL_BATCH_POLL_INTERVAL`: batch refresh heartbeat in seconds (default `0.5`, minimum `0.5`).
+- `TROJAN_CANDIDATE_WATCH_TTL`: candidate watch lifetime in seconds (default `300`, minimum `30`).
+- `TROJAN_MAX_CANDIDATE_WATCHES`: maximum discovery-candidate watches (default `100`, minimum `10`).
+- `TROJAN_POOL_REFRESH_INTERVAL`: WebSocket notification coalescing interval in seconds (default `0.5`, minimum `0.25`).
+
+Dashboard on-chain status reports position/candidate watches, successful/failed pool refreshes, RPC batch and account counts, and the latest refresh latency. This subsystem is read-only; it does not sign or broadcast transactions.
