@@ -282,3 +282,10 @@ Copy-watch now derives token changes from the watched wallet's raw SPL/Token-202
 
 
 FluxBeam is also available as a read-only direct quote adapter for the verified `SwapV1` ConstantProduct curve. It reads both fee ratios from the pool account, rounds each input fee upward, applies the exact constant-product reserve step, and uses vault/mint accounts fetched in one confirmed RPC context. Other curve types and Token-2022 transfer-fee mints are refused. Direct route comparison now checks that the pool quote's output mint exactly matches the requested output mint before comparing raw minimum outputs.
+
+
+## Multi-window market filtering
+
+The deterministic candidate filter now evaluates volume, transaction activity and price momentum independently across 5m, 1h, 6h and 24h windows. Optional volume floors use `TROJAN_FILTER_MIN_VOLUME_5M_USD`, `TROJAN_FILTER_MIN_VOLUME_1H_USD`, `TROJAN_FILTER_MIN_VOLUME_6H_USD` and `TROJAN_FILTER_MIN_VOLUME_24H_USD`; transaction floors use `TROJAN_FILTER_MIN_TXNS_5M`, `TROJAN_FILTER_MIN_TXNS_1H`, `TROJAN_FILTER_MIN_TXNS_6H` and `TROJAN_FILTER_MIN_TXNS_24H`. Buy-pressure floors use `TROJAN_FILTER_MIN_BUY_RATIO` for 5m (backward compatible) and `TROJAN_FILTER_MIN_BUY_RATIO_1H`, `_6H`, `_24H` for longer windows. Momentum bands use `TROJAN_FILTER_MIN_CHANGE_{5M,1H,6H,24H}_PCT` and `TROJAN_FILTER_MAX_CHANGE_{5M,1H,6H,24H}_PCT`; missing-window requirements can be enabled with `TROJAN_FILTER_REQUIRE_{5M,1H,6H,24H}_CHANGE=true`.
+
+Each window is checked independently, one-sided transaction counts are retained as reported, and absent measurements are only held when the corresponding floor/requirement is enabled. The filter report includes per-window raw measurements and derived buy ratios. Existing 5m environment variables and rejection codes remain compatible.
