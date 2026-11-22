@@ -157,16 +157,17 @@ def _decode_pool(protocol, raw):
             "status": "active", "price_mode": "sqrt_price"
         }
     if protocol == "meteora_dlmm":
-        if len(raw) < 212 or raw[:8] != _discriminator("LbPair"):
+        if len(raw) < 216 or raw[:8] != bytes([33, 11, 49, 98, 181, 101, 177, 13]):
             raise ValueError("invalid Meteora LbPair discriminator/layout")
-        active_id = _i32(raw, 72)
-        bin_step = _u16(raw, 76)
-        status = raw[78]
+        # StaticParameters and VariableParameters are each 32-byte Borsh structs.
+        active_id = _i32(raw, 76)
+        bin_step = _u16(raw, 80)
+        status = raw[82]
         if bin_step <= 0:
             raise ValueError("Meteora bin step invalid")
         return {
-            "base_mint": _key(raw, 84), "quote_mint": _key(raw, 116),
-            "vault_base": _key(raw, 148), "vault_quote": _key(raw, 180),
+            "base_mint": _key(raw, 88), "quote_mint": _key(raw, 120),
+            "vault_base": _key(raw, 152), "vault_quote": _key(raw, 184),
             "active_id": active_id, "bin_step": bin_step,
             "status": "disabled" if status != 0 else "active",
             "price_mode": "active_bin"
