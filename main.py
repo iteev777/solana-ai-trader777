@@ -1219,7 +1219,13 @@ def monitor_positions():
                 if not pool_address or not protocol:
                     continue
                 try:
-                    snapshot = decode_pool_snapshot(pool_address, protocol, address)
+                    from onchain_stream import watch_pool_price, get_latest_snapshot
+                    watch_pool_price(pool_address, protocol, address)
+                    snapshot = get_latest_snapshot(
+                        pool_address, protocol, address, max_age=1.0
+                    )
+                    if snapshot is None:
+                        snapshot = decode_pool_snapshot(pool_address, protocol, address)
                     if snapshot:
                         existing = market_data.get(address, {})
                         merged = dict(existing) if isinstance(existing, dict) else {}
