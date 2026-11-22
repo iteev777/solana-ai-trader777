@@ -166,6 +166,12 @@ def _monitor_loop():
                     continue
                 _status["events_seen"] += 1
                 _status["last_event"] = time.time()
+                if event["action"] == "BUY" and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
+                    try:
+                        import main
+                        main.queue_copy_signal(event)
+                    except Exception as copy_error:
+                        _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
                 send_alert(
                     "COPY WATCH " + event["action"]
                     + "\nWallet: " + wallet
@@ -204,4 +210,7 @@ def start_copy_monitor():
 def get_copy_monitor_status():
     wallets = _wallets()
     configured = bool(wallets) and bool(_rpc_url()) and bool(_ws_url())
-    return dict(_status, configured=configured, wallet_count=len(wallets))
+    return dict(
+        _status, configured=configured, wallet_count=len(wallets),
+        paper_copy_enabled=os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true"
+    )
