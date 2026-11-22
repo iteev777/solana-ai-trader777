@@ -250,14 +250,14 @@ def normalize_gecko_pool(pool, requested_mint=None):
     quote_data = quote_relation.get("data") if isinstance(quote_relation, dict) else None
     base_address = _gecko_token_address(base_data.get("id") if isinstance(base_data, dict) else None)
     quote_address = _gecko_token_address(quote_data.get("id") if isinstance(quote_data, dict) else None)
-    if not base_address or not quote_address:
+    if not base_address:
         return None
 
     token_is_base = True
     if requested_mint:
         if requested_mint == base_address:
             token_is_base = True
-        elif requested_mint == quote_address:
+        elif quote_address and requested_mint == quote_address:
             token_is_base = False
         else:
             return None
@@ -301,7 +301,10 @@ def normalize_gecko_pool(pool, requested_mint=None):
         "poolName": attributes.get("name"),
         "pairAddress": attributes.get("address"),
         "baseToken": {"address": token_address, "name": "Unknown", "symbol": "Unknown"},
-        "quoteToken": {"address": counter_address, "name": "Unknown", "symbol": "Unknown"},
+        "quoteToken": (
+            {"address": counter_address, "name": "Unknown", "symbol": "Unknown"}
+            if counter_address else {}
+        ),
         "priceUsd": str(price),
         "priceNative": str(price_native) if price_native is not None and price_native > 0 else None,
         "liquidity": {"usd": reserve},
