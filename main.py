@@ -862,6 +862,7 @@ def process_completed_tasks():
                 address,
                 price,
                 strategy=strategy_name,
+                trade_size=trade_decision.get("trade_size"),
                 metadata={
                     "pool_address": result.get("pool_address"),
                     "market_source": result.get("market_source"),
