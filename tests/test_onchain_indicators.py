@@ -76,7 +76,7 @@ class OnchainDecoderTests(unittest.TestCase):
         config_account = {"owner": PROGRAMS["raydium_cpmm"], "data": bytes(config)}
         accounts = [
             pool_account, config_account,
-            token_account(3, 1_000_000), token_account(4, 2_000_000),
+            token_account(1, 1_000_000), token_account(2, 2_000_000),
             mint_account(6), mint_account(9),
         ]
         with mock.patch.object(solana_onchain, "_account", return_value=pool_account), \
