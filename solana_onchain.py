@@ -26,6 +26,11 @@ PROGRAMS = {
     "raydium_amm_v4": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
     "orca_whirlpool": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
     "meteora_dlmm": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
+    "meteora_damm_v2": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
+    "meteora_dbc": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN",
+    "fluxbeam_amm": "FLUXubRmkEi2q6K3Y9kBPg9248ggaZVsoSFhtJHSrm1X",
+    "pumpfun_legacy": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "moonit_amm": "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG",
 }
 STABLES = {
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -194,6 +199,60 @@ def _decode_pool(protocol, raw):
             "status": "disabled" if status != 0 else "active",
             "price_mode": "active_bin"
         }
+    if protocol == "meteora_damm_v2":
+        if len(raw) < 488 or raw[:8] != bytes([241, 154, 109, 4, 17, 177, 109, 188]):
+            raise ValueError("invalid Meteora DAMM v2 Pool discriminator/layout")
+        sqrt_price = _u128(raw, 456)
+        if sqrt_price <= 0:
+            raise ValueError("Meteora DAMM v2 sqrt price is zero")
+        return {
+            "base_mint": _key(raw, 168), "quote_mint": _key(raw, 200),
+            "vault_base": _key(raw, 232), "vault_quote": _key(raw, 264),
+            "sqrt_price_x64": sqrt_price,
+            "status": "active" if raw[481] == 0 else "disabled",
+            "price_mode": "sqrt_price"
+        }
+    if protocol == "meteora_dbc":
+        if len(raw) < 306 or raw[:8] != bytes([213, 224, 5, 209, 98, 69, 119, 92]):
+            raise ValueError("invalid Meteora DBC VirtualPool discriminator/layout")
+        return {
+            "config": _key(raw, 72), "base_mint": _key(raw, 136),
+            "vault_base": _key(raw, 168), "vault_quote": _key(raw, 200),
+            "base_reserve": _u64(raw, 232), "quote_reserve": _u64(raw, 240),
+            "sqrt_price_x64": _u128(raw, 280),
+            "status": "disabled" if raw[305] != 0 else "active",
+            "price_mode": "dbc_curve"
+        }
+    if protocol == "fluxbeam_amm":
+        if len(raw) != 324 or raw[1] != 1:
+            raise ValueError("invalid FluxBeam SwapV1 layout or uninitialized pool")
+        return {
+            "base_mint": _key(raw, 131), "quote_mint": _key(raw, 163),
+            "vault_base": _key(raw, 35), "vault_quote": _key(raw, 67),
+            "status": "active", "price_mode": "reserves"
+        }
+    if protocol == "pumpfun_legacy":
+        if len(raw) < 49 or raw[:8] != bytes([23, 183, 248, 55, 96, 216, 172, 96]):
+            raise ValueError("invalid Pump.fun bonding curve discriminator/layout")
+        if raw[48] != 0:
+            raise ValueError("Pump.fun bonding curve is complete/migrated")
+        return {
+            "virtual_token_reserves": _u64(raw, 8),
+            "virtual_quote_reserves": _u64(raw, 16),
+            "real_token_reserves": _u64(raw, 24),
+            "real_quote_reserves": _u64(raw, 32),
+            "token_total_supply": _u64(raw, 40),
+            "status": "active", "price_mode": "pump_curve"
+        }
+    if protocol == "moonit_amm":
+        if len(raw) < 82 or raw[:8] != bytes([8, 91, 83, 28, 132, 216, 248, 22]):
+            raise ValueError("invalid Moonit CurveAccount discriminator/layout")
+        return {
+            "total_supply": _u64(raw, 8), "curve_amount": _u64(raw, 16),
+            "base_mint": _key(raw, 24), "token_decimals": raw[56],
+            "collateral_currency": raw[57], "curve_type": raw[58],
+            "status": "active", "price_mode": "moonit_curve"
+        }
     raise ValueError("unsupported Solana pool protocol")
 
 
@@ -238,7 +297,12 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
         "raydium_amm_v4": "raydium_amm_v4", "raydium_cp_swap": "raydium_cpmm",
         "raydium_clmm": "raydium_clmm",
         "orca": "orca_whirlpool", "orca_whirlpools": "orca_whirlpool", "whirlpool": "orca_whirlpool",
-        "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm"
+        "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm",
+        "meteora_damm": "meteora_damm_v2", "damm_v2": "meteora_damm_v2",
+        "meteora_dbc": "meteora_dbc", "dbc": "meteora_dbc",
+        "fluxbeam": "fluxbeam_amm", "fluxbeam_amm": "fluxbeam_amm",
+        "pumpfun_legacy": "pumpfun_legacy", "pump_fun": "pumpfun_legacy",
+        "moonit": "moonit_amm", "moonit_amm": "moonit_amm"
     }
     protocol = aliases.get(protocol, protocol)
     if protocol == "raydium_auto":
@@ -281,6 +345,89 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     decoded = _decode_pool(protocol, pool["data"])
     if decoded["status"] != "active":
         raise ValueError("pool is not swap-active")
+
+    # Launch curves have no conventional two-vault AMM layout.
+    if protocol in ("pumpfun_legacy", "moonit_amm"):
+        if protocol == "pumpfun_legacy":
+            decimals = _mint_decimals(_account(token_mint))
+            virtual_tokens = decoded["virtual_token_reserves"] / (10 ** decimals)
+            virtual_quote = decoded["virtual_quote_reserves"] / 1_000_000_000
+            real_tokens = decoded["real_token_reserves"] / (10 ** decimals)
+            real_quote = decoded["real_quote_reserves"] / 1_000_000_000
+            if virtual_tokens <= 0 or virtual_quote <= 0:
+                raise ValueError("Pump.fun virtual reserves are empty")
+            price_sol = virtual_quote / virtual_tokens
+            liquidity_sol = real_quote + real_tokens * price_sol
+        else:
+            if decoded["base_mint"] != token_mint:
+                raise ValueError("requested mint does not match Moonit curve mint")
+            if decoded["curve_type"] != 1 or decoded["collateral_currency"] != 0:
+                raise ValueError("unsupported Moonit curve type or collateral currency")
+            decimals = decoded["token_decimals"]
+            if _mint_decimals(_account(token_mint)) != decimals:
+                raise ValueError("Moonit curve decimals disagree with mint account")
+            total_supply, curve_amount = decoded["total_supply"], decoded["curve_amount"]
+            if curve_amount <= 0 or total_supply <= curve_amount:
+                raise ValueError("Moonit curve has no remaining virtual supply")
+            initial_tokens, initial_sol = 1_073_000_000_000_000_000, 30_000_000_000
+            virtual_tokens = initial_tokens - (total_supply - curve_amount)
+            if virtual_tokens <= 0:
+                raise ValueError("Moonit virtual token reserve is empty")
+            virtual_sol = (initial_tokens * initial_sol) // virtual_tokens
+            price_sol = (virtual_sol / 1_000_000_000) / (virtual_tokens / (10 ** decimals))
+            liquidity_sol = (
+                max(0, virtual_sol - initial_sol) / 1_000_000_000
+                + curve_amount / (10 ** decimals) * price_sol
+            )
+        sol_usd = _quote_usd("So11111111111111111111111111111111111111112")
+        if sol_usd is None or not math.isfinite(price_sol) or price_sol <= 0:
+            return None
+        result = {
+            "priceUsd": str(price_sol * sol_usd),
+            "liquidity": {"usd": liquidity_sol * sol_usd},
+            "baseToken": {"address": token_mint},
+            "quoteToken": {"address": "So11111111111111111111111111111111111111112"},
+            "marketSource": "solana_rpc_" + protocol,
+            "poolAddress": pool_address, "onchainVerified": True,
+            "observedAt": time.time()
+        }
+        _cache[key] = {"time": time.time(), "data": result}
+        _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
+        return result
+
+    if protocol == "meteora_dbc":
+        if decoded["base_mint"] != token_mint:
+            raise ValueError("requested mint is not the Meteora DBC base mint")
+        config = _account(decoded["config"])
+        if config["owner"] != PROGRAMS["meteora_dbc"] or len(config["data"]) < 40:
+            raise ValueError("invalid Meteora DBC PoolConfig account")
+        if config["data"][:8] != bytes([26, 108, 14, 123, 116, 230, 129, 43]):
+            raise ValueError("invalid Meteora DBC PoolConfig discriminator")
+        quote_mint = _key(config["data"], 8)
+        base_decimals = _mint_decimals(_account(decoded["base_mint"]))
+        quote_decimals = _mint_decimals(_account(quote_mint))
+        quote_usd = _quote_usd(quote_mint)
+        if quote_usd is None:
+            return None
+        ratio = (decoded["sqrt_price_x64"] / (2 ** 64)) ** 2
+        ratio *= 10 ** (base_decimals - quote_decimals)
+        token_price = ratio * quote_usd
+        base_reserve = decoded["base_reserve"] / (10 ** base_decimals)
+        quote_reserve = decoded["quote_reserve"] / (10 ** quote_decimals)
+        liquidity_usd = base_reserve * token_price + quote_reserve * quote_usd
+        if not math.isfinite(token_price) or token_price <= 0:
+            raise ValueError("Meteora DBC price is invalid")
+        result = {
+            "priceUsd": str(token_price), "liquidity": {"usd": liquidity_usd},
+            "baseToken": {"address": token_mint}, "quoteToken": {"address": quote_mint},
+            "marketSource": "solana_rpc_meteora_dbc",
+            "poolAddress": pool_address, "onchainVerified": True,
+            "observedAt": time.time()
+        }
+        _cache[key] = {"time": time.time(), "data": result}
+        _last_status.update({"configured": True, "last_success": time.time(), "last_error": None})
+        return result
+
     if token_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("requested mint is not part of decoded pool")
     vaults = _multiple_accounts([
