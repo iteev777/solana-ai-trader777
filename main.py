@@ -398,14 +398,26 @@ def analyze_token_task(address, strategy_name, token):
                 or token.get("pool_name") or ""
             )
         onchain_snapshot = None
-        if pool_address and get_onchain_status().get("rpc_configured"):
+        onchain_error = None
+        rpc_configured = get_onchain_status().get("rpc_configured")
+        if pool_address and rpc_configured:
             try:
                 onchain_snapshot = decode_pool_snapshot(
                     pool_address, pool_protocol, address
                 )
+                import protocol_validation
+                protocol_validation.record_validation(
+                    pool_protocol, pool_address, address,
+                    snapshot=onchain_snapshot
+                )
             except Exception as error:
+                onchain_error = error
                 from solana_onchain import record_onchain_error
                 record_onchain_error(error)
+                import protocol_validation
+                protocol_validation.record_validation(
+                    pool_protocol, pool_address, address, error=error
+                )
                 log_event("ONCHAIN POOL READ FAILED", address, repr(error))
         if isinstance(onchain_snapshot, dict):
             pair = dict(pair)
@@ -529,6 +541,30 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address
             }
 
+        token_security_report = {
+            "status": "SKIPPED",
+            "reason": "SOLANA_RPC_NOT_CONFIGURED"
+        }
+        if get_onchain_status().get("rpc_configured"):
+            try:
+                from token_security import get_token_security_report, evaluate_token_security
+                token_security_report = get_token_security_report(address)
+                security_decision = evaluate_token_security(token_security_report)
+                if not security_decision.get("allowed"):
+                    return {
+                        "status": "rejected",
+                        "reason": security_decision.get("reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"),
+                        "address": address,
+                        "token_security": token_security_report
+                    }
+            except Exception as security_error:
+                log_event("ONCHAIN TOKEN SECURITY FAILED", address, repr(security_error))
+                return {
+                    "status": "rejected",
+                    "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
+                    "address": address
+                }
+
         score = safe_float(trade_decision.get("score"))
 
         if score is None or not 0 <= score <= 100:
@@ -536,6 +572,30 @@ def analyze_token_task(address, strategy_name, token):
             return {
                 "status": "rejected",
                 "reason": "INVALID_APPROVED_SCORE",
+                "address": address
+            }
+
+        requested_size = (
+            safe_float(token.get("copy_trade_size_cap"))
+            or safe_float(trade_decision.get("trade_size"))
+            or safe_float(getattr(paper, "TRADE_SIZE", 5.0))
+        )
+        try:
+            from entry_intelligence import analyze_entry_route
+            entry_intelligence = analyze_entry_route(address, requested_size)
+            if not entry_intelligence.get("allowed"):
+                return {
+                    "status": "rejected",
+                    "reason": entry_intelligence.get("reason", "ENTRY_ROUTE_REJECTED"),
+                    "address": address,
+                    "route_quality": entry_intelligence.get("route_quality"),
+                    "simulation": entry_intelligence.get("simulation")
+                }
+        except Exception as route_error:
+            log_event("JUPITER ENTRY ANALYSIS FAILED", address, repr(route_error))
+            return {
+                "status": "rejected",
+                "reason": "JUPITER_ENTRY_ANALYSIS_UNAVAILABLE",
                 "address": address
             }
 
@@ -551,6 +611,8 @@ def analyze_token_task(address, strategy_name, token):
             "market_source": pair.get("marketSource") or pair.get("dexId"),
             "pool_protocol": pool_protocol,
             "onchain_verified": bool(onchain_snapshot),
+            "token_security": token_security_report,
+            "entry_intelligence": entry_intelligence,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
             "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None
         }
@@ -917,6 +979,8 @@ def process_completed_tasks():
                     "market_source": result.get("market_source"),
                     "pool_protocol": result.get("pool_protocol"),
                     "onchain_verified": result.get("onchain_verified"),
+                    "token_security": result.get("token_security"),
+                    "entry_intelligence": result.get("entry_intelligence"),
                     "copy_wallet": result.get("copy_wallet"),
                     "copy_signature": result.get("copy_signature")
                 }
