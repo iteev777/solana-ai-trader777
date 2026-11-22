@@ -60,7 +60,7 @@ def _clean_metadata_text(value):
 
 def _metadata_stage(token, mint):
     symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name_raw = token.get("name") or _get(token, "baseToken", "name")
+    name_raw = token.get("name") if "name" in token else _get(token, "baseToken", "name")
     name = _clean_metadata_text(name_raw)
     symbol = _clean_metadata_text(symbol)
 
