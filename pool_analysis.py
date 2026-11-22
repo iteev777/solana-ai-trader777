@@ -66,6 +66,35 @@ def classify_pool_error(error):
     return "structural"
 
 
+def get_pool_analysis_state(pool_address, now=None):
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        return {"state": "ready", "retry_in_seconds": 0}
+    now = time.monotonic() if now is None else float(now)
+    key = pool_address.strip()
+    with _lock:
+        structural = _structural.get(key)
+        if structural and now < structural["retry_at"]:
+            return {
+                "state": "structural_quarantine",
+                "retry_in_seconds": max(0.0, structural["retry_at"] - now),
+                "last_error": structural.get("last_error"),
+            }
+        if structural and now >= structural["retry_at"]:
+            _structural.pop(key, None)
+        transient = _transient.get(key)
+        if transient and now < transient["retry_at"]:
+            return {
+                "state": "transient_backoff",
+                "retry_in_seconds": max(0.0, transient["retry_at"] - now),
+                "last_error": transient.get("last_error"),
+            }
+        return {"state": "ready", "retry_in_seconds": 0}
+
+
+def is_structurally_blocked(pool_address, now=None):
+    return get_pool_analysis_state(pool_address, now=now)["state"] == "structural_quarantine"
+
+
 def should_skip_pool(pool_address, now=None):
     if not isinstance(pool_address, str) or not pool_address.strip():
         return False
