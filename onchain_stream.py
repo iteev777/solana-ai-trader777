@@ -22,6 +22,7 @@ _snapshots = {}
 _refreshing = set()
 _last_refresh_at = {}
 MIN_POOL_REFRESH_INTERVAL = max(0.25, float(os.getenv("TROJAN_POOL_REFRESH_INTERVAL", "0.5")))
+POOL_BATCH_POLL_INTERVAL = max(0.5, float(os.getenv("TROJAN_POOL_BATCH_POLL_INTERVAL", "0.5")))
 CANDIDATE_WATCH_TTL = max(30.0, float(os.getenv("TROJAN_CANDIDATE_WATCH_TTL", "300")))
 MAX_CANDIDATE_WATCHES = max(10, int(os.getenv("TROJAN_MAX_CANDIDATE_WATCHES", "100")))
 _thread = None
@@ -31,6 +32,12 @@ _status = {
     "last_update": None, "last_error": None, "last_latency_ms": None
 }
 _refresh_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="onchain-price")
+_batch_refresh_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pool-account-batch")
+_dirty_pools = set()
+_batch_refreshing = False
+_batch_status = {"last_refresh_pools": 0, "last_priced_pools": 0,
+                 "last_failed_pools": 0, "last_rpc_batches": 0,
+                 "last_accounts_requested": 0}
 
 
 def _rpc_ws_url():
@@ -49,6 +56,7 @@ def _remove_snapshot_if_unwatched_locked(key):
     if key not in _watches and key not in _candidate_watches:
         _snapshots.pop(key, None)
         _last_refresh_at.pop(key, None)
+        _dirty_pools.discard(key)
 
 
 def _prune_candidate_watches_locked(now=None):
@@ -141,6 +149,8 @@ def get_stream_status():
         _prune_candidate_watches_locked()
         return {
             **_status,
+            **_batch_status,
+            "batch_poll_interval_seconds": POOL_BATCH_POLL_INTERVAL,
             "configured": bool(_rpc_ws_url()),
             "watched_pools": len(set(_watches) | set(_candidate_watches)),
             "position_watches": len(_watches),
@@ -163,6 +173,21 @@ def should_refresh_pool(key, now=None):
         return True
 
 
+def store_pool_snapshot(key, snapshot):
+    """Publish a verified pool snapshot for WebSocket and dashboard readers."""
+    if not isinstance(key, (tuple, list)) or len(key) != 3 or not isinstance(snapshot, dict):
+        return False
+    observed = snapshot.get("observedAt")
+    if not isinstance(observed, (int, float)) or observed <= 0:
+        observed = time.time()
+    normalized_key = tuple(key)
+    with _lock:
+        _snapshots[normalized_key] = {"data": dict(snapshot), "observed_at": observed}
+        _status["last_update"] = observed
+        _status["last_error"] = None
+    return True
+
+
 def _refresh(key):
     started = time.perf_counter()
     try:
@@ -171,18 +196,12 @@ def _refresh(key):
         snapshot = decode_pool_snapshot(
             pool, protocol, mint, _force=True, _register_watch=False
         )
-        if not isinstance(snapshot, dict):
-            return
-        observed = snapshot.get("observedAt")
-        if not isinstance(observed, (int, float)) or observed <= 0:
-            observed = time.time()
-        with _lock:
-            _snapshots[key] = {"data": snapshot, "observed_at": observed}
-            _status["last_update"] = observed
-            _status["last_latency_ms"] = round(
-                (time.perf_counter() - started) * 1000, 1
-            )
-            _status["last_error"] = None
+        if isinstance(snapshot, dict):
+            store_pool_snapshot(key, snapshot)
+            with _lock:
+                _status["last_latency_ms"] = round(
+                    (time.perf_counter() - started) * 1000, 1
+                )
     except Exception as error:
         with _lock:
             _status["refresh_errors"] += 1
@@ -192,7 +211,32 @@ def _refresh(key):
             _refreshing.discard(key)
 
 
+def _refresh_many(keys, prune_unwatched=False):
+    global _batch_refreshing
+    started = time.perf_counter()
+    try:
+        import pool_account_fetcher
+        result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune_unwatched)
+        with _lock:
+            for name in _batch_status:
+                _batch_status[name] = result.get(name, _batch_status[name])
+            _status["last_latency_ms"] = round(
+                (time.perf_counter() - started) * 1000, 1
+            )
+            _status["last_error"] = None if result.get("last_failed_pools", 0) == 0 else (
+                "BATCH POOL REFRESH HAD " + str(result.get("last_failed_pools")) + " FAILURES"
+            )
+    except Exception as error:
+        with _lock:
+            _status["refresh_errors"] += 1
+            _status["last_error"] = "BATCH POOL REFRESH: " + str(error)[:180]
+    finally:
+        with _lock:
+            _batch_refreshing = False
+
+
 def _run():
+    global _batch_refreshing
     delay = 1
     while True:
         url = _rpc_ws_url()
@@ -214,11 +258,24 @@ def _run():
             account_cache = {}
             subscription_retry_after = {}
             request_id = 1
+            next_batch_poll = 0.0
             with _lock:
                 _status.update({"running": True, "configured": True, "last_error": None})
             while True:
                 with _lock:
                     current = _active_watch_keys_locked()
+                    now_mono = time.monotonic()
+                    poll_due = bool(current) and now_mono >= next_batch_poll
+                    batch_keys = None
+                    prune_unwatched = False
+                    if current and not _batch_refreshing and (_dirty_pools or poll_due):
+                        batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
+                        prune_unwatched = poll_due
+                        _dirty_pools.difference_update(batch_keys)
+                        _batch_refreshing = True
+                        next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
+                if batch_keys:
+                    _batch_refresh_pool.submit(_refresh_many, batch_keys, prune_unwatched)
 
                 # Remove every pool's state and reserve subscriptions when it leaves
                 # both the position set and the candidate LRU.
@@ -251,7 +308,7 @@ def _run():
                 for key in current:
                     if key not in account_cache:
                         try:
-                            accounts = get_pool_watch_accounts(key[0], key[1])
+                            accounts = get_pool_watch_accounts(key[0], key[1], key[2])
                             if not accounts:
                                 raise ValueError("pool returned no watchable accounts")
                             account_cache[key] = accounts
@@ -306,8 +363,9 @@ def _run():
                     key = pair[0]
                     with _lock:
                         _status["notifications"] += 1
-                    if should_refresh_pool(key):
-                        _refresh_pool.submit(_refresh, key)
+                        if key in _dirty_pools:
+                            _status["coalesced_notifications"] += 1
+                        _dirty_pools.add(key)
             delay = 1
         except Exception as error:
             with _lock:
