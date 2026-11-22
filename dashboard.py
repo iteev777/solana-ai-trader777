@@ -143,6 +143,14 @@ def api_events():
     ))
 
 
+@app.get("/api/filtering")
+def api_filtering():
+    return jsonify({
+        "summary": database.get_filtering_summary(),
+        "recent": database.get_recent_filter_events(100)
+    })
+
+
 @app.get("/api/health")
 def api_health():
     return jsonify({
