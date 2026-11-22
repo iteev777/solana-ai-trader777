@@ -162,7 +162,7 @@ def refresh_pools(pool_keys, prune_unwatched=False):
                     _prefetched_slot=slot,
                     _prefetched_observed_at=observed_at,
                 )
-                if not isinstance(snapshot, dict):
+                if not isinstance(snapshot, dict) or snapshot.get("onchainVerified") is not True:
                     raise ValueError("pool snapshot decoder returned no verified snapshot")
                 from onchain_stream import store_pool_snapshot
                 store_pool_snapshot(key, snapshot)
