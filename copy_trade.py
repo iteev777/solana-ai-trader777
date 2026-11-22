@@ -111,6 +111,8 @@ def _fetch_wallet_transaction(signature, wallet):
     return {
         "wallet": wallet, "signature": signature, "action": action,
         "token_mint": mint, "token_delta": delta, "sol_delta": sol_delta,
+        "block_time": tx.get("blockTime"),
+        "received_at": time.time(),
         "logs": (meta.get("logMessages") or [])[-5:]
     }
 
