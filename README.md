@@ -229,3 +229,24 @@ Optional Railway variables (unset defaults preserve the current strategy behavio
 - `TROJAN_FILTER_MIN_QUALITY_SCORE` (default: 0, disabled; range 0–100)
 
 Thresholds should be calibrated from paper-trading evidence before being tightened. A filter pass is not a buy signal; strategy, RugCheck, on-chain security, route quality and risk checks remain separate gates.
+
+
+## Named strategy conditions
+
+The strategy rule tree supports both numeric field leaves and named conditions. The read-only `/api/strategy-catalog` endpoint exposes 24 named condition types: RSI, Bollinger Bands, buy pressure, candle size/streaks, drawdown/pullback, liquidity level/change/liquidity-to-size, moving-average cross and price-to-MA, position adds/holding time/profit/giveback, price breakout/change, UTC time window, token age, transaction velocity, ATR volatility, volume spike, and VWAP.
+
+Example named leaf:
+
+```json
+{
+  "main": {
+    "all": [
+      {"condition": "Rsi", "params": {"comparison": "BELOW", "threshold": 65}},
+      {"condition": "BuyPressure", "params": {"threshold": 0.58}},
+      {"condition": "VolumeSpike", "params": {"multiplier": 1.5}}
+    ]
+  }
+}
+```
+
+Named conditions can be nested in the existing `all`, `any`, and `not` groups. Parameter ranges and enum choices are validated before saving. If a condition requires unavailable candle or position data, it fails closed with an explicit reason rather than inventing a value. Position-only conditions require the corresponding position context to be supplied; they do not become entry signals by themselves. Validate strategy changes in paper mode before tightening live-facing thresholds.
