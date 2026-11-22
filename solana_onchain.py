@@ -10,9 +10,11 @@ import math
 import os
 import struct
 import time
+import threading
 import requests
 
 RPC_URL = os.getenv("SOLANA_RPC_URL", "").strip()
+_rpc_semaphore = threading.BoundedSemaphore(4)
 TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -77,13 +79,14 @@ def _discriminator(name):
 def _rpc(method, params):
     if not RPC_URL:
         raise RuntimeError("SOLANA_RPC_URL is not configured")
-    response = requests.post(
-        RPC_URL,
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        timeout=TIMEOUT
-    )
-    response.raise_for_status()
-    payload = response.json()
+    with _rpc_semaphore:
+        response = requests.post(
+            RPC_URL,
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        payload = response.json()
     if payload.get("error"):
         raise RuntimeError(str(payload["error"])[:300])
     return payload.get("result")
