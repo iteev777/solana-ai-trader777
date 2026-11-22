@@ -623,6 +623,122 @@ def open_position_atomic(
 
 
 # ==========================================
+# ATOMIC DCA + PARTIAL EXIT OPERATIONS
+# ==========================================
+
+def add_position_investment_atomic(
+    mode, token_address, current_price, additional_investment, metadata=None
+):
+    validate_mode(mode)
+    current_price = validate_number(current_price, "current_price")
+    additional_investment = validate_number(additional_investment, "additional_investment")
+    if current_price <= 0 or additional_investment <= 0:
+        raise ValueError("DCA price and investment must be positive")
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        position = connection.execute(
+            "SELECT * FROM positions WHERE mode = ? AND token_address = ?",
+            (mode, token_address)
+        ).fetchone()
+        account = connection.execute(
+            "SELECT * FROM account_state WHERE mode = ?", (mode,)
+        ).fetchone()
+        if not position or not account:
+            return "Position or account not found"
+        old_invested = float(position["invested"])
+        old_entry = float(position["entry_price"])
+        fee = additional_investment * PAPER_FEE_RATE
+        if float(account["balance"]) < additional_investment + fee:
+            return "Insufficient balance for DCA including estimated fee"
+        new_invested = old_invested + additional_investment
+        new_entry = ((old_entry * old_invested) + (current_price * additional_investment)) / new_invested
+        try:
+            stored = json.loads(position["metadata"] or "{}")
+        except (ValueError, TypeError):
+            stored = {}
+        stored.update(metadata or {})
+        stored["paper_fee_rate"] = PAPER_FEE_RATE
+        connection.execute("""
+            UPDATE positions SET entry_price = ?, invested = ?, metadata = ?
+            WHERE mode = ? AND token_address = ?
+        """, (new_entry, new_invested, json.dumps(stored), mode, token_address))
+        connection.execute("""
+            UPDATE account_state SET balance = ?, updated_at = ? WHERE mode = ?
+        """, (float(account["balance"]) - additional_investment - fee, now(), mode))
+        connection.execute("""
+            INSERT INTO trades (token_address, action, price, amount, profit_loss,
+                                timestamp, mode, strategy)
+            VALUES (?, 'BUY', ?, ?, 0, ?, ?, ?)
+        """, (token_address, current_price, additional_investment, now(), mode, position["strategy"]))
+    return {
+        "result": "DCA ADDED", "entry_price": new_entry,
+        "invested": new_invested, "additional_investment": additional_investment
+    }
+
+
+def partial_close_position_atomic(
+    mode, token_address, current_price, fraction=0.5, reason="PARTIAL TAKE PROFIT"
+):
+    validate_mode(mode)
+    current_price = validate_number(current_price, "current_price")
+    fraction = validate_number(fraction, "fraction")
+    if current_price <= 0 or not 0 < fraction < 1:
+        raise ValueError("Invalid partial exit price or fraction")
+    with connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _ensure_daily_stats_current(connection, mode)
+        position = connection.execute(
+            "SELECT * FROM positions WHERE mode = ? AND token_address = ?",
+            (mode, token_address)
+        ).fetchone()
+        account = connection.execute(
+            "SELECT * FROM account_state WHERE mode = ?", (mode,)
+        ).fetchone()
+        if not position or not account:
+            return "Position or account not found"
+        invested = float(position["invested"])
+        sold_investment = invested * fraction
+        remaining = invested - sold_investment
+        entry_price = float(position["entry_price"])
+        gross_return = sold_investment * (current_price / entry_price)
+        try:
+            metadata = json.loads(position["metadata"] or "{}")
+        except (ValueError, TypeError):
+            metadata = {}
+        entry_fee_rate = validate_number(metadata.get("paper_fee_rate", PAPER_FEE_RATE), "paper_fee_rate")
+        entry_fee_allocated = sold_investment * entry_fee_rate
+        exit_fee = gross_return * PAPER_FEE_RATE
+        returned = gross_return - exit_fee
+        profit_loss = round(returned - sold_investment - entry_fee_allocated, 2)
+        new_balance = float(account["balance"]) + returned
+        new_daily_loss = float(account["daily_loss"]) + max(0, -profit_loss)
+        new_daily_pnl = float(account["daily_realized_pnl"]) + profit_loss
+        metadata["paper_fee_rate"] = entry_fee_rate
+        metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0)) + 1
+        connection.execute("""
+            UPDATE positions SET invested = ?, metadata = ?
+            WHERE mode = ? AND token_address = ?
+        """, (remaining, json.dumps(metadata), mode, token_address))
+        connection.execute("""
+            UPDATE account_state SET balance = ?, daily_loss = ?,
+                daily_realized_pnl = ?, daily_date = ?, updated_at = ?
+            WHERE mode = ?
+        """, (new_balance, new_daily_loss, new_daily_pnl, today(), now(), mode))
+        connection.execute("""
+            INSERT INTO trades (token_address, action, price, amount, profit_loss,
+                                timestamp, mode, strategy)
+            VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?)
+        """, (token_address, current_price, returned, profit_loss, now(), mode, position["strategy"]))
+    return {
+        "result": reason, "profit_loss": profit_loss,
+        "balance": round(new_balance, 2), "strategy": position["strategy"],
+        "invested": round(sold_investment, 2),
+        "remaining_invested": round(remaining, 2),
+        "returned_amount": round(returned, 2), "partial": True
+    }
+
+
+# ==========================================
 # ATOMIC POSITION CLOSING
 # ==========================================
 
