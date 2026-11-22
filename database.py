@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
