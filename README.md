@@ -137,3 +137,17 @@ Paper trade rows now preserve the originating copy wallet through entry, DCA, pa
 ## Eleven-protocol mainnet validation telemetry
 
 Each observed pool that reaches the on-chain decoder is recorded by the protocol family actually identified from the pool account owner and verified snapshot. The dashboard's protocol-validation panel reports real confirmed-RPC decode attempts, successes, failures and last errors for all eleven supported families. A zero count means no real pool sample for that protocol has yet been validated by this deployment; decoder unit tests do not count as mainnet validation. This telemetry is intentionally evidence-based and does not mark an unobserved protocol as verified.
+
+
+### Native pool quote foundation (read-only)
+
+`protocol_quotes.py` contains integer exact-input quote math for Raydium
+CPMM when supplied with a fresh, decoded pool snapshot. The snapshot must come
+from one consistent on-chain read and include reserves net of accrued protocol,
+fund and creator fee balances, the active fee configuration, pool status, slot
+and observation timestamp. Token-2022 transfer-fee mints and unsupported creator
+fee modes fail closed. The module does not yet decode Raydium account layouts or
+fetch pool snapshots; therefore it is not advertised as a live direct-pool
+provider and is not included in best-route selection. Jupiter/Raptor remain the
+only live quote providers until the decoder and integration are independently
+validated. No transaction signing or broadcasting is added.
