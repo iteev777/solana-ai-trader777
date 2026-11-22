@@ -4,6 +4,7 @@
 # ==========================================
 
 import time
+import copy
 import threading
 from collections import OrderedDict
 
@@ -27,6 +28,8 @@ BATCH_WAIT_SECONDS = 0.15
 REQUEST_TIMEOUT = 15
 MAX_RETRIES = 1
 
+WAIT_TIMEOUT = REQUEST_TIMEOUT + 20
+
 
 # ==========================================
 # SHARED STATE
@@ -38,7 +41,6 @@ _cache_lock = threading.Lock()
 _batch_condition = threading.Condition()
 
 _pending_addresses = OrderedDict()
-_pending_results = {}
 
 _batch_thread = None
 _batch_thread_lock = threading.Lock()
@@ -100,7 +102,7 @@ def get_cached(address):
 
         _cache.move_to_end(address)
 
-        return item["data"].copy()
+        return copy.deepcopy(item["data"])
 
 
 def save_cached(address, pair):
@@ -125,7 +127,7 @@ def save_cached(address, pair):
             _cache.pop(key, None)
 
         _cache[address] = {
-            "data": pair.copy(),
+            "data": copy.deepcopy(pair),
             "expires": now + CACHE_TTL
         }
 
@@ -141,7 +143,10 @@ def clear_market_cache():
     with _cache_lock:
         _cache.clear()
 
-    print("[TROJAN V2] MARKET CACHE CLEARED", flush=True)
+    print(
+        "[TROJAN V2] MARKET CACHE CLEARED",
+        flush=True
+    )
 
 
 # ==========================================
@@ -151,7 +156,7 @@ def clear_market_cache():
 def get_pair_address(pair):
 
     if not isinstance(pair, dict):
-        return None
+        return []
 
     base_token = pair.get("baseToken")
     quote_token = pair.get("quoteToken")
@@ -160,15 +165,17 @@ def get_pair_address(pair):
 
     if isinstance(base_token, dict):
 
-        addresses.append(
-            base_token.get("address")
-        )
+        address = base_token.get("address")
+
+        if valid_address(address):
+            addresses.append(address)
 
     if isinstance(quote_token, dict):
 
-        addresses.append(
-            quote_token.get("address")
-        )
+        address = quote_token.get("address")
+
+        if valid_address(address):
+            addresses.append(address)
 
     return addresses
 
@@ -180,7 +187,9 @@ def get_liquidity(pair):
     if not isinstance(liquidity, dict):
         return -1
 
-    value = safe_float(liquidity.get("usd"))
+    value = safe_float(
+        liquidity.get("usd")
+    )
 
     if value is None or value < 0:
         return -1
@@ -203,7 +212,9 @@ def select_best_pairs(pairs, requested_addresses):
         if not isinstance(pair, dict):
             continue
 
-        price = safe_float(pair.get("priceUsd"))
+        price = safe_float(
+            pair.get("priceUsd")
+        )
 
         if price is None or price <= 0:
             continue
@@ -220,12 +231,18 @@ def select_best_pairs(pairs, requested_addresses):
             if address not in requested:
                 continue
 
-            previous = best_liquidity.get(address, -1)
+            previous = best_liquidity.get(
+                address,
+                -1
+            )
 
             if liquidity > previous:
 
                 best_liquidity[address] = liquidity
-                best_pairs[address] = pair.copy()
+
+                best_pairs[address] = copy.deepcopy(
+                    pair
+                )
 
     return best_pairs
 
@@ -236,14 +253,20 @@ def select_best_pairs(pairs, requested_addresses):
 
 def fetch_batch(addresses):
 
-    addresses = list(dict.fromkeys(addresses))
+    addresses = list(
+        dict.fromkeys(addresses)
+    )
 
     if not addresses:
         return {}
 
     results = {}
 
-    for start in range(0, len(addresses), MAX_BATCH_SIZE):
+    for start in range(
+        0,
+        len(addresses),
+        MAX_BATCH_SIZE
+    ):
 
         batch = addresses[
             start:start + MAX_BATCH_SIZE
@@ -271,7 +294,11 @@ def fetch_batch(addresses):
             results.update(selected)
 
             for address, pair in selected.items():
-                save_cached(address, pair)
+
+                save_cached(
+                    address,
+                    pair
+                )
 
             print(
                 "[TROJAN V2] MARKET BATCH COMPLETE",
@@ -310,9 +337,29 @@ def batch_worker():
 
                 _batch_condition.wait()
 
-            _batch_condition.wait(
-                timeout=BATCH_WAIT_SECONDS
+            # Allow concurrent requests to join the batch.
+            deadline = (
+                time.monotonic()
+                + BATCH_WAIT_SECONDS
             )
+
+            while (
+                len(_pending_addresses) < MAX_BATCH_SIZE
+            ):
+
+                remaining = (
+                    deadline - time.monotonic()
+                )
+
+                if remaining <= 0:
+                    break
+
+                _batch_condition.wait(
+                    timeout=remaining
+                )
+
+                if not _pending_addresses:
+                    break
 
             addresses = list(
                 _pending_addresses.keys()
@@ -326,8 +373,22 @@ def batch_worker():
                     _pending_addresses.pop(address)
                 )
 
-        results = fetch_batch(addresses)
+        # Network request outside the condition lock.
+        try:
 
+            results = fetch_batch(addresses)
+
+        except Exception as error:
+
+            print(
+                "[TROJAN V2] BATCH WORKER ERROR:",
+                repr(error),
+                flush=True
+            )
+
+            results = {}
+
+        # Notify every caller waiting for each address.
         for address in addresses:
 
             result = results.get(address)
@@ -335,7 +396,7 @@ def batch_worker():
             for event, result_holder in waiters[address]:
 
                 result_holder["data"] = (
-                    result.copy()
+                    copy.deepcopy(result)
                     if isinstance(result, dict)
                     else None
                 )
@@ -374,6 +435,103 @@ def start_batch_worker():
 
 
 # ==========================================
+# SHARED REQUEST QUEUE
+# ==========================================
+
+def request_addresses(addresses):
+
+    if not addresses:
+        return {}
+
+    start_batch_worker()
+
+    waiters = {}
+    results = {}
+
+    # Check cache first.
+    missing = []
+
+    for address in addresses:
+
+        cached = get_cached(address)
+
+        if cached is not None:
+
+            results[address] = cached
+
+        else:
+
+            missing.append(address)
+
+    if not missing:
+        return results
+
+    # Enqueue all missing addresses together.
+    with _batch_condition:
+
+        for address in missing:
+
+            event = threading.Event()
+
+            result_holder = {
+                "data": None
+            }
+
+            waiters[address] = (
+                event,
+                result_holder
+            )
+
+            if address in _pending_addresses:
+
+                _pending_addresses[address].append(
+                    (event, result_holder)
+                )
+
+            else:
+
+                _pending_addresses[address] = [
+                    (event, result_holder)
+                ]
+
+        _batch_condition.notify_all()
+
+    # Wait for all requested addresses.
+    deadline = (
+        time.monotonic() + WAIT_TIMEOUT
+    )
+
+    for address, (event, result_holder) in (
+        waiters.items()
+    ):
+
+        remaining = (
+            deadline - time.monotonic()
+        )
+
+        if remaining > 0:
+            event.wait(timeout=remaining)
+
+        if not event.is_set():
+
+            print(
+                "[TROJAN V2] MARKET DATA TIMEOUT",
+                "| TOKEN:",
+                address,
+                flush=True
+            )
+
+            continue
+
+        result = result_holder.get("data")
+
+        if isinstance(result, dict):
+            results[address] = copy.deepcopy(result)
+
+    return results
+
+
+# ==========================================
 # SINGLE TOKEN REQUEST
 # ==========================================
 
@@ -384,56 +542,11 @@ def get_market_data(address):
 
     address = address.strip()
 
-    cached = get_cached(address)
+    results = request_addresses([
+        address
+    ])
 
-    if cached is not None:
-        return cached
-
-    start_batch_worker()
-
-    event = threading.Event()
-
-    result_holder = {
-        "data": None
-    }
-
-    with _batch_condition:
-
-        if address in _pending_addresses:
-
-            _pending_addresses[address].append(
-                (event, result_holder)
-            )
-
-        else:
-
-            _pending_addresses[address] = [
-                (event, result_holder)
-            ]
-
-        _batch_condition.notify()
-
-    event.wait(
-        timeout=REQUEST_TIMEOUT + 10
-    )
-
-    if not event.is_set():
-
-        print(
-            "[TROJAN V2] MARKET DATA TIMEOUT",
-            "| TOKEN:",
-            address,
-            flush=True
-        )
-
-        return None
-
-    result = result_holder.get("data")
-
-    if isinstance(result, dict):
-        return result.copy()
-
-    return None
+    return results.get(address)
 
 
 # ==========================================
@@ -442,7 +555,10 @@ def get_market_data(address):
 
 def get_market_data_batch(addresses):
 
-    if not isinstance(addresses, (list, tuple, set)):
+    if not isinstance(
+        addresses,
+        (list, tuple, set)
+    ):
         return {}
 
     unique_addresses = list(
@@ -456,28 +572,9 @@ def get_market_data_batch(addresses):
     if not unique_addresses:
         return {}
 
-    results = {}
-    missing = []
-
-    for address in unique_addresses:
-
-        cached = get_cached(address)
-
-        if cached is not None:
-
-            results[address] = cached
-
-        else:
-
-            missing.append(address)
-
-    if missing:
-
-        fetched = fetch_batch(missing)
-
-        results.update(fetched)
-
-    return results
+    return request_addresses(
+        unique_addresses
+    )
 
 
 # ==========================================
@@ -492,17 +589,24 @@ def get_market_data_status():
 
     with _batch_condition:
 
-        pending_count = len(_pending_addresses)
+        pending_count = len(
+            _pending_addresses
+        )
+
+    with _batch_thread_lock:
+
+        worker_running = (
+            _batch_thread is not None
+            and _batch_thread.is_alive()
+        )
 
     return {
         "cache_entries": cache_entries,
         "pending_addresses": pending_count,
         "max_batch_size": MAX_BATCH_SIZE,
         "cache_ttl": CACHE_TTL,
-        "worker_running": (
-            _batch_thread is not None
-            and _batch_thread.is_alive()
-        )
+        "batch_wait_seconds": BATCH_WAIT_SECONDS,
+        "worker_running": worker_running
     }
 
 
