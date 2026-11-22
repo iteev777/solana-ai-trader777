@@ -4,8 +4,8 @@ import unittest
 from unittest import mock
 
 from solana_onchain import (_decode_pool, _decode_raydium_amm_config, _discriminator,
-                            quote_raydium_cpmm_pool, PROGRAMS, normalize_protocol,
-                            TOKEN_PROGRAM)
+                            _b58decode, quote_raydium_cpmm_pool, PROGRAMS,
+                            normalize_protocol, TOKEN_PROGRAM)
 from indicators import calculate_indicators
 from strategy_rules import validate_rules_config
 import onchain_stream
@@ -48,8 +48,8 @@ class OnchainDecoderTests(unittest.TestCase):
         put_key(pool, 104, 4)     # vault token1
         put_key(pool, 168, 1)     # mint token0
         put_key(pool, 200, 2)     # mint token1
-        put_key(pool, 232, 9)     # token program token0
-        put_key(pool, 264, 9)     # token program token1
+        pool[232:264] = _b58decode(TOKEN_PROGRAM)  # token program token0
+        pool[264:296] = _b58decode(TOKEN_PROGRAM)  # token program token1
         struct.pack_into("<Q", pool, 373, 0)
         pool[389] = 1             # creator fee only on token0
         pool[390] = 1             # creator fee enabled
