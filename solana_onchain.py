@@ -276,11 +276,33 @@ def record_onchain_error(error):
     _last_status["last_error"] = str(error)[:250]
 
 
+_rpc_probe = {"checked_at": 0.0, "healthy": False, "error": None}
+
+
+def check_rpc_health(force=False):
+    now = time.time()
+    if not RPC_URL:
+        return False, "SOLANA_RPC_URL missing"
+    if not force and now - _rpc_probe["checked_at"] < 30:
+        return _rpc_probe["healthy"], _rpc_probe["error"]
+    try:
+        result = _rpc("getHealth", [])
+        healthy = result == "ok"
+        _rpc_probe.update({"checked_at": now, "healthy": healthy,
+                           "error": None if healthy else "RPC health returned " + str(result)[:100]})
+    except Exception as error:
+        _rpc_probe.update({"checked_at": now, "healthy": False, "error": str(error)[:180]})
+    return _rpc_probe["healthy"], _rpc_probe["error"]
+
+
 def get_onchain_status():
+    healthy, error = check_rpc_health()
     return {
         **_last_status,
         "supported_protocols": sorted(list(PROGRAMS.keys()) + ["raydium_auto"]),
-        "rpc_configured": bool(RPC_URL)
+        "rpc_configured": bool(RPC_URL),
+        "rpc_healthy": healthy,
+        "rpc_error": error
     }
 
 
