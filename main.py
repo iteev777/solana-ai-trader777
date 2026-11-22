@@ -21,7 +21,8 @@ from liquidity_monitor import check_liquidity
 
 from market_data import (
     get_market_data,
-    get_market_data_batch
+    get_market_data_batch,
+    get_gecko_pool_data_batch
 )
 
 from database import (
@@ -336,7 +337,9 @@ def check_rugcheck(token_address):
 
 def analyze_token_task(address, strategy_name, token):
 
-    pair = get_market_data(address)
+    pair = token.get("market_data") if isinstance(token, dict) else None
+    if not isinstance(pair, dict):
+        pair = get_market_data(address)
 
     if not pair:
 
@@ -463,7 +466,9 @@ def analyze_token_task(address, strategy_name, token):
             "liquidity": liquidity,
             "score": score,
             "strategy": strategy_name,
-            "analysis": trade_decision
+            "analysis": trade_decision,
+            "pool_address": token.get("poolAddress"),
+            "market_source": pair.get("marketSource") or pair.get("dexId")
         }
 
     except Exception as error:
@@ -732,7 +737,11 @@ def process_completed_tasks():
             trade_result = manager.process_approved_signal(
                 address,
                 price,
-                strategy=strategy_name
+                strategy=strategy_name,
+                metadata={
+                    "pool_address": result.get("pool_address"),
+                    "market_source": result.get("market_source")
+                }
             )
 
             log_event(
@@ -761,63 +770,70 @@ def add_discovery_tokens():
     tokens = []
 
     try:
-
         result = scan_tokens()
-
         if isinstance(result, (list, tuple)):
             tokens.extend(result)
-
     except Exception as error:
-
         log_event("SCANNER ERROR", reason=repr(error))
 
     try:
-
         result = collect_tokens()
-
         if isinstance(result, (list, tuple)):
             tokens.extend(result)
-
     except Exception as error:
-
         log_event("AGGREGATOR ERROR", reason=repr(error))
 
-    added = 0
+    # Merge all feeds before scheduling so a DexScreener candidate does not
+    # hide useful GeckoTerminal pool metadata for the same mint.
+    merged = {}
     invalid = 0
+    for token in tokens:
+        if not isinstance(token, dict):
+            invalid += 1
+            continue
+        address = get_token_address(token)
+        if not address:
+            invalid += 1
+            continue
+        candidate = merged.setdefault(address, {
+            "tokenAddress": address,
+            "chainId": "solana",
+            "discovery_sources": []
+        })
+        for key, value in token.items():
+            if key == "discovery_sources":
+                sources = value if isinstance(value, list) else [value]
+                for source in sources:
+                    if isinstance(source, str) and source.strip():
+                        normalized = source.strip().lower()
+                        if normalized not in candidate["discovery_sources"]:
+                            candidate["discovery_sources"].append(normalized)
+            elif key == "market_data" and isinstance(value, dict):
+                # Prefer a concrete pool snapshot over absent metadata.
+                candidate[key] = value
+            elif key not in candidate or candidate[key] in (None, "", {}, []):
+                candidate[key] = value
+
+    added = 0
     already_seen = 0
     already_pending = 0
     already_open = 0
     cooldown = 0
     blocked = 0
 
-    for token in tokens:
-
-        if not isinstance(token, dict):
-            invalid += 1
-            continue
-
-        address = get_token_address(token)
-
-        if not address:
-            invalid += 1
-            continue
-
+    for address, token in merged.items():
         if address in pending_tasks:
             already_pending += 1
             continue
-
         if address in seen_tokens:
             already_seen += 1
             continue
-
         if address in paper.get_positions():
             already_open += 1
             continue
-
         if time.time() < rejected_tokens_until.get(address, 0):
             cooldown += 1
             continue
-
         if schedule_token(address, "main", token):
             added += 1
         else:
@@ -828,6 +844,7 @@ def add_discovery_tokens():
         reason=(
             "queued=" + str(added)
             + " | scanned=" + str(len(tokens))
+            + " | unique=" + str(len(merged))
             + " | invalid=" + str(invalid)
             + " | already_seen=" + str(already_seen)
             + " | already_pending=" + str(already_pending)
@@ -1002,6 +1019,18 @@ def monitor_positions():
         if not isinstance(market_data, dict):
             log_event("POSITION BATCH ERROR", reason="INVALID RESPONSE")
             return
+
+        missing_pool_addresses = [
+            position.get("metadata", {}).get("pool_address")
+            for address, position in positions
+            if address not in market_data
+            and isinstance(position, dict)
+            and isinstance(position.get("metadata"), dict)
+            and position["metadata"].get("pool_address")
+        ]
+        if missing_pool_addresses:
+            gecko_fallback = get_gecko_pool_data_batch(missing_pool_addresses)
+            market_data.update(gecko_fallback)
 
     except Exception as error:
 
