@@ -49,6 +49,11 @@ class LiveTrading:
     def prepare_swap_plan(self, quote, side):
         return live_execution.build_execution_plan(quote, side)
 
+    def simulate_unsigned_swap(self, input_mint, output_mint, amount, slippage_bps=None, taker=None):
+        return live_execution.simulate_unsigned_swap(
+            input_mint, output_mint, amount, slippage_bps, taker
+        )
+
     def execute_swap_plan(self, plan):
         return live_execution.execute_plan(plan)
 
