@@ -13,6 +13,7 @@ _server = None
 _server_thread = None
 _server_lock = threading.Lock()
 _wallet_price_cache = {"checked_at": 0, "price_usd": None}
+_wallet_portfolio_cache = {"checked_at": 0, "data": None}
 
 
 def _authorized():
@@ -180,67 +181,195 @@ def api_overview():
 
 @app.get("/api/wallet-balance")
 def api_wallet_balance():
-    """Read-only native SOL balance for the configured public wallet."""
+    """Read-only SOL + SPL/Token-2022 portfolio snapshot for the configured wallet."""
+    global _wallet_portfolio_cache
     wallet = os.getenv("TROJAN_PUBLIC_WALLET_ADDRESS", "").strip()
     if not wallet:
         return jsonify({"configured": False, "error": "Public wallet address is not configured"}), 503
 
+    now = time.time()
+    cached = _wallet_portfolio_cache.get("data")
+    if cached and now - _wallet_portfolio_cache.get("checked_at", 0) < 15:
+        return jsonify(cached)
+
     try:
+        import math
         import solana_onchain
         import requests
 
-        raw = solana_onchain._b58decode(wallet)
-        if len(raw) != 32:
+        if len(solana_onchain._b58decode(wallet)) != 32:
             raise ValueError("Wallet address is not a valid Solana public key")
 
-        result = solana_onchain._rpc(
-            "getBalance",
-            [wallet, {"commitment": "confirmed"}]
+        balance_result = solana_onchain._rpc(
+            "getBalance", [wallet, {"commitment": "confirmed"}]
         )
-        lamports = int((result or {}).get("value", 0))
+        lamports = int((balance_result or {}).get("value", 0))
         sol_balance = lamports / 1_000_000_000
 
-        # Cache the public SOL/USD quote briefly to avoid unnecessary price API calls.
-        global _wallet_price_cache
-        now = datetime.now(timezone.utc).timestamp()
-        if now - _wallet_price_cache["checked_at"] >= 15:
-            price = None
+        holdings = {}
+        scan_errors = []
+        for program_id in solana_onchain.TOKEN_PROGRAMS:
+            try:
+                response = solana_onchain._rpc(
+                    "getTokenAccountsByOwner",
+                    [
+                        wallet,
+                        {"programId": program_id},
+                        {"encoding": "jsonParsed", "commitment": "confirmed"}
+                    ]
+                )
+                for item in (response or {}).get("value", []):
+                    parsed = (
+                        (item.get("account") or {})
+                        .get("data", {})
+                        .get("parsed", {})
+                        .get("info", {})
+                    )
+                    mint = parsed.get("mint")
+                    token_amount = parsed.get("tokenAmount") or {}
+                    raw_amount = token_amount.get("amount", "0")
+                    decimals = int(token_amount.get("decimals", 0) or 0)
+                    amount = float(raw_amount) / (10 ** decimals) if decimals >= 0 else 0
+                    if not mint or not math.isfinite(amount) or amount <= 0:
+                        continue
+                    current = holdings.setdefault(mint, {
+                        "mint": mint, "amount": 0.0, "decimals": decimals,
+                        "program": program_id
+                    })
+                    current["amount"] += amount
+            except Exception as error:
+                scan_errors.append(str(error)[:160])
+
+        assets = [{
+            "mint": mint,
+            "symbol": "SOL",
+            "name": "Solana",
+            "amount": sol_balance,
+            "price_usd": None,
+            "value_usd": None,
+            "kind": "native"
+        }]
+        token_items = list(holdings.values())
+        prices = {}
+        stable_mints = {
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        }
+        for item in token_items:
+            if item["mint"] in stable_mints:
+                prices[item["mint"]] = {"price": 1.0, "symbol": "USDC" if item["mint"].startswith("EPjF") else "USDT", "name": "USD stablecoin"}
+
+        # DexScreener accepts up to 30 token mints per request. Fetch quotes in
+        # bounded batches; illiquid or unsupported tokens remain explicitly unpriced.
+        priceable = [item["mint"] for item in token_items if item["mint"] not in prices]
+        for offset in range(0, min(len(priceable), 120), 30):
+            batch = priceable[offset:offset + 30]
             try:
                 quote = requests.get(
-                    "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112",
-                    timeout=6
+                    "https://api.dexscreener.com/tokens/v1/solana/" + ",".join(batch),
+                    timeout=4
                 )
                 quote.raise_for_status()
-                pairs = (quote.json() or {}).get("pairs") or []
-                sol_pairs = [
-                    pair for pair in pairs
-                    if pair.get("chainId") == "solana"
-                    and pair.get("priceUsd")
-                    and float((pair.get("liquidity") or {}).get("usd") or 0) > 0
-                ]
-                if sol_pairs:
-                    best = max(
-                        sol_pairs,
-                        key=lambda pair: float((pair.get("liquidity") or {}).get("usd") or 0)
-                    )
-                    price = float(best["priceUsd"])
-            except Exception:
-                price = _wallet_price_cache["price_usd"]
+                pairs = quote.json() or []
+                for pair in pairs if isinstance(pairs, list) else []:
+                    if pair.get("chainId") != "solana":
+                        continue
+                    base = pair.get("baseToken") or {}
+                    quote_token = pair.get("quoteToken") or {}
+                    base_mint = base.get("address")
+                    quote_mint = quote_token.get("address")
+                    price_base = float(pair.get("priceUsd") or 0)
+                    price_native = float(pair.get("priceNative") or 0)
+                    liquidity = float((pair.get("liquidity") or {}).get("usd") or 0)
+                    if not math.isfinite(price_base) or price_base <= 0:
+                        continue
+                    candidate = None
+                    if base_mint in batch:
+                        candidate = (base_mint, price_base, base)
+                    elif quote_mint in batch and price_native > 0:
+                        candidate = (quote_mint, price_base / price_native, quote_token)
+                    if not candidate:
+                        continue
+                    mint, token_price, metadata = candidate
+                    if not math.isfinite(token_price) or token_price <= 0:
+                        continue
+                    old = prices.get(mint)
+                    if old is None or liquidity > old.get("liquidity", 0):
+                        prices[mint] = {
+                            "price": token_price,
+                            "symbol": str(metadata.get("symbol") or "TOKEN")[:24],
+                            "name": str(metadata.get("name") or "Unknown token")[:60],
+                            "liquidity": liquidity
+                        }
+            except Exception as error:
+                scan_errors.append("Price batch: " + str(error)[:130])
 
-            _wallet_price_cache = {"checked_at": now, "price_usd": price}
+        sol_price = None
+        try:
+            sol_quote = requests.get(
+                "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112",
+                timeout=4
+            )
+            sol_quote.raise_for_status()
+            sol_pairs = (sol_quote.json() or {}).get("pairs") or []
+            valid_pairs = [
+                pair for pair in sol_pairs
+                if pair.get("chainId") == "solana" and pair.get("priceUsd")
+                and float((pair.get("liquidity") or {}).get("usd") or 0) > 0
+            ]
+            if valid_pairs:
+                best = max(valid_pairs, key=lambda pair: float((pair.get("liquidity") or {}).get("usd") or 0))
+                sol_price = float(best["priceUsd"])
+        except Exception as error:
+            scan_errors.append("SOL quote: " + str(error)[:130])
 
-        price_usd = _wallet_price_cache["price_usd"]
-        return jsonify({
+        assets[0]["price_usd"] = sol_price
+        assets[0]["value_usd"] = sol_balance * sol_price if sol_price is not None else None
+
+        priced_total = assets[0]["value_usd"] or 0.0
+        unpriced_count = 0
+        for item in token_items:
+            quote = prices.get(item["mint"])
+            token_price = quote.get("price") if quote else None
+            value = item["amount"] * token_price if token_price is not None else None
+            if value is None:
+                unpriced_count += 1
+            else:
+                priced_total += value
+            assets.append({
+                "mint": item["mint"],
+                "symbol": quote.get("symbol", "UNPRICED") if quote else "UNPRICED",
+                "name": quote.get("name", "No reliable market price") if quote else "No reliable market price",
+                "amount": item["amount"],
+                "price_usd": token_price,
+                "value_usd": value,
+                "kind": "spl"
+            })
+
+        assets[1:] = sorted(
+            assets[1:],
+            key=lambda asset: (asset["value_usd"] is not None, asset["value_usd"] or 0),
+            reverse=True
+        )
+        result = {
             "configured": True,
             "wallet": wallet,
             "sol_balance": sol_balance,
-            "sol_price_usd": price_usd,
-            "sol_value_usd": sol_balance * price_usd if price_usd is not None else None,
-            "lamports": lamports,
+            "sol_price_usd": sol_price,
+            "sol_value_usd": assets[0]["value_usd"],
+            "portfolio_value_usd": priced_total if sol_price is not None else None,
+            "assets": assets,
+            "token_count": len(token_items),
+            "priced_token_count": len(token_items) - unpriced_count,
+            "unpriced_token_count": unpriced_count,
+            "token_scan_errors": scan_errors[:4],
+            "price_lookup_limited": len(priceable) > 120,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "commitment": "confirmed",
-            "asset_scope": "native SOL only"
-        })
+            "asset_scope": "native SOL + SPL Token + Token-2022"
+        }
+        _wallet_portfolio_cache = {"checked_at": now, "data": result}
+        return jsonify(result)
     except Exception as error:
         return jsonify({
             "configured": True,
@@ -415,6 +544,7 @@ main{max-width:1440px;padding-top:16px}
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Invested</small><strong id="invested">—</strong></div></div>
+<section class="panel section"><h2>PHANTOM WALLET ASSETS</h2><div class="muted" id="wallet-summary">Loading on-chain assets…</div><div style="overflow:auto;margin-top:10px"><table><thead><tr><th>Asset</th><th>Amount</th><th>Price</th><th>Value</th><th>Mint</th></tr></thead><tbody id="wallet-assets"><tr><td colspan="5" class="muted">Loading wallet…</td></tr></tbody></table></div></section>
 <div class="split"><section class="panel section" id="home-health"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 </section><section class="app-view" id="view-positions"><section class="panel section" id="positions-panel"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions-copy"></tbody></table></div></section></section><section class="app-view" id="view-trades"><section class="panel section" id="trades-panel"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
@@ -437,52 +567,83 @@ document.querySelectorAll(".app-nav button").forEach(button=>button.addEventList
 async function loadWallet(){
  try{
   const w=await get('/api/wallet-balance');
-  if(!w.configured){document.getElementById('wallet-sol').textContent='Not set';document.getElementById('wallet-usd').textContent='Set TROJAN_PUBLIC_WALLET_ADDRESS';return;}
+  if(!w.configured){document.getElementById('wallet-total').textContent='Not set';document.getElementById('wallet-usd').textContent='Set TROJAN_PUBLIC_WALLET_ADDRESS';return;}
   if(w.error)throw Error(w.error);
-  document.getElementById('wallet-sol').textContent=fmt(w.sol_balance,4)+' SOL';
-  document.getElementById('wallet-usd').textContent=w.sol_value_usd===null?'USD quote unavailable':'≈ '+usd(w.sol_value_usd)+' · '+short(w.wallet);
-  document.getElementById('wallet-sol').title='Confirmed on-chain balance';
- }catch(err){document.getElementById('wallet-usd').textContent='Wallet update failed: '+err.message;}
+  document.getElementById('wallet-total').textContent=w.portfolio_value_usd===null?'—':usd(w.portfolio_value_usd);
+  document.getElementById('wallet-usd').textContent=fmt(w.sol_balance,4)+' SOL · '+w.token_count+' SPL assets · '+w.unpriced_token_count+' unpriced · '+short(w.wallet);
+  document.getElementById('wallet-summary').textContent='Confirmed on-chain snapshot · '+w.priced_token_count+'/'+w.token_count+' SPL tokens priced · refreshed '+time(w.timestamp)+(w.price_lookup_limited?' · price lookup capped at 120 tokens':'');
+  const rows=(w.assets||[]).map(function(a){
+   const name=esc(a.symbol||'TOKEN');
+   const amount=fmt(a.amount, a.kind==='native'?4:6);
+   const price=a.price_usd===null?'Unpriced':usd(a.price_usd);
+   const value=a.value_usd===null?'—':usd(a.value_usd);
+   return '<tr><td><b>'+name+'</b><div class="muted">'+esc(a.name||'')+'</div></td><td>'+amount+'</td><td>'+price+'</td><td>'+(a.value_usd===null?'<span class="muted">Unpriced</span>':value)+'</td><td class="token">'+esc(short(a.mint))+'</td></tr>';
+  });
+  document.getElementById('wallet-assets').innerHTML=rows.length?rows.join(''):'<tr><td colspan="5" class="muted">No SPL assets found</td></tr>';
+ }catch(err){document.getElementById('wallet-usd').textContent='Wallet update failed: '+err.message;document.getElementById('wallet-summary').textContent='Wallet data unavailable';}
 }
-async function loadAll(){try{
-const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering'),get('/api/performance')]);
-const o=data[0],t=data[1],e=data[2],f=data[3],p=data[4],a=o.account,s=o.stats;
-document.getElementById('balance').textContent=usd(a.balance);
-document.getElementById('pnl').textContent=usd(s.total_profit);
-document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
-document.getElementById('winrate').textContent=fmt(s.win_rate,1)+'%';
-document.getElementById('open').textContent=o.position_count;
-document.getElementById('daily').textContent=usd(a.daily_realized_pnl);
-document.getElementById('loss').textContent=usd(a.daily_loss)+' / '+usd(o.risk.max_daily_loss);
-document.getElementById('closed').textContent=s.total_trades;
-document.getElementById('invested').textContent=usd(a.invested);
-document.getElementById('positions').innerHTML=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+p.token+'</td><td>'+p.strategy+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td><td>'+p.dca_count+'</td><td>'+(p.partial_take_profit_done?'Done':'—')+'</td></tr>';}).join(''):'<tr><td colspan="8" class="muted">No open positions</td></tr>';
-const m=o.market_data,r=o.runtime;
-const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
-document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
-document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
-document.getElementById('trades').innerHTML=t.length?t.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td class="'+(x.action==='SELL'?'bad':'good')+'">'+x.action+'</td><td class="token">'+short(x.token_address)+'</td><td>'+fmt(x.price,8)+'</td><td>'+usd(x.amount)+'</td><td class="'+(x.profit_loss>=0?'good':'bad')+'">'+usd(x.profit_loss)+'</td><td>'+x.strategy+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No trades recorded</td></tr>';
-const decisions=f.summary.decisions||{};
-document.getElementById('performance').innerHTML=p.strategies.length?p.strategies.map(function(x){return '<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Closed: '+esc(x.closed_trades)+' · Wins: '+esc(x.wins)+' · Losses: '+esc(x.losses)+' · Win rate: '+fmt(x.win_rate,1)+'%</div></div>';}).join(''):'<div class="muted">No closed paper trades yet. Strategy stats appear after the first SELL.</div>';
-document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
-document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
-document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.event_type)+'</td><td>'+esc((x.message||'').slice(0,180))+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';
-}catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}}
-async function loadAdvanced(){try{
-const values=await Promise.all([get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades?limit=50')]);
-const s=values[0],h=values[1],c=values[2];
-document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
-document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
-document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
-const r=h.readiness;
-document.getElementById('readiness').innerHTML=r.checks.map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':(x.required?'bad':'muted'))+'">'+(x.ok?'OK':'NOT CONFIGURED / CHECK')+'</span><div class="muted">'+esc(x.details||'')+'</div></div>').join('');
-document.getElementById('onchain-status').textContent='On-chain RPC: '+(h.onchain.rpc_configured?'configured':'not configured')+' · protocols: '+h.onchain.supported_protocols.join(', ');
-document.getElementById('indicator-status').textContent='OHLCV cache: '+h.indicators.ready_pools+' ready pools / '+h.indicators.cached_pools+' cached pools';
-document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
-document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
-}catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}}
+async function loadHome(){
+ try{
+  const o=await get('/api/overview'),a=o.account,s=o.stats;
+  document.getElementById('balance').textContent=usd(a.balance);
+  document.getElementById('pnl').textContent=usd(s.total_profit);
+  document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
+  document.getElementById('winrate').textContent=fmt(s.win_rate,1)+'%';
+  document.getElementById('open').textContent=o.position_count;
+  document.getElementById('daily').textContent=usd(a.daily_realized_pnl);
+  document.getElementById('loss').textContent=usd(a.daily_loss)+' / '+usd(o.risk.max_daily_loss);
+  document.getElementById('closed').textContent=s.total_trades;
+  document.getElementById('invested').textContent=usd(a.invested);
+  const positionRows=o.positions.length?o.positions.map(function(p){return '<tr><td class="token">'+esc(short(p.token))+'</td><td>'+esc(p.strategy)+'</td><td>'+fmt(p.entry_price,8)+'</td><td>'+fmt(p.current_price,8)+'</td><td class="'+(p.roi_percent>=0?'good':'bad')+'">'+(p.roi_percent===null?'—':fmt(p.roi_percent)+'%')+'</td><td>'+usd(p.invested)+'</td><td>'+p.dca_count+'</td><td>'+(p.partial_take_profit_done?'Done':'—')+'</td></tr>';}).join(''):'<tr><td colspan="8" class="muted">No open positions</td></tr>';
+  document.getElementById('positions').innerHTML=positionRows;
+  document.getElementById('positions-copy').innerHTML=positionRows;
+  const m=o.market_data,r=o.runtime;
+  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
+  document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
+  document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
+ }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}
+}
+async function loadTrades(){
+ try{const t=await get('/api/trades?limit=50');
+ document.getElementById('trades').innerHTML=t.length?t.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td class="'+(x.action==='SELL'?'bad':'good')+'">'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_address))+'</td><td>'+fmt(x.price,8)+'</td><td>'+usd(x.amount)+'</td><td class="'+(x.profit_loss>=0?'good':'bad')+'">'+usd(x.profit_loss)+'</td><td>'+esc(x.strategy)+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No trades recorded</td></tr>';
+ }catch(err){document.getElementById('trades').innerHTML='<tr><td colspan="7" class="muted">'+esc(err.message)+'</td></tr>';}
+}
+async function loadAnalytics(){
+ try{
+  const values=await Promise.all([get('/api/filtering'),get('/api/performance')]),f=values[0],p=values[1];
+  const decisions=f.summary.decisions||{};
+  document.getElementById('performance').innerHTML=p.strategies.length?p.strategies.map(function(x){return '<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Closed: '+esc(x.closed_trades)+' · Wins: '+esc(x.wins)+' · Losses: '+esc(x.losses)+' · Win rate: '+fmt(x.win_rate,1)+'%</div></div>';}).join(''):'<div class="muted">No closed paper trades yet. Strategy stats appear after the first SELL.</div>';
+  document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
+  document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
+ }catch(err){document.getElementById('performance').textContent='Analytics unavailable: '+err.message;}
+}
+async function loadAdvanced(){
+ try{
+  const values=await Promise.all([get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades')]);
+  const s=values[0],h=values[1],c=values[2];
+  document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
+  document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
+  document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
+  const r=h.readiness;
+  document.getElementById('readiness').innerHTML=r.checks.map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':(x.required?'bad':'muted'))+'">'+(x.ok?'OK':'NOT CONFIGURED / CHECK')+'</span><div class="muted">'+esc(x.details||'')+'</div></div>').join('');
+  document.getElementById('onchain-status').textContent='On-chain RPC: '+(h.onchain.rpc_configured?'configured':'not configured')+' · protocols: '+h.onchain.supported_protocols.join(', ');
+  document.getElementById('indicator-status').textContent='OHLCV cache: '+h.indicators.ready_pools+' ready pools / '+h.indicators.cached_pools+' cached pools';
+  document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
+  document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
+ }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}
+}
+document.querySelectorAll(".app-nav button").forEach(button=>button.addEventListener("click",()=>{
+ const target=button.dataset.view;
+ document.querySelectorAll(".app-view").forEach(view=>view.classList.toggle("active",view.id==="view-"+target));
+ document.querySelectorAll(".app-nav button").forEach(item=>item.classList.toggle("active",item===button));
+ window.scrollTo(0,0);
+ if(target==="positions"||target==="home")loadHome();
+ if(target==="trades")loadTrades();
+ if(target==="analytics")loadAnalytics();
+ if(target==="system")loadAdvanced();
+}));
 async function saveRules(strategy){try{const rules=JSON.parse(document.getElementById('rules-'+strategy).value);const response=await fetch('/api/strategies',{method:'POST',headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},body:JSON.stringify({strategy:strategy,rules:rules})});const data=await response.json();if(!response.ok)throw Error(data.error||'Save failed');document.getElementById('rules-status').textContent=strategy.toUpperCase()+' rules saved. New candidate evaluations will use them.';loadAdvanced();}catch(err){document.getElementById('rules-status').textContent='Could not save: '+err.message;}}
-loadAll();loadWallet();loadAdvanced();setInterval(loadAll,5000);setInterval(loadWallet,5000);setInterval(loadAdvanced,15000);
+loadHome();loadWallet();setInterval(loadHome,5000);setInterval(loadWallet,15000);
 </script></body></html>"""
 
 
