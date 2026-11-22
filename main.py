@@ -285,7 +285,8 @@ def check_rugcheck(token_address, report=_RUGCHECK_REPORT_UNSET):
             log_event(
                 "RUGCHECK FAILED",
                 token_address,
-                "STATUS: " + str(status)
+                "STATUS: " + str(status) + " | "
+                + "; ".join(str(item) for item in (analysis.get("reasons") or [])[:5])
             )
 
             return False
@@ -629,7 +630,8 @@ def analyze_token_task(address, strategy_name, token):
             return {
                 "status": "rejected",
                 "reason": "INVALID_APPROVED_SCORE",
-                "address": address
+                "address": address,
+                "rugcheck": rugcheck_analysis
             }
 
         requested_size = (
@@ -654,7 +656,8 @@ def analyze_token_task(address, strategy_name, token):
             return {
                 "status": "rejected",
                 "reason": "JUPITER_ENTRY_ANALYSIS_UNAVAILABLE",
-                "address": address
+                "address": address,
+                "rugcheck": rugcheck_analysis
             }
 
         return {
