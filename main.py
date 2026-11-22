@@ -12,6 +12,7 @@ import paper_trading as paper
 import sniper_scanner as sniper
 import trading_manager as manager
 import strategy as trading_strategy
+import database
 
 from scanner import scan_tokens
 from discovery.token_aggregator import collect_tokens
