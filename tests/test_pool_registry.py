@@ -71,7 +71,7 @@ class GeckoPoolOrientationTests(unittest.TestCase):
 
 class MultiSourcePoolRegistryTests(unittest.TestCase):
     def setUp(self):
-        pool_registry.clear_pool_registry_state()
+        pool_registry.clear_pool_registry_state(clear_persisted=True)
 
     def test_dexscreener_quote_is_preserved_when_gecko_enriches_same_pool(self):
         dex = {
@@ -179,6 +179,37 @@ class MultiSourcePoolRegistryTests(unittest.TestCase):
             result = pool_registry.fetch_dexscreener_token_pools(TOKEN)
         self.assertTrue(result["incomplete"])
         gecko.assert_called_once_with(TOKEN)
+
+    def test_registry_hydrates_recent_candidates_from_sqlite(self):
+        stored = {
+            "pools": [{
+                "pairAddress": "persisted-pool",
+                "baseToken": {"address": TOKEN},
+                "quoteToken": {"address": WSOL},
+                "priceUsd": "0.01",
+                "liquidity": {"usd": 100000},
+            }],
+            "updated_at": 100.0,
+        }
+        with patch.object(pool_registry.time, "time", return_value=110.0), \
+             patch("database.load_pool_registry", return_value=stored) as load:
+            rows = pool_registry.get_pool_candidates(TOKEN)
+        load.assert_called_once_with(TOKEN)
+        self.assertEqual(rows[0]["pairAddress"], "persisted-pool")
+        self.assertEqual(pool_registry.get_pool_registry_status()["persisted_tokens"], 1)
+
+    def test_new_pool_is_persisted_immediately(self):
+        row = {
+            "pairAddress": "persist-now",
+            "baseToken": {"address": TOKEN},
+            "quoteToken": {"address": WSOL},
+            "liquidity": {"usd": 50000},
+        }
+        with patch("database.save_pool_registry", return_value=True) as save:
+            pool_registry.merge_pool_candidates(TOKEN, [row], "dexscreener")
+        save.assert_called_once()
+        self.assertEqual(save.call_args.args[0], TOKEN)
+        self.assertEqual(save.call_args.kwargs["updated_at"], pool_registry._candidate_updated_at[TOKEN])
 
     def test_dex_full_pool_refresh_has_a_sixty_second_ttl(self):
         with patch.object(pool_registry.time, "time", return_value=100.0):
