@@ -210,46 +210,9 @@ def get_liquidity(pair):
 
 
 def select_best_pairs(pairs, requested_addresses):
-
-    if not isinstance(pairs, list):
-        return {}
-
-    requested = set(requested_addresses)
-
-    best_pairs = {}
-    best_liquidity = {}
-
-    for pair in pairs:
-
-        if not isinstance(pair, dict):
-            continue
-
-        price = safe_float(
-            pair.get("priceUsd")
-        )
-
-        if price is None or price <= 0:
-            continue
-
-        # DexScreener priceUsd always describes the BASE token.
-        # Never attach that price to the quote token: doing so can
-        # corrupt entry and exit prices for the other side of a pair.
-        base_token = pair.get("baseToken")
-        if not isinstance(base_token, dict):
-            continue
-
-        address = base_token.get("address")
-        if not valid_address(address) or address not in requested:
-            continue
-
-        liquidity = get_liquidity(pair)
-        previous = best_liquidity.get(address, -1)
-
-        if liquidity > previous:
-            best_liquidity[address] = liquidity
-            best_pairs[address] = copy.deepcopy(pair)
-
-    return best_pairs
+    """Delegate to the canonical native-liquidity selector."""
+    from pool_selection import select_best_pairs as select_canonical_pairs
+    return select_canonical_pairs(pairs, requested_addresses)
 
 
 # ==========================================
