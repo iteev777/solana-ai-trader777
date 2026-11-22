@@ -23,6 +23,7 @@ PROGRAMS = {
     "pumpswap": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
     "raydium_cpmm": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
     "raydium_clmm": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+    "raydium_amm_v4": "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
     "orca_whirlpool": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
     "meteora_dlmm": "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
 }
@@ -62,6 +63,10 @@ def _key(data, offset):
 
 def _u16(data, offset):
     return struct.unpack_from("<H", data, offset)[0]
+
+
+def _u64(data, offset):
+    return struct.unpack_from("<Q", data, offset)[0]
 
 
 def _i32(data, offset):
@@ -136,6 +141,18 @@ def _decode_pool(protocol, raw):
             "base_mint": _key(raw, 168), "quote_mint": _key(raw, 200),
             "status": "disabled" if status & 4 else "active",
             "price_mode": "reserves"
+        }
+    if protocol == "raydium_amm_v4":
+        # Legacy AmmInfo is a non-Anchor account; its fields begin at byte 0.
+        if len(raw) < 464:
+            raise ValueError("invalid Raydium AMM v4 AmmInfo layout")
+        status = _u64(raw, 0)
+        if status not in (1, 6, 7):
+            raise ValueError("Raydium AMM v4 pool status does not allow swaps")
+        return {
+            "vault_base": _key(raw, 336), "vault_quote": _key(raw, 368),
+            "base_mint": _key(raw, 400), "quote_mint": _key(raw, 432),
+            "status": "active", "price_mode": "reserves"
         }
     if protocol == "raydium_clmm":
         if len(raw) < 269 or raw[:8] != _discriminator("PoolState"):
@@ -217,7 +234,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
     protocol = str(protocol or "").lower().replace("-", "_")
     aliases = {
         "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap", "pump.fun": "pumpswap",
-        "raydium": "raydium_auto", "raydium_amm": "raydium_auto", "raydium_cp_swap": "raydium_cpmm",
+        "raydium": "raydium_auto", "raydium_amm": "raydium_auto",
+        "raydium_amm_v4": "raydium_amm_v4", "raydium_cp_swap": "raydium_cpmm",
         "raydium_clmm": "raydium_clmm",
         "orca": "orca_whirlpool", "orca_whirlpools": "orca_whirlpool", "whirlpool": "orca_whirlpool",
         "meteora": "meteora_dlmm", "dlmm": "meteora_dlmm"
@@ -235,7 +253,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
         return dict(cached["data"])
     pool = _account(pool_address)
     if protocol == "raydium_auto":
-        protocol = next((name for name in ("raydium_cpmm", "raydium_clmm")
+        protocol = next((name for name in ("raydium_cpmm", "raydium_clmm", "raydium_amm_v4")
                          if pool["owner"] == PROGRAMS[name]), None)
         if protocol is None:
             raise ValueError("Raydium pool owner is not a supported CPMM or CLMM program")
