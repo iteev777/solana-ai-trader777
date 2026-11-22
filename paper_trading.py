@@ -86,7 +86,8 @@ def get_positions():
 def open_position(
     token_address,
     entry_price,
-    strategy="main"
+    strategy="main",
+    metadata=None
 ):
     global balance, positions
 
@@ -125,7 +126,8 @@ def open_position(
             strategy=strategy,
             metadata={
                 "engine": "trojan_v2",
-                "strategy": strategy
+                "strategy": strategy,
+                **(metadata if isinstance(metadata, dict) else {})
             }
         )
 
