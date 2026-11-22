@@ -1684,7 +1684,8 @@ def get_copy_wallet_performance():
         item = result.setdefault(row["wallet"], {
             "wallet": row["wallet"], "closed_trades": 0, "wins": 0,
             "losses": 0, "win_rate": 0.0, "realized_pnl": 0.0,
-            "gross_buys": 0.0, "open_positions": 0,
+            "gross_buys": 0.0, "daily_realized_pnl": 0.0,
+            "daily_loss": 0.0, "open_positions": 0,
             "open_exposure_usd": 0.0, "observed_events": 0,
             "observed_buys": 0, "observed_sells": 0,
         })
