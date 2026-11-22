@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import adaptive_learning
 import rpc_transport
 import strategy_rules
+import onchain_stream
 
 
 class RpcTransportTests(unittest.TestCase):
@@ -47,6 +48,23 @@ class AdaptiveLearningTests(unittest.TestCase):
         self.assertEqual(profile["status"], "learning_active")
         self.assertGreaterEqual(profile["size_multiplier"], 0.80)
         self.assertLessEqual(profile["size_multiplier"], 1.15)
+
+
+class PoolRefreshCoalescingTests(unittest.TestCase):
+    def test_notifications_are_coalesced_per_pool(self):
+        key = ("pool-address", "pumpswap", "mint-address")
+        with onchain_stream._lock:
+            onchain_stream._refreshing.discard(key)
+            onchain_stream._last_refresh_at.pop(key, None)
+        self.assertTrue(onchain_stream.should_refresh_pool(key, now=1000.0))
+        self.assertFalse(onchain_stream.should_refresh_pool(key, now=1000.1))
+        with onchain_stream._lock:
+            onchain_stream._refreshing.discard(key)
+        self.assertFalse(onchain_stream.should_refresh_pool(key, now=1000.3))
+        self.assertTrue(onchain_stream.should_refresh_pool(key, now=1000.6))
+        with onchain_stream._lock:
+            onchain_stream._refreshing.discard(key)
+            onchain_stream._last_refresh_at.pop(key, None)
 
 
 class ExpandedStrategyConditionTests(unittest.TestCase):
