@@ -35,8 +35,8 @@ def get_readiness_report():
     try:
         from solana_onchain import get_onchain_status
         rpc = get_onchain_status()
-        checks.append({"name": "solana_rpc", "ok": bool(rpc.get("rpc_configured")),
-                       "details": "configured" if rpc.get("rpc_configured") else "SOLANA_RPC_URL missing",
+        checks.append({"name": "solana_rpc", "ok": bool(rpc.get("rpc_healthy")),
+                       "details": "healthy" if rpc.get("rpc_healthy") else (rpc.get("rpc_error") or "RPC not configured"),
                        "required": False})
     except Exception as error:
         checks.append({"name": "solana_rpc", "ok": False, "details": str(error)[:150], "required": False})
