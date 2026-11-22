@@ -179,7 +179,7 @@ def _monitor_loop():
                     continue
                 _status["events_seen"] += 1
                 _status["last_event"] = time.time()
-                if event["action"] == "BUY" and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
+                if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
                     try:
                         import main
                         main.queue_copy_signal(event)
