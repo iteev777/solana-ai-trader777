@@ -300,6 +300,44 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS market_candles (
+                pool_address TEXT NOT NULL,
+                timeframe TEXT NOT NULL,
+                open_time INTEGER NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                PRIMARY KEY (pool_address, timeframe, open_time)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_market_candles_pool_time
+            ON market_candles(pool_address, timeframe, open_time)
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS strategy_config (
+                strategy_name TEXT PRIMARY KEY,
+                config_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_trade_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet TEXT NOT NULL,
+                signature TEXT NOT NULL UNIQUE,
+                action TEXT,
+                token_mint TEXT,
+                token_delta REAL,
+                sol_delta REAL,
+                raw_summary TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS schema_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -1409,6 +1447,99 @@ def get_recent_filter_events(limit=100):
             FROM token_filter_events
             ORDER BY id DESC LIMIT ?
         """, (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+# ==========================================
+# MARKET CANDLES + STRATEGY CONFIG + COPY FEED
+# ==========================================
+
+def save_market_candles(pool_address, timeframe, candles):
+    if not pool_address or not isinstance(candles, list):
+        return 0
+    saved = 0
+    with connect() as connection:
+        for candle in candles:
+            try:
+                values = [float(candle[key]) for key in ("open", "high", "low", "close", "volume")]
+                timestamp = int(candle["timestamp"])
+                if min(values[:4]) <= 0 or values[4] < 0:
+                    continue
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            connection.execute("""
+                INSERT OR REPLACE INTO market_candles
+                (pool_address, timeframe, open_time, open, high, low, close, volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (str(pool_address), str(timeframe), timestamp, *values))
+            saved += 1
+    return saved
+
+
+def get_market_candles(pool_address, timeframe="1m", limit=200):
+    limit = max(1, min(int(limit), 1000))
+    with connect() as connection:
+        rows = connection.execute("""
+            SELECT open_time AS timestamp, open, high, low, close, volume
+            FROM market_candles WHERE pool_address = ? AND timeframe = ?
+            ORDER BY open_time DESC LIMIT ?
+        """, (str(pool_address), str(timeframe), limit)).fetchall()
+    return [dict(row) for row in reversed(rows)]
+
+
+def save_strategy_config(strategy_name, config_json):
+    if strategy_name not in ("main", "sniper"):
+        raise ValueError("Invalid strategy name")
+    encoded = json.dumps(config_json, separators=(",", ":"), sort_keys=True)
+    if len(encoded) > 12000:
+        raise ValueError("Strategy config is too large")
+    with connect() as connection:
+        connection.execute("""
+            INSERT INTO strategy_config(strategy_name, config_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(strategy_name) DO UPDATE SET
+                config_json=excluded.config_json, updated_at=excluded.updated_at
+        """, (strategy_name, encoded, now()))
+    return True
+
+
+def get_strategy_configs():
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT strategy_name, config_json, updated_at FROM strategy_config"
+        ).fetchall()
+    result = {}
+    for row in rows:
+        try:
+            result[row["strategy_name"]] = {
+                "config": json.loads(row["config_json"]),
+                "updated_at": row["updated_at"]
+            }
+        except (ValueError, TypeError):
+            continue
+    return result
+
+
+def record_copy_trade_event(wallet, signature, action=None, token_mint=None,
+                            token_delta=None, sol_delta=None, raw_summary=None):
+    if not wallet or not signature:
+        return False
+    with connect() as connection:
+        connection.execute("""
+            INSERT OR IGNORE INTO copy_trade_events
+            (wallet, signature, action, token_mint, token_delta, sol_delta, raw_summary, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(wallet), str(signature), action, token_mint,
+              token_delta, sol_delta, str(raw_summary or "")[:1500], now()))
+        return connection.total_changes > 0
+
+
+def get_recent_copy_trade_events(limit=50):
+    limit = max(1, min(int(limit), 250))
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM copy_trade_events ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
