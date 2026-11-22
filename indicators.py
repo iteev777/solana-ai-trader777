@@ -1,9 +1,13 @@
 """GeckoTerminal OHLCV retrieval and lightweight technical indicators."""
 import math
 import time
+import threading
 from api_client import get_json
 
 _cache = {}
+_fetch_lock = threading.Lock()
+_last_fetch = 0.0
+MIN_FETCH_INTERVAL = float(__import__('os').getenv('TROJAN_OHLCV_MIN_INTERVAL', '7.2'))
 TIMEFRAME = "minute"
 AGGREGATE = 1
 CANDLE_LIMIT = 120
@@ -75,12 +79,19 @@ def calculate_indicators(candles):
 
 
 def fetch_pool_indicators(pool_address, force=False):
+    global _last_fetch
     if not pool_address:
         return {"ready": False, "reason": "Pool address unavailable"}
     key = str(pool_address)
     cached = _cache.get(key)
     if not force and cached and time.time() - cached["time"] < 25:
         return dict(cached["data"])
+    if not _fetch_lock.acquire(blocking=False):
+        return {"ready": False, "pool_address": key, "reason": "OHLCV request already in progress"}
+    if time.time() - _last_fetch < MIN_FETCH_INTERVAL:
+        _fetch_lock.release()
+        return {"ready": False, "pool_address": key, "reason": "OHLCV API cooldown"}
+    _last_fetch = time.time()
     url = (
         "https://api.geckoterminal.com/api/v2/networks/solana/pools/"
         + key + "/ohlcv/" + TIMEFRAME
@@ -118,6 +129,9 @@ def fetch_pool_indicators(pool_address, force=False):
         return indicators
     except Exception as error:
         return {"ready": False, "pool_address": key, "reason": str(error)[:220]}
+    finally:
+        if _fetch_lock.locked():
+            _fetch_lock.release()
 
 
 def _normalize(raw):
