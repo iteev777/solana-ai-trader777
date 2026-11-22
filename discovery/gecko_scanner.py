@@ -1,165 +1,74 @@
-# ==========================================
-# TROJAN V2 - GECKOTERMINAL SCANNER
-# ==========================================
-
 import requests
 
 from api_client import get_json
 from market_data import normalize_gecko_pool
 
-
-API_URL = (
-    "https://api.geckoterminal.com/api/v2/"
-    "networks/solana/new_pools"
-)
-
+API_BASE = "https://api.geckoterminal.com/api/v2/networks/solana/"
+API_URL = API_BASE + "new_pools"
+TRENDING_URL = API_BASE + "trending_pools"
 REQUEST_TIMEOUT = 15
 CACHE_TTL = 60
 MAX_RETRIES = 1
-
 NETWORK_PREFIX = "solana_"
 
 
-# ==========================================
-# TOKEN VALIDATION
-# ==========================================
-
 def extract_solana_address(token_id):
-
     if not isinstance(token_id, str):
         return None
-
     token_id = token_id.strip()
-
     if not token_id.startswith(NETWORK_PREFIX):
         return None
-
     address = token_id[len(NETWORK_PREFIX):].strip()
-
-    if not address:
-        return None
-
-    if "_" in address:
-        return None
-
-    return address
+    return address if address and "_" not in address else None
 
 
-# ==========================================
-# SCAN NEW POOLS
-# ==========================================
-
-def scan_new_pools():
-
+def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
     found_tokens = []
-    seen_in_scan = set()
-
+    seen = set()
     try:
-
-        data = get_json(
-            API_URL,
-            headers={"Accept": "application/json"},
-            timeout=REQUEST_TIMEOUT,
-            cache_ttl=CACHE_TTL,
-            max_retries=MAX_RETRIES
-        )
-
-        if not isinstance(data, dict):
-
-            print("GECKO INVALID RESPONSE")
+        data = get_json(url, headers={"Accept": "application/json"}, timeout=REQUEST_TIMEOUT,
+                        cache_ttl=cache_ttl, max_retries=MAX_RETRIES)
+        if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            print("GECKO INVALID RESPONSE:", source_name, flush=True)
             return found_tokens
-
-        pools = data.get("data")
-
-        if not isinstance(pools, list):
-
-            print("GECKO INVALID POOL LIST")
-            return found_tokens
-
-        for pool in pools:
-
+        for pool in data["data"]:
             if not isinstance(pool, dict):
                 continue
-
-            attributes = pool.get("attributes")
-            relationships = pool.get("relationships")
-
-            if not isinstance(attributes, dict):
+            attributes, relationships = pool.get("attributes"), pool.get("relationships")
+            if not isinstance(attributes, dict) or not isinstance(relationships, dict):
                 continue
-
-            if not isinstance(relationships, dict):
-                continue
-
-            base_relationship = relationships.get("base_token")
-
-            if not isinstance(base_relationship, dict):
-                continue
-
-            base_data = base_relationship.get("data")
-
-            if not isinstance(base_data, dict):
-                continue
-
-            token_address = extract_solana_address(
-                base_data.get("id")
-            )
-
-            if not token_address:
-                continue
-
+            base = relationships.get("base_token")
+            base_data = base.get("data") if isinstance(base, dict) else None
+            token_address = extract_solana_address(base_data.get("id")) if isinstance(base_data, dict) else None
             pool_address = attributes.get("address")
-
-            if not isinstance(pool_address, str):
+            if not token_address or not isinstance(pool_address, str) or not pool_address.strip() or token_address in seen:
                 continue
-
-            pool_address = pool_address.strip()
-
-            if not pool_address:
-                continue
-
-            if token_address in seen_in_scan:
-                continue
-
-            seen_in_scan.add(token_address)
-
-            market_snapshot = normalize_gecko_pool(pool)
-            candidate = {
-                "tokenAddress": token_address,
-                "chainId": "solana",
-                "poolAddress": pool_address,
-                "poolName": attributes.get("name"),
-                "discovery_sources": ["geckoterminal"]
-            }
-            if market_snapshot and market_snapshot.get("baseToken", {}).get("address") == token_address:
-                candidate["market_data"] = market_snapshot
-            found_tokens.append(candidate)
-
-        print("================================")
-        print("TROJAN V2 GECKOTERMINAL")
-        print("NEW UNIQUE TOKENS:", len(found_tokens))
-        print("================================")
-
+            seen.add(token_address)
+            snapshot = normalize_gecko_pool(pool)
+            item = {"tokenAddress": token_address, "chainId": "solana", "poolAddress": pool_address.strip(),
+                    "poolName": attributes.get("name"), "discovery_sources": [source_name]}
+            if snapshot and snapshot.get("baseToken", {}).get("address") == token_address:
+                item["market_data"] = snapshot
+            found_tokens.append(item)
+        print("GECKOTERMINAL", source_name, "TOKENS:", len(found_tokens), flush=True)
     except requests.RequestException as error:
-
-        print("GECKO REQUEST ERROR:", repr(error))
-
+        print("GECKO REQUEST ERROR:", source_name, repr(error), flush=True)
     except (ValueError, TypeError, AttributeError) as error:
-
-        print("GECKO DATA ERROR:", repr(error))
-
+        print("GECKO DATA ERROR:", source_name, repr(error), flush=True)
     except Exception as error:
-
-        print("GECKO SCANNER ERROR:", repr(error))
-
+        print("GECKO SCANNER ERROR:", source_name, repr(error), flush=True)
     return found_tokens
 
 
-# ==========================================
-# STARTUP
-# ==========================================
+def scan_new_pools():
+    return _scan_pools(API_URL, "geckoterminal_new_pools")
+
+
+def scan_trending_pools():
+    return _scan_pools(TRENDING_URL, "geckoterminal_trending_pools", cache_ttl=90)
+
 
 if __name__ == "__main__":
-
-    print("TROJAN V2 GECKO SCANNER READY")
-
+    print("TROJAN V2 GECKO SCANNER READY", flush=True)
     scan_new_pools()
+    scan_trending_pools()
