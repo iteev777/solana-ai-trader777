@@ -377,8 +377,8 @@ def fetch_batch(addresses):
 
     results = {}
     from pool_registry import (
-        enqueue_gecko_pool_fetch, get_pool_candidates,
-        is_dexscreener_list_incomplete, merge_pool_candidates,
+        enqueue_dex_pool_refresh, get_pool_candidates,
+        merge_pool_candidates,
     )
 
     for start in range(0, len(addresses), MAX_BATCH_SIZE):
@@ -404,8 +404,9 @@ def fetch_batch(addresses):
                     and pair["baseToken"].get("address") == address
                 ]
                 merge_pool_candidates(address, token_pairs, "dexscreener")
-                if is_dexscreener_list_incomplete(token_pairs):
-                    enqueue_gecko_pool_fetch(address)
+                # Fast batch quotes are supplemented asynchronously by the
+                # full per-token token-pairs endpoint (up to 30 pools).
+                enqueue_dex_pool_refresh(address)
 
             combined = []
             for address in batch:
@@ -427,7 +428,7 @@ def fetch_batch(addresses):
             # If DexScreener is unavailable, still schedule a background
             # GeckoTerminal lookup; never block the trading loop on it.
             for address in batch:
-                enqueue_gecko_pool_fetch(address)
+                enqueue_dex_pool_refresh(address)
             print(
                 "[TROJAN V2] MARKET BATCH ERROR",
                 "| SIZE:", len(batch),
