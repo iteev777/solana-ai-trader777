@@ -69,7 +69,7 @@ class RugCheckHolderDistributionTests(unittest.TestCase):
 
     def test_pump_token_lp_lock_is_required_only_when_configured(self):
         report = safe_report(tokenType="pump_fun", risks=[
-            {"name": "LP Lock", "description": "Liquidity is locked 60%"}
+            {"name": "LP Lock", "level": "info", "description": "Liquidity is locked 60%"}
         ])
         with patch.dict("os.environ", {"TROJAN_RUGCHECK_MIN_LP_LOCK_PCT": "80"}):
             result = rugcheck.analyze_rugcheck_report(report)
