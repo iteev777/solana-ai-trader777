@@ -22,7 +22,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -357,6 +357,18 @@ def initialize_database():
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_protocol_validation_protocol
             ON protocol_validation_events(protocol, timestamp)
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS pool_registry (
+                mint TEXT PRIMARY KEY,
+                pools_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pool_registry_updated_at
+            ON pool_registry(updated_at)
         """)
 
         connection.execute("""
@@ -1771,3 +1783,66 @@ def get_protocol_validation_summary():
         "unclassified": by_protocol.get("unknown"),
         "commitment": "confirmed",
     }
+
+
+# ==========================================
+# PERSISTENT MULTI-SOURCE POOL REGISTRY
+# ==========================================
+
+def save_pool_registry(mint, pools, updated_at=None):
+    if not isinstance(mint, str) or not mint.strip():
+        raise ValueError("mint is required")
+    if not isinstance(pools, list):
+        raise ValueError("pools must be a list")
+    payload = json.dumps(
+        pools, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    timestamp = float(updated_at) if updated_at is not None else __import__("time").time()
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS pool_registry (
+                mint TEXT PRIMARY KEY,
+                pools_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            INSERT OR REPLACE INTO pool_registry (mint, pools_json, updated_at)
+            VALUES (?, ?, ?)
+        """, (mint.strip(), payload, timestamp))
+    return True
+
+
+def load_pool_registry(mint):
+    if not isinstance(mint, str) or not mint.strip():
+        return None
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS pool_registry (
+                mint TEXT PRIMARY KEY,
+                pools_json TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+        row = connection.execute("""
+            SELECT pools_json, updated_at
+            FROM pool_registry WHERE mint = ?
+        """, (mint.strip(),)).fetchone()
+    if not row:
+        return None
+    try:
+        pools = json.loads(row["pools_json"])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(pools, list):
+        return None
+    return {"pools": pools, "updated_at": float(row["updated_at"] or 0)}
+
+
+def delete_pool_registry(mint=None):
+    with connect() as connection:
+        if mint is None:
+            connection.execute("DELETE FROM pool_registry")
+        else:
+            connection.execute("DELETE FROM pool_registry WHERE mint = ?", (str(mint),))
+    return True
