@@ -2,6 +2,7 @@
 # TROJAN V2 - STRATEGY ENGINE
 # ==========================================
 
+import os
 from ai_analyzer import analyze_token
 from strategy_rules import evaluate_strategy_rules
 from risk_manager import check_trade_risk
@@ -89,6 +90,29 @@ def evaluate_trade(
             "score": score,
             "reason": rules_reason
         }
+
+    # Technical confirmation is applied only when a sufficiently long
+    # OHLCV series is available; missing candles never fabricate a signal.
+    if os.getenv("TROJAN_TECHNICAL_FILTER_ENABLED", "true").lower() == "true":
+        indicators = token.get("indicators") if isinstance(token.get("indicators"), dict) else {}
+        if indicators.get("ready") is True:
+            rsi = indicators.get("rsi_14")
+            if isinstance(rsi, (int, float)) and (rsi < 25 or rsi > 80):
+                return {
+                    "action": "WAIT", "score": score,
+                    "reason": "Technical filter: RSI outside 25–80 range"
+                }
+            bullish = indicators.get("ema_cross_bullish") is True
+            breakout_volume = (
+                indicators.get("breakout_20") is True
+                and isinstance(indicators.get("volume_spike_ratio"), (int, float))
+                and indicators.get("volume_spike_ratio") >= 1.5
+            )
+            if not bullish and not breakout_volume:
+                return {
+                    "action": "WAIT", "score": score,
+                    "reason": "Technical filter: no bullish EMA or breakout-volume confirmation"
+                }
 
     if score < MINIMUM_SCORES[strategy]:
         return {
