@@ -206,6 +206,7 @@ def analyze_rugcheck_report(data):
     else:
         reasons.append("Top holder data unavailable")
 
+    holder_percentages.sort(reverse=True)
     top_holder_pct = max(holder_percentages) if holder_percentages else None
     top10_pct = min(100.0, sum(holder_percentages[:10])) if holder_percentages else None
     if top_holder_pct is not None:
