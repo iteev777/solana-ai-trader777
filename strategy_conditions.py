@@ -198,7 +198,7 @@ def evaluate_condition(node, context):
     elif name == "PriceChangePercent":
         window = params.get("timeframe", "m5")
         field = {"m5": "m5", "h1": "h1", "h6": "h6", "h24": "h24"}[window]
-        value = _metric(context, "price_change_" + field, "priceChange." + field)
+        value = _metric(context, "price_change_" + field, "priceChange." + field, "token.priceChange." + field)
         result = _compare(value, params.get("comparison", "ABOVE"), _num(params.get("threshold_pct", 0)))
         detail = "price change " + window
     elif name == "PriceToMa":
