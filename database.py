@@ -1503,6 +1503,14 @@ def save_strategy_config(strategy_name, config_json):
     return True
 
 
+def delete_strategy_config(strategy_name):
+    if strategy_name not in ("main", "sniper"):
+        raise ValueError("Invalid strategy name")
+    with connect() as connection:
+        connection.execute("DELETE FROM strategy_config WHERE strategy_name = ?", (strategy_name,))
+    return True
+
+
 def get_strategy_configs():
     with connect() as connection:
         rows = connection.execute(
