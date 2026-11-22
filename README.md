@@ -312,3 +312,10 @@ Configurable risk thresholds:
 - `TROJAN_RUGCHECK_MAX_MEDIUM_RISKS` (3)
 
 Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the existing buy gate. Missing optional extended fields are exposed as unknown rather than fabricated. A positive transfer fee or active transfer-fee authority adds risk; a rugged token, critical concentration/creator share, excessive transfer fee, or other high-severity signal rejects the report.
+
+
+## Extended metadata and market bounds
+
+The filter pipeline supports optional metadata completeness gates: `TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL`, `TROJAN_FILTER_REQUIRE_LOGO_URL` and `TROJAN_FILTER_REQUIRE_WEBSITE_URL`. Logo and website requirements accept only HTTP(S) URLs from supported provider metadata. Suspicious single-character symbols can be controlled with `TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL` (enabled by default); numeric-only symbols remain rejected.
+
+Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_LIQUIDITY_USD` (maximum 0 disables the ceiling). Valuation bands are independently configurable with `TROJAN_FILTER_MIN_FDV_USD`, `TROJAN_FILTER_MAX_FDV_USD`, `TROJAN_FILTER_MIN_MARKET_CAP_USD` and `TROJAN_FILTER_MAX_MARKET_CAP_USD`. A positive floor with missing data returns WAIT; a configured ceiling only applies when the measurement exists. Invalid negative valuations are rejected. Existing default behavior remains permissive when optional metadata and floors are disabled.
