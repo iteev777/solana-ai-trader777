@@ -418,14 +418,20 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address
             }
 
-        if trade_decision.get("action") != "BUY_SIGNAL":
+        action = trade_decision.get("action")
 
+        if action == "WAIT":
+            return {
+                "status": "waiting",
+                "reason": trade_decision.get("reason", "WAITING_FOR_ENTRY"),
+                "score": trade_decision.get("score", 0),
+                "address": address
+            }
+
+        if action != "BUY_SIGNAL":
             return {
                 "status": "rejected",
-                "reason": trade_decision.get(
-                    "reason",
-                    "STRATEGY_REJECTED"
-                ),
+                "reason": trade_decision.get("reason", "STRATEGY_REJECTED"),
                 "score": trade_decision.get("score", 0),
                 "address": address
             }
