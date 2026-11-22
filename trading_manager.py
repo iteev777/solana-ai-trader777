@@ -198,7 +198,8 @@ def process_approved_signal(
     token_address,
     price,
     strategy="main",
-    trade_size=None
+    trade_size=None,
+    metadata=None
 ):
 
     if trade_size is None:
@@ -255,7 +256,8 @@ def process_approved_signal(
         results["paper"] = paper.open_position(
             token_address,
             float(price),
-            strategy=strategy
+            strategy=strategy,
+            metadata=metadata
         )
 
     # Shadow signals never execute real trades.
