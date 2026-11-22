@@ -68,7 +68,7 @@ Supported fields: `liquidity_usd`, `volume_m5`, `volume_h24`, `price_change_m5`,
 
 ## On-chain pool verification and technical indicators
 
-Configure `SOLANA_RPC_URL` with a Solana mainnet RPC endpoint to enable read-only pool account decoding. Optional `SOLANA_WS_URL` is the matching websocket endpoint. The decoder verifies the pool account owner and binary discriminator before reading vaults. Supported layouts are PumpSwap Pool, Raydium CPMM, Raydium CLMM, Orca Whirlpool, and Meteora DLMM. Raydium AMM v4 and unsupported layouts fall back to the market-data providers; the bot does not pretend those are on-chain quotes.
+Configure `SOLANA_RPC_URL` with a Solana mainnet RPC endpoint to enable read-only pool account decoding. Optional `SOLANA_WS_URL` is the matching websocket endpoint. The decoder verifies the pool account owner and binary discriminator before reading vaults. Supported layouts are PumpSwap Pool, Raydium AMM v4, Raydium CPMM, Raydium CLMM, Orca Whirlpool, and Meteora DLMM. Unsupported layouts fall back to the market-data providers; the bot does not pretend those are on-chain quotes.
 
 OHLCV candles are fetched from GeckoTerminal per known pool and stored in SQLite. The indicator engine calculates RSI(14), EMA(9/21), 20-candle breakout and volume-spike ratio. The optional technical entry filter is enabled by default when sufficient candles are available; it does not fabricate indicators when history is missing. Set `TROJAN_TECHNICAL_FILTER_ENABLED=false` to disable the extra confirmation. `TROJAN_OHLCV_MIN_INTERVAL` controls the minimum API request spacing (default 7.2 seconds).
 
