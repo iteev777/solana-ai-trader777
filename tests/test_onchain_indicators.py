@@ -1,10 +1,12 @@
 import hashlib
 import struct
 import unittest
+from unittest import mock
 
-from solana_onchain import _decode_pool, _discriminator
+from solana_onchain import _decode_pool, _discriminator, PROGRAMS
 from indicators import calculate_indicators
 from strategy_rules import validate_rules_config
+import onchain_stream
 
 
 def put_key(data, offset, value):
@@ -84,6 +86,11 @@ class OnchainDecoderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _decode_pool("pumpswap", bytes(400))
 
+    def test_eleven_protocol_programs_are_registered(self):
+        self.assertEqual(len(PROGRAMS), 11)
+        self.assertIn("meteora_dbc", PROGRAMS)
+        self.assertIn("moonit_amm", PROGRAMS)
+
     def test_fluxbeam_amm_layout(self):
         raw = bytearray(324)
         raw[1] = 1
@@ -145,6 +152,27 @@ class OnchainDecoderTests(unittest.TestCase):
         self.assertEqual(result["token_decimals"], 9)
         self.assertEqual(result["price_mode"], "moonit_curve")
 
+
+
+class OnchainStreamTests(unittest.TestCase):
+    def test_stream_snapshot_age_gate(self):
+        key = ("pool", "raydium_cpmm", "mint")
+        with onchain_stream._lock:
+            onchain_stream._snapshots[key] = {
+                "data": {"priceUsd": "1.23"},
+                "observed_at": 1000.0
+            }
+        with mock.patch("onchain_stream.time.time", return_value=1000.4):
+            fresh = onchain_stream.get_latest_snapshot(*key, max_age=1.0)
+            stale = onchain_stream.get_latest_snapshot(*key, max_age=0.2)
+        self.assertEqual(fresh["priceUsd"], "1.23")
+        self.assertIsNone(stale)
+        with onchain_stream._lock:
+            onchain_stream._snapshots.pop(key, None)
+
+    def test_websocket_url_derives_from_rpc_url(self):
+        with mock.patch.dict("os.environ", {"SOLANA_WS_URL": "", "SOLANA_RPC_URL": "https://rpc.example"}, clear=False):
+            self.assertEqual(onchain_stream._rpc_ws_url(), "wss://rpc.example")
 
 class IndicatorTests(unittest.TestCase):
     def test_ohlcv_indicators_return_technical_confirmation(self):
