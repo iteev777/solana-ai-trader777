@@ -443,7 +443,7 @@ def api_trades():
     limit = min(max(request.args.get("limit", 50, type=int), 1), 200)
     return jsonify(_rows(
         """SELECT id, token_address, action, price, amount, profit_loss,
-                  timestamp, strategy
+                  timestamp, strategy, copy_wallet
            FROM trades WHERE mode='paper'
            ORDER BY id DESC LIMIT ?""",
         (limit,)
@@ -502,13 +502,24 @@ def api_readiness():
         "onchain": get_onchain_status(),
         "indicators": get_indicator_status(),
         "copy_monitor": get_copy_monitor_status(),
-        "jupiter": live_execution.get_execution_status()
+        "jupiter": live_execution.get_execution_status(),
+        "protocol_validation": database.get_protocol_validation_summary()
     })
 
 
 @app.get("/api/copy-trades")
 def api_copy_trades():
     return jsonify(database.get_recent_copy_trade_events(100))
+
+
+@app.get("/api/copy-performance")
+def api_copy_performance():
+    return jsonify(database.get_copy_wallet_performance())
+
+
+@app.get("/api/protocol-validation")
+def api_protocol_validation():
+    return jsonify(database.get_protocol_validation_summary())
 
 
 @app.get("/api/filtering")
@@ -613,6 +624,8 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 </section><section class="app-view" id="view-system"><section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, volume_spike_ratio, timeframe_ready_count, bullish_timeframes, bearish_timeframes, macd_histogram, macd_bullish, bollinger_percent_b, atr_percent, stochastic_k, above_vwap. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
 <section class="panel section" id="system-panel"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
+<section class="panel section"><h2>COPY WALLET PAPER PERFORMANCE</h2><div class="muted" style="margin-bottom:10px">Wallet-attributed realized paper P/L, win rate, open exposure and observed activity.</div><div class="health" id="copy-performance"><div class="muted">Loading wallet performance…</div></div></section>
+<section class="panel section"><h2>11-PROTOCOL MAINNET VALIDATION</h2><div class="muted" style="margin-bottom:10px">Counts only confirmed on-chain pool decodes observed by this running bot; zero means not yet verified.</div><div class="health" id="protocol-validation"><div class="muted">Loading protocol validation…</div></div></section>
 <section class="panel section"><h2>COPY WALLET ACTIVITY</h2><div class="muted" style="margin-bottom:10px">Read-only wallet monitoring. No transactions are copied or signed.</div><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Wallet</th><th>Action</th><th>Mint</th><th>Token Δ</th><th>SOL Δ</th></tr></thead><tbody id="copy-trades"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section></section>
 </main><nav class="app-nav" aria-label="Main navigation"><button type="button" class="active" data-view="home"><span>⌂</span><span>HOME</span></button><button type="button" data-view="positions"><span>◫</span><span>POSITIONS</span></button><button type="button" data-view="trades"><span>⇄</span><span>TRADES</span></button><button type="button" data-view="analytics"><span>◈</span><span>AI / STATS</span></button><button type="button" data-view="system"><span>⌁</span><span>SYSTEM</span></button></nav><footer>Paper trading controls · no wallet keys · live execution locked · Trojan V2</footer>
@@ -680,8 +693,11 @@ async function loadAnalytics(){
 }
 async function loadAdvanced(){
  try{
-  const values=await Promise.all([get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades')]);
-  const s=values[0],h=values[1],c=values[2];
+  const values=await Promise.all([
+   get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades'),
+   get('/api/copy-performance'),get('/api/protocol-validation')
+  ]);
+  const s=values[0],h=values[1],c=values[2],cp=values[3],pv=values[4];
   document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
   document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
   document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
@@ -694,6 +710,8 @@ async function loadAdvanced(){
   const stream=h.onchain.price_stream||{};
   document.getElementById('onchain-status').textContent+=' · RPC health: '+(h.onchain.rpc_healthy?'healthy':'not healthy')+' · price stream: '+(stream.running?'LIVE':'OFF')+' ('+(stream.subscriptions||0)+' pools, '+(stream.notifications||0)+' updates, '+(stream.last_latency_ms==null?'n/a':stream.last_latency_ms+' ms')+') · paper copy: '+(h.copy_monitor.paper_copy_enabled?'ON':'OFF');
   document.getElementById('copy-trades').innerHTML=c.length?c.map(x=>'<tr><td>'+time(x.timestamp)+'</td><td class="token">'+esc(short(x.wallet))+'</td><td>'+esc(x.action)+'</td><td class="token">'+esc(short(x.token_mint))+'</td><td>'+fmt(x.token_delta,4)+'</td><td>'+fmt(x.sol_delta,4)+'</td></tr>').join(''):'<tr><td colspan="6" class="muted">No wallet activity yet</td></tr>';
+  document.getElementById('copy-performance').innerHTML=cp.length?cp.map(x=>'<div><b class="token">'+esc(short(x.wallet))+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Win rate '+fmt(x.win_rate,1)+'% · closed '+x.closed_trades+' · open '+x.open_positions+' · exposure '+usd(x.open_exposure_usd)+' · observed '+x.observed_events+'</div></div>').join(''):'<div class="muted">No copy-wallet performance recorded yet</div>';
+  document.getElementById('protocol-validation').innerHTML=(pv.protocols||[]).map(x=>'<div><b>'+esc(x.protocol)+'</b><span class="'+(x.successes>0?'good':'muted')+'">'+x.successes+' / '+x.attempts+' verified</span><div class="muted">Failures '+x.failures+' · success '+fmt(x.success_rate,1)+'%'+(x.last_error?' · '+esc(x.last_error):'')+'</div></div>').join('');
  }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}
 }
 document.querySelectorAll(".app-nav button").forEach(button=>button.addEventListener("click",()=>{
