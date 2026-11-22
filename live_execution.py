@@ -104,9 +104,9 @@ def _route_diagnostics(route_plan):
         "route_labels": unique_labels,
         "unique_venues": len(unique_labels),
         "split_percentages": split_percentages,
-        "is_split_route": len(split_percentages) > 1 or (
-            len(split_percentages) == 1 and split_percentages[0] < 100
-        ),
+        # Multiple sequential hops commonly each carry percent=100.
+        # Any sub-100 branch percentage is the reliable split-route signal.
+        "is_split_route": any(percent < 100 for percent in split_percentages),
     }
 
 
