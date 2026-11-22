@@ -112,7 +112,7 @@ def _risk_threshold(name, default, minimum=0.0, maximum=100.0):
 def _percentage_from_text(value):
     if not isinstance(value, str):
         return None
-    match = re.search(r"(?<![\\w.])([0-9]+(?:\\.[0-9]+)?)\\s*%", value)
+    match = re.search(r"(?<![\w.])([0-9]+(?:\.[0-9]+)?)\s*%", value)
     if match:
         number = get_number(match.group(1))
         return number if number is not None and 0 <= number <= 100 else None
