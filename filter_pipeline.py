@@ -105,73 +105,134 @@ def _market_stage(token, strategy):
 
 
 def _activity_stage(token):
-    volume_5m = _number(_get(token, "volume", "m5"))
-    volume_24h = _number(_get(token, "volume", "h24"))
-    buys = _number(_get(token, "txns", "m5", "buys"))
-    sells = _number(_get(token, "txns", "m5", "sells"))
-    min_volume = _env_float("TROJAN_FILTER_MIN_VOLUME_5M_USD", 0.0, 0.0, 1_000_000_000.0)
-    min_txns = _env_int("TROJAN_FILTER_MIN_TXNS_5M", 0, 0, 1_000_000)
-    min_buy_ratio = _env_float("TROJAN_FILTER_MIN_BUY_RATIO", 0.0, 0.0, 1.0)
+    """Validate independent activity windows without treating missing data as zero."""
+    windows = (
+        ("m5", "5M", "TROJAN_FILTER_MIN_VOLUME_5M_USD", "TROJAN_FILTER_MIN_TXNS_5M"),
+        ("h1", "1H", "TROJAN_FILTER_MIN_VOLUME_1H_USD", "TROJAN_FILTER_MIN_TXNS_1H"),
+        ("h6", "6H", "TROJAN_FILTER_MIN_VOLUME_6H_USD", "TROJAN_FILTER_MIN_TXNS_6H"),
+        ("h24", "24H", "TROJAN_FILTER_MIN_VOLUME_24H_USD", "TROJAN_FILTER_MIN_TXNS_24H"),
+    )
+    volume = token.get("volume") if isinstance(token.get("volume"), dict) else {}
+    txns = token.get("txns") if isinstance(token.get("txns"), dict) else {}
+    metrics = {"windows": {}}
 
-    if min_volume > 0:
-        if volume_5m is None:
-            return _result("WAIT", "activity", "VOLUME_5M_UNKNOWN")
-        if volume_5m < min_volume:
-            return _result("WAIT", "activity", "VOLUME_5M_BELOW_MINIMUM", {
-                "volume_5m_usd": volume_5m, "minimum_usd": min_volume
+    for key, label, volume_env, txns_env in windows:
+        volume_value = _number(volume.get(key))
+        txn_data = txns.get(key) if isinstance(txns.get(key), dict) else {}
+        buys = _number(txn_data.get("buys"))
+        sells = _number(txn_data.get("sells"))
+        if volume_value is not None and volume_value < 0:
+            return _result("REJECT", "activity", "NEGATIVE_VOLUME", {
+                "window": key, "volume_usd": volume_value
+            })
+        if any(value is not None and (value < 0 or int(value) != value)
+               for value in (buys, sells)):
+            return _result("REJECT", "activity", "INVALID_TRANSACTION_COUNT", {
+                "window": key, "buys": buys, "sells": sells
             })
 
-    total_txns = buys + sells if buys is not None and sells is not None else None
-    if min_txns > 0:
-        if total_txns is None:
-            return _result("WAIT", "activity", "TRANSACTION_FLOW_UNKNOWN")
-        if total_txns < min_txns:
-            return _result("WAIT", "activity", "TRANSACTION_COUNT_BELOW_MINIMUM", {
-                "transactions_5m": total_txns, "minimum": min_txns
-            })
+        legacy_volume_min = 0.0
+        legacy_txns_min = 0
+        if key == "m5":
+            legacy_volume_min = _env_float("TROJAN_FILTER_MIN_VOLUME_5M_USD", 0.0, 0.0, 1_000_000_000.0)
+            legacy_txns_min = _env_int("TROJAN_FILTER_MIN_TXNS_5M", 0, 0, 1_000_000)
+        min_volume = _env_float(volume_env, legacy_volume_min, 0.0, 1_000_000_000.0)
+        min_txns = _env_int(txns_env, legacy_txns_min, 0, 1_000_000)
 
-    buy_ratio = buys / total_txns if total_txns and buys is not None else None
-    if min_buy_ratio > 0:
-        if buy_ratio is None:
-            return _result("WAIT", "activity", "BUY_RATIO_UNKNOWN")
-        if buy_ratio < min_buy_ratio:
-            return _result("REJECT", "activity", "BUY_PRESSURE_BELOW_MINIMUM", {
-                "buy_ratio": round(buy_ratio, 4), "minimum": min_buy_ratio
-            })
+        if min_volume > 0:
+            if volume_value is None:
+                return _result("WAIT", "activity", "VOLUME_" + label + "_UNKNOWN", {
+                    "window": key, "minimum_usd": min_volume
+                })
+            if volume_value < min_volume:
+                return _result("WAIT", "activity", "VOLUME_" + label + "_BELOW_MINIMUM", {
+                    "window": key, "volume_usd": volume_value, "minimum_usd": min_volume
+                })
 
-    if volume_5m is not None and volume_5m < 0 or volume_24h is not None and volume_24h < 0:
-        return _result("REJECT", "activity", "NEGATIVE_VOLUME")
-    if buys is not None and buys < 0 or sells is not None and sells < 0:
-        return _result("REJECT", "activity", "NEGATIVE_TRANSACTION_COUNT")
-    return _result("PASS", "activity", "ACTIVITY_VALID", {
-        "volume_5m_usd": volume_5m,
-        "volume_24h_usd": volume_24h,
-        "transactions_5m": total_txns,
-        "buy_ratio": round(buy_ratio, 4) if buy_ratio is not None else None,
-    })
+        total = buys + sells if buys is not None and sells is not None else (
+            buys if buys is not None else sells
+        )
+        if min_txns > 0:
+            if total is None:
+                reason = "TRANSACTION_FLOW_UNKNOWN" if key == "m5" else "TRANSACTION_FLOW_" + label + "_UNKNOWN"
+                return _result("WAIT", "activity", reason, {
+                    "window": key, "minimum": min_txns
+                })
+            if total < min_txns:
+                reason = "TRANSACTION_COUNT_BELOW_MINIMUM" if key == "m5" else "TRANSACTION_COUNT_" + label + "_BELOW_MINIMUM"
+                return _result("WAIT", "activity", reason, {
+                    "window": key, "transactions": total, "minimum": min_txns
+                })
+
+        ratio_env = "TROJAN_FILTER_MIN_BUY_RATIO_" + label
+        default_ratio = _env_float("TROJAN_FILTER_MIN_BUY_RATIO", 0.0, 0.0, 1.0) if key == "m5" else 0.0
+        min_ratio = _env_float(ratio_env, default_ratio, 0.0, 1.0)
+        buy_ratio = buys / (buys + sells) if buys is not None and sells is not None and (buys + sells) > 0 else None
+        if min_ratio > 0:
+            if buy_ratio is None:
+                return _result("WAIT", "activity", "BUY_RATIO_" + label + "_UNKNOWN", {
+                    "window": key, "minimum": min_ratio
+                })
+            if buy_ratio < min_ratio:
+                reason = "BUY_PRESSURE_BELOW_MINIMUM" if key == "m5" else "BUY_PRESSURE_" + label + "_BELOW_MINIMUM"
+                return _result("REJECT", "activity", reason, {
+                    "window": key, "buy_ratio": round(buy_ratio, 4), "minimum": min_ratio
+                })
+
+        metrics["windows"][key] = {
+            "volume_usd": volume_value,
+            "buys": buys,
+            "sells": sells,
+            "transactions": total,
+            "buy_ratio": round(buy_ratio, 4) if buy_ratio is not None else None,
+        }
+
+    return _result("PASS", "activity", "ACTIVITY_VALID", metrics)
 
 
 def _momentum_stage(token):
-    change = _number(_get(token, "priceChange", "m5"))
-    min_change = _env_float("TROJAN_FILTER_MIN_CHANGE_5M_PCT", -100.0, -100.0, 10000.0)
-    max_change = _env_float("TROJAN_FILTER_MAX_CHANGE_5M_PCT", 10000.0, -100.0, 10000.0)
-    if min_change > max_change:
-        min_change, max_change = -100.0, 10000.0
-    if change is None:
-        if os.getenv("TROJAN_FILTER_REQUIRE_M5_CHANGE", "false").lower() == "true":
-            return _result("WAIT", "momentum", "M5_MOMENTUM_UNKNOWN")
-        return _result("PASS", "momentum", "MOMENTUM_NOT_CONFIGURED")
-    if change < min_change:
-        return _result("REJECT", "momentum", "M5_DOWNTREND_TOO_STRONG", {
-            "change_5m_pct": change, "minimum_pct": min_change
-        })
-    if change > max_change:
-        return _result("REJECT", "momentum", "M5_MOVE_EXTENDED", {
-            "change_5m_pct": change, "maximum_pct": max_change
-        })
-    return _result("PASS", "momentum", "MOMENTUM_WITHIN_BOUNDS", {
-        "change_5m_pct": change
-    })
+    """Apply separate price-change bands to every market-data horizon."""
+    changes = token.get("priceChange") if isinstance(token.get("priceChange"), dict) else {}
+    windows = (
+        ("m5", "5M", "TROJAN_FILTER_MIN_CHANGE_5M_PCT", "TROJAN_FILTER_MAX_CHANGE_5M_PCT"),
+        ("h1", "1H", "TROJAN_FILTER_MIN_CHANGE_1H_PCT", "TROJAN_FILTER_MAX_CHANGE_1H_PCT"),
+        ("h6", "6H", "TROJAN_FILTER_MIN_CHANGE_6H_PCT", "TROJAN_FILTER_MAX_CHANGE_6H_PCT"),
+        ("h24", "24H", "TROJAN_FILTER_MIN_CHANGE_24H_PCT", "TROJAN_FILTER_MAX_CHANGE_24H_PCT"),
+    )
+    metrics = {}
+    for key, label, min_env, max_env in windows:
+        change = _number(changes.get(key))
+        legacy_min = -100.0
+        legacy_max = 10000.0
+        if key == "m5":
+            legacy_min = _env_float(min_env, -100.0, -100.0, 10000.0)
+            legacy_max = _env_float(max_env, 10000.0, -100.0, 10000.0)
+        minimum = _env_float(min_env, legacy_min, -100.0, 10000.0)
+        maximum = _env_float(max_env, legacy_max, -100.0, 10000.0)
+        if minimum > maximum:
+            minimum, maximum = -100.0, 10000.0
+        require_name = "TROJAN_FILTER_REQUIRE_" + label + "_CHANGE"
+        required = os.getenv(require_name, "false").lower() == "true"
+        if change is None:
+            if required:
+                reason = "M5_MOMENTUM_UNKNOWN" if key == "m5" else "MOMENTUM_" + label + "_UNKNOWN"
+                return _result("WAIT", "momentum", reason, {
+                    "window": key, "minimum_pct": minimum, "maximum_pct": maximum
+                })
+            metrics[key] = None
+            continue
+        if change < minimum:
+            reason = "M5_DOWNTREND_TOO_STRONG" if key == "m5" else "MOMENTUM_" + label + "_BELOW_MINIMUM"
+            return _result("REJECT", "momentum", reason, {
+                "window": key, "change_pct": change, "minimum_pct": minimum
+            })
+        if change > maximum:
+            reason = "M5_MOVE_EXTENDED" if key == "m5" else "MOMENTUM_" + label + "_ABOVE_MAXIMUM"
+            return _result("REJECT", "momentum", reason, {
+                "window": key, "change_pct": change, "maximum_pct": maximum
+            })
+        metrics[key] = change
+    return _result("PASS", "momentum", "MOMENTUM_WITHIN_BOUNDS", {"windows": metrics})
 
 
 def _age_stage(token):
