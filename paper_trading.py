@@ -1,4 +1,5 @@
 import threading
+import os
 import time
 from datetime import datetime
 import database
@@ -20,6 +21,18 @@ TRAILING_DISTANCE = 0.035
 MAX_HOLD_SECONDS = 900
 
 MAX_POSITIONS_PER_STRATEGY = 10
+
+# Partial exits are enabled in paper mode; DCA remains opt-in because
+# averaging down increases exposure to a failing token.
+PARTIAL_TAKE_PROFIT_ENABLED = os.getenv(
+    "TROJAN_PARTIAL_TAKE_PROFIT_ENABLED", "true"
+).lower() == "true"
+PARTIAL_TAKE_PROFIT_TRIGGER = 0.08
+PARTIAL_SELL_FRACTION = 0.50
+DCA_ENABLED = os.getenv("TROJAN_DCA_ENABLED", "false").lower() == "true"
+DCA_TRIGGER_DROP = 0.05
+DCA_ADD_SIZE = 2.50
+DCA_MAX_ADDS = 1
 
 VALID_STRATEGIES = ("main", "sniper")
 
@@ -259,6 +272,42 @@ def update_position(token_address, current_price):
             database.update_position_metadata(
                 MODE, token_address, metadata
             )
+
+        # Optional single DCA add. It is disabled unless explicitly enabled
+        # in the environment and never triggers at or beyond the hard stop.
+        dca_count = int(metadata.get("dca_count", 0) or 0)
+        if (
+            DCA_ENABLED
+            and dca_count < DCA_MAX_ADDS
+            and -STOP_LOSS < change <= -DCA_TRIGGER_DROP
+        ):
+            result = database.add_position_investment_atomic(
+                MODE, token_address, current_price, DCA_ADD_SIZE,
+                metadata={"dca_count": dca_count + 1}
+            )
+            if isinstance(result, dict):
+                refresh_account()
+                print("PAPER DCA:", token_address, "|", result, flush=True)
+                return result
+
+        # Secure a portion of a profitable move while leaving the rest
+        # of the paper position open for the normal trailing/target logic.
+        if (
+            PARTIAL_TAKE_PROFIT_ENABLED
+            and not metadata.get("partial_take_profit_done")
+            and change >= PARTIAL_TAKE_PROFIT_TRIGGER
+        ):
+            result = database.partial_close_position_atomic(
+                MODE, token_address, current_price,
+                fraction=PARTIAL_SELL_FRACTION,
+                reason="PARTIAL TAKE PROFIT"
+            )
+            if isinstance(result, dict):
+                metadata["partial_take_profit_done"] = True
+                database.update_position_metadata(MODE, token_address, metadata)
+                refresh_account()
+                print("PAPER PARTIAL SELL:", token_address, "|", result, flush=True)
+                return result
 
         if change <= -STOP_LOSS:
             return close_position(token_address, current_price, "STOP LOSS")
