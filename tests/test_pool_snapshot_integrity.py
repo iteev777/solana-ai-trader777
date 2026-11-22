@@ -63,6 +63,19 @@ class ConfirmedPoolSnapshotTests(unittest.TestCase):
         self.assertEqual(result["priceUsd"], "10.0")
         self.assertTrue(result["onchainVerified"])
 
+    def test_quote_side_price_keeps_actual_pool_token_orientation(self):
+        with patch.object(onchain, "_account", return_value=self.pool_account), \
+             patch.object(onchain, "_multiple_accounts_with_context",
+                          return_value=(self.accounts, 987657)), \
+             patch.object(onchain, "_quote_usd", return_value=10.0):
+            result = onchain.decode_pool_snapshot(
+                self.pool_id, "pumpswap", self.quote_mint,
+                _force=True, _register_watch=False
+            )
+        self.assertEqual(result["baseToken"]["address"], self.base_mint)
+        self.assertEqual(result["quoteToken"]["address"], self.quote_mint)
+        self.assertEqual(result["priceUsd"], "1.0")
+
     def test_rejects_pool_owner_change_inside_confirmed_snapshot(self):
         changed = [dict(self.accounts[0]), *self.accounts[1:]]
         changed[0]["owner"] = onchain.PROGRAMS["raydium_cpmm"]
