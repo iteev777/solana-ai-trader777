@@ -59,6 +59,22 @@ class CopyWalletWatchlistTests(unittest.TestCase):
                 copy_trade.add_copy_watch_wallet(_b58encode(bytes([21]) * 32))
             self.assertEqual(len(copy_trade._wallets()), 20)
 
+
+    def test_reenabling_disabled_wallet_cannot_exceed_active_limit(self):
+        addresses = [_b58encode(bytes([value]) * 32) for value in range(2, 21)]
+        candidate = _b58encode(bytes([21]) * 32)
+        with patch.dict(os.environ, {"TROJAN_COPY_WALLETS": ENV_WALLET}, clear=False):
+            for address in addresses:
+                database.upsert_copy_watch_wallet(address, enabled=True)
+            database.upsert_copy_watch_wallet(candidate, enabled=False)
+            self.assertEqual(len(copy_trade._wallets()), 20)
+            with self.assertRaisesRegex(ValueError, "20"):
+                copy_trade.add_copy_watch_wallet(candidate)
+            self.assertFalse(next(
+                item for item in database.list_copy_watch_wallets()
+                if item["wallet"] == candidate
+            )["enabled"])
+
     def test_database_upsert_can_pause_and_reenable_wallet(self):
         first = database.upsert_copy_watch_wallet(DASHBOARD_WALLET, "Test", enabled=False)
         self.assertFalse(first["enabled"])
