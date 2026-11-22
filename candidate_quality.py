@@ -9,6 +9,8 @@ import math
 import os
 import time
 
+_last_quality_status = {"candidate_count": 0, "tiers": {"strong": 0, "watch": 0, "weak": 0, "reject": 0}, "gating_enabled": False}
+
 
 def _number(value):
     if isinstance(value, bool):
@@ -186,6 +188,7 @@ def score_candidate(token):
 
 def rank_candidates(tokens, market_data_by_mint=None):
     """Attach auditable scores and return deterministic best-first candidates."""
+    global _last_quality_status
     market_data_by_mint = market_data_by_mint if isinstance(market_data_by_mint, dict) else {}
     ranked = []
     for token in tokens if isinstance(tokens, (list, tuple)) else []:
@@ -205,10 +208,13 @@ def rank_candidates(tokens, market_data_by_mint=None):
         -len(item.get("discovery_sources", [])) if isinstance(item.get("discovery_sources"), list) else 0,
         str(item.get("tokenAddress", "")),
     ))
+    _last_quality_status = get_quality_status(ranked)
     return ranked
 
 
-def get_quality_status(tokens):
+def get_quality_status(tokens=None):
+    if tokens is None:
+        return dict(_last_quality_status)
     counts = {"strong": 0, "watch": 0, "weak": 0, "reject": 0}
     for token in tokens if isinstance(tokens, (list, tuple)) else []:
         tier = _nested(token, "candidate_quality", "tier")
