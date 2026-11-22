@@ -12,6 +12,7 @@ TRANSIENT_INITIAL_SECONDS = 60.0
 TRANSIENT_MAX_SECONDS = 600.0
 STRUCTURAL_BLOCK_SECONDS = 3600.0
 MAX_TRACKED_POOLS = 5000
+RECENT_SUCCESS_GRACE_SECONDS = 5.0
 
 _TRANSIENT_MARKERS = (
     "all configured solana rpc endpoints failed",
@@ -47,6 +48,7 @@ _STRUCTURAL_MARKERS = (
 _lock = threading.RLock()
 _transient = OrderedDict()
 _structural = OrderedDict()
+_last_success_at = OrderedDict()
 _total_transient_failures = 0
 _total_structural_failures = 0
 _last_error = None
@@ -121,6 +123,14 @@ def record_transient_failure(pool_address, error=None, now=None):
     now = time.monotonic() if now is None else float(now)
     key = pool_address.strip()
     with _lock:
+        last_success = _last_success_at.get(key, 0.0)
+        if last_success and now - last_success < RECENT_SUCCESS_GRACE_SECONDS:
+            return {
+                "retry_at": last_success,
+                "retry_in_seconds": 0.0,
+                "failures": 0,
+                "ignored_after_recent_success": True,
+            }
         previous = _transient.get(key)
         if previous and now < previous["retry_at"]:
             previous["last_error"] = str(error)[:180] if error is not None else previous["last_error"]
@@ -173,9 +183,15 @@ def record_structural_failure(pool_address, error=None, now=None):
 def record_success(pool_address):
     if not isinstance(pool_address, str) or not pool_address.strip():
         return
+    now = time.monotonic()
+    key = pool_address.strip()
     with _lock:
-        _transient.pop(pool_address.strip(), None)
-        _structural.pop(pool_address.strip(), None)
+        _transient.pop(key, None)
+        _structural.pop(key, None)
+        _last_success_at[key] = now
+        _last_success_at.move_to_end(key)
+        while len(_last_success_at) > MAX_TRACKED_POOLS:
+            _last_success_at.popitem(last=False)
 
 
 def get_pool_analysis_status(now=None):
@@ -198,6 +214,7 @@ def get_pool_analysis_status(now=None):
             "transient_max_seconds": TRANSIENT_MAX_SECONDS,
             "structural_block_seconds": STRUCTURAL_BLOCK_SECONDS,
             "max_tracked_pools": MAX_TRACKED_POOLS,
+            "recent_success_grace_seconds": RECENT_SUCCESS_GRACE_SECONDS,
             "last_error": _last_error,
         }
 
@@ -207,6 +224,7 @@ def clear_pool_analysis_state():
     with _lock:
         _transient.clear()
         _structural.clear()
+        _last_success_at.clear()
         _total_transient_failures = 0
         _total_structural_failures = 0
         _last_error = None
