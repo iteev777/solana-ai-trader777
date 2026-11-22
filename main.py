@@ -766,7 +766,15 @@ def process_copy_signals():
             continue
 
         from copy_risk import check_copy_buy
-        decision = check_copy_buy(paper.get_positions(), wallet, address)
+        wallet_stats = next(
+            (item for item in database.get_copy_wallet_performance()
+             if item.get("wallet") == wallet),
+            {}
+        )
+        decision = check_copy_buy(
+            paper.get_positions(), wallet, address,
+            daily_loss=wallet_stats.get("daily_loss", 0.0)
+        )
         if not decision.get("allowed"):
             log_event(
                 "COPY BUY RISK REJECTED", address,
@@ -959,8 +967,14 @@ def process_completed_tasks():
             copy_wallet = result.get("copy_wallet")
             if copy_wallet:
                 from copy_risk import cap_copy_trade_size
+                wallet_stats = next(
+                    (item for item in database.get_copy_wallet_performance()
+                     if item.get("wallet") == copy_wallet),
+                    {}
+                )
                 approved_trade_size, copy_risk_decision = cap_copy_trade_size(
-                    paper.get_positions(), copy_wallet, address, approved_trade_size
+                    paper.get_positions(), copy_wallet, address, approved_trade_size,
+                    daily_loss=wallet_stats.get("daily_loss", 0.0)
                 )
                 if approved_trade_size <= 0:
                     log_event(
