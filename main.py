@@ -614,7 +614,8 @@ def analyze_token_task(address, strategy_name, token):
             "token_security": token_security_report,
             "entry_intelligence": entry_intelligence,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
-            "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None
+            "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None,
+            "copy_latency_seconds": token.get("copy_latency_seconds") if isinstance(token, dict) else None
         }
 
     except Exception as error:
@@ -805,7 +806,8 @@ def process_copy_signals():
             "discovery_sources": ["copy_wallet"],
             "copy_wallet": wallet,
             "copy_signature": event.get("signature"),
-            "copy_trade_size_cap": decision.get("trade_size")
+            "copy_trade_size_cap": decision.get("trade_size"),
+            "copy_latency_seconds": event.get("copy_latency_seconds")
         }
         queued = schedule_token(address, "sniper", token)
         log_event(
@@ -995,9 +997,9 @@ def process_completed_tasks():
                 )
                 if approved_trade_size <= 0:
                     log_event(
-                        "COPY BUY RISK REJECTED AT EXECUTION", address,
-                        "wallet=" + str(copy_wallet),
-                        "reason=" + str(copy_risk_decision.get("reason"))
+                        "COPY BUY RISK REJECTED AT EXECUTION",
+                        address,
+                        "wallet=" + str(copy_wallet) + " | reason=" + str(copy_risk_decision.get("reason"))
                     )
                     continue
             trade_result = manager.process_approved_signal(
@@ -1013,7 +1015,8 @@ def process_completed_tasks():
                     "token_security": result.get("token_security"),
                     "entry_intelligence": result.get("entry_intelligence"),
                     "copy_wallet": result.get("copy_wallet"),
-                    "copy_signature": result.get("copy_signature")
+                    "copy_signature": result.get("copy_signature"),
+                    "copy_latency_seconds": result.get("copy_latency_seconds")
                 }
             )
 
