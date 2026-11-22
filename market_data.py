@@ -219,7 +219,19 @@ def select_best_pairs(pairs, requested_addresses):
 # GECKOTERMINAL POOL NORMALIZATION + FALLBACK
 # ==========================================
 
-def normalize_gecko_pool(pool):
+def _gecko_token_address(token_id):
+    if not isinstance(token_id, str):
+        return None
+    value = token_id.strip()
+    if value.startswith("solana_"):
+        value = value[len("solana_"):]
+    elif value.startswith("solana:"):
+        value = value[len("solana:"):]
+    return value if valid_address(value) and "_" not in value else None
+
+
+def normalize_gecko_pool(pool, requested_mint=None):
+    """Normalize GeckoTerminal pool data, orienting it to the requested token."""
     if not isinstance(pool, dict):
         return None
     attributes = pool.get("attributes")
@@ -228,19 +240,48 @@ def normalize_gecko_pool(pool):
         return None
     dex_relation = relationships.get("dex")
     dex_data = dex_relation.get("data") if isinstance(dex_relation, dict) else None
-    dex_id = (dex_data.get("id") if isinstance(dex_data, dict) else None) or attributes.get("dex_id") or attributes.get("dex")
-    base = relationships.get("base_token")
-    base_data = base.get("data") if isinstance(base, dict) else None
-    token_id = base_data.get("id") if isinstance(base_data, dict) else None
-    if not isinstance(token_id, str) or not token_id.startswith("solana_"):
+    dex_id = (
+        (dex_data.get("id") if isinstance(dex_data, dict) else None)
+        or attributes.get("dex_id") or attributes.get("dex")
+    )
+    base_relation = relationships.get("base_token")
+    quote_relation = relationships.get("quote_token")
+    base_data = base_relation.get("data") if isinstance(base_relation, dict) else None
+    quote_data = quote_relation.get("data") if isinstance(quote_relation, dict) else None
+    base_address = _gecko_token_address(base_data.get("id") if isinstance(base_data, dict) else None)
+    quote_address = _gecko_token_address(quote_data.get("id") if isinstance(quote_data, dict) else None)
+    if not base_address:
         return None
-    address = token_id[len("solana_"):].strip()
-    if not valid_address(address):
-        return None
-    price = safe_float(attributes.get("base_token_price_usd"))
+
+    token_is_base = True
+    if requested_mint:
+        if requested_mint == base_address:
+            token_is_base = True
+        elif quote_address and requested_mint == quote_address:
+            token_is_base = False
+        else:
+            return None
+
+    if token_is_base:
+        token_address, counter_address = base_address, quote_address
+        price_raw = attributes.get("base_token_price_usd")
+        price_native_raw = attributes.get("base_token_price_native_currency")
+    else:
+        token_address, counter_address = quote_address, base_address
+        price_raw = attributes.get("quote_token_price_usd")
+        price_native_raw = attributes.get("quote_token_price_native_currency")
+    price = safe_float(price_raw)
+    price_native = safe_float(price_native_raw)
+    price_text = str(price_raw).strip() if isinstance(price_raw, (str, int, float)) else str(price)
+    price_native_text = (
+        str(price_native_raw).strip()
+        if isinstance(price_native_raw, (str, int, float)) else None
+    )
+
     reserve = safe_float(attributes.get("reserve_in_usd"))
     if price is None or price <= 0 or reserve is None or reserve < 0:
         return None
+
     volumes = attributes.get("volume_usd")
     changes = attributes.get("price_change_percentage")
     transactions = attributes.get("transactions")
@@ -251,10 +292,8 @@ def normalize_gecko_pool(pool):
     for window in ("m5", "h1", "h24"):
         item = transactions.get(window)
         if isinstance(item, dict):
-            txns[window] = {
-                "buys": item.get("buys"),
-                "sells": item.get("sells")
-            }
+            txns[window] = {"buys": item.get("buys"), "sells": item.get("sells")}
+
     created = attributes.get("pool_created_at")
     created_ms = None
     if isinstance(created, str):
@@ -262,22 +301,31 @@ def normalize_gecko_pool(pool):
             created_ms = int(datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp() * 1000)
         except (ValueError, TypeError, OverflowError):
             created_ms = None
+
     return {
         "chainId": "solana",
         "dexId": dex_id or "geckoterminal",
         "poolName": attributes.get("name"),
         "pairAddress": attributes.get("address"),
-        "baseToken": {"address": address, "name": "Unknown", "symbol": "Unknown"},
-        "quoteToken": {},
-        "priceUsd": str(price),
+        "baseToken": {"address": token_address, "name": "Unknown", "symbol": "Unknown"},
+        "quoteToken": (
+            {"address": counter_address, "name": "Unknown", "symbol": "Unknown"}
+            if counter_address else {}
+        ),
+        "priceUsd": price_text,
+        "priceNative": price_native_text if price_native is not None and price_native > 0 else None,
         "liquidity": {"usd": reserve},
         "volume": {"m5": safe_float(volumes.get("m5")), "h24": safe_float(volumes.get("h24"))},
-        "priceChange": {"m5": safe_float(changes.get("m5")), "h1": safe_float(changes.get("h1")), "h24": safe_float(changes.get("h24"))},
+        "priceChange": {
+            "m5": safe_float(changes.get("m5")),
+            "h1": safe_float(changes.get("h1")),
+            "h24": safe_float(changes.get("h24")),
+        } if token_is_base else {},
         "txns": txns,
         "pairCreatedAt": created_ms,
-        "fdv": safe_float(attributes.get("fdv_usd")),
-        "marketCap": safe_float(attributes.get("market_cap_usd")),
-        "marketSource": "geckoterminal"
+        "fdv": safe_float(attributes.get("fdv_usd")) if token_is_base else None,
+        "marketCap": safe_float(attributes.get("market_cap_usd")) if token_is_base else None,
+        "marketSource": "geckoterminal",
     }
 
 
@@ -319,75 +367,81 @@ def get_gecko_pool_data_batch(pool_addresses):
 # BATCH API REQUEST
 # ==========================================
 
+def refresh_market_data_from_pool_registry(address):
+    """Re-select and cache a token's canonical pair after asynchronous source enrichment."""
+    from pool_registry import get_pool_candidates
+    candidates = get_pool_candidates(address)
+    selected = select_best_pairs(candidates, [address]).get(address)
+    if selected:
+        save_cached(address, selected)
+    return selected
+
+
 def fetch_batch(addresses):
-
-    addresses = list(
-        dict.fromkeys(addresses)
-    )
-
+    addresses = list(dict.fromkeys(addresses))
     if not addresses:
         return {}
 
     results = {}
+    from pool_registry import (
+        enqueue_dex_pool_refresh, get_pool_candidates,
+        merge_pool_candidates,
+    )
 
-    for start in range(
-        0,
-        len(addresses),
-        MAX_BATCH_SIZE
-    ):
-
-        batch = addresses[
-            start:start + MAX_BATCH_SIZE
-        ]
-
-        url = (
-            DEXSCREENER_BATCH_URL
-            + ",".join(batch)
-        )
-
+    for start in range(0, len(addresses), MAX_BATCH_SIZE):
+        batch = addresses[start:start + MAX_BATCH_SIZE]
+        url = DEXSCREENER_BATCH_URL + ",".join(batch)
         try:
-
             pairs = get_json(
                 url,
                 timeout=REQUEST_TIMEOUT,
                 cache_ttl=0,
                 max_retries=MAX_RETRIES
             )
+            if not isinstance(pairs, list):
+                pairs = []
 
-            selected = select_best_pairs(
-                pairs,
-                batch
-            )
+            # Keep every returned pair for each requested base mint, not just
+            # the one chosen for this response. The registry merges sources.
+            for address in batch:
+                token_pairs = [
+                    pair for pair in pairs
+                    if isinstance(pair, dict)
+                    and isinstance(pair.get("baseToken"), dict)
+                    and pair["baseToken"].get("address") == address
+                ]
+                merge_pool_candidates(address, token_pairs, "dexscreener")
+                # Fast batch quotes are supplemented asynchronously by the
+                # full per-token token-pairs endpoint (up to 30 pools).
+                enqueue_dex_pool_refresh(address)
 
+            combined = []
+            for address in batch:
+                combined.extend(get_pool_candidates(address))
+            selected = select_best_pairs(combined, batch)
             results.update(selected)
 
             for address, pair in selected.items():
-
-                save_cached(
-                    address,
-                    pair
-                )
+                save_cached(address, pair)
 
             print(
                 "[TROJAN V2] MARKET BATCH COMPLETE",
-                "| REQUESTED:",
-                len(batch),
-                "| FOUND:",
-                len(selected),
+                "| REQUESTED:", len(batch),
+                "| FOUND:", len(selected),
+                "| POOL SOURCES: DEXSCREENER + GECKOTERMINAL",
                 flush=True
             )
-
         except Exception as error:
-
+            # If DexScreener is unavailable, still schedule a background
+            # GeckoTerminal lookup; never block the trading loop on it.
+            for address in batch:
+                enqueue_dex_pool_refresh(address)
             print(
                 "[TROJAN V2] MARKET BATCH ERROR",
-                "| SIZE:",
-                len(batch),
-                "| ERROR:",
-                repr(error),
+                "| SIZE:", len(batch),
+                "| ERROR:", repr(error),
                 flush=True
             )
-
     return results
 
 
@@ -716,7 +770,8 @@ def get_market_data_status():
         "max_batch_size": MAX_BATCH_SIZE,
         "cache_ttl": CACHE_TTL,
         "batch_wait_seconds": BATCH_WAIT_SECONDS,
-        "worker_running": worker_running
+        "worker_running": worker_running,
+        "pool_registry": __import__("pool_registry").get_pool_registry_status()
     }
 
 
