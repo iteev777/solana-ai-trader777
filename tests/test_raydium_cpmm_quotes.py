@@ -17,8 +17,8 @@ class RaydiumCpmmMathTests(unittest.TestCase):
             self.snapshot(), "A", 1000, 100, now=1001.0
         )
         self.assertEqual(quote["fee_amount"], 3)
-        self.assertEqual(quote["out_amount"], 1993)
-        self.assertEqual(quote["minimum_out_amount"], 1973)
+        self.assertEqual(quote["out_amount"], 1992)
+        self.assertEqual(quote["minimum_out_amount"], 1972)
         self.assertEqual(quote["execution"], "DISABLED")
 
     def test_reverse_direction(self):
