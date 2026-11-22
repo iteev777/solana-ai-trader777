@@ -288,7 +288,7 @@ def _quote_usd(mint):
         return None
 
 
-def decode_pool_snapshot(pool_address, protocol, token_mint):
+def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False, _register_watch=True):
     """Return a verified pool snapshot in USD, or None if data is unavailable."""
     protocol = str(protocol or "").lower().replace("-", "_")
     aliases = {
@@ -313,7 +313,7 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
         return None
     key = (pool_address, protocol, token_mint)
     cached = _cache.get(key)
-    if cached and time.time() - cached["time"] < 3:
+    if not _force and cached and time.time() - cached["time"] < 0.5:
         return dict(cached["data"])
     pool = _account(pool_address)
 
