@@ -297,3 +297,18 @@ The deterministic candidate filter now evaluates volume, transaction activity an
 Each window is checked independently, one-sided transaction counts are retained as reported, and absent measurements are only held when the corresponding floor/requirement is enabled. The filter report includes per-window raw measurements and derived buy ratios. Existing 5m environment variables and rejection codes remain compatible.
 
 
+
+
+## Expanded RugCheck risk intelligence
+
+RugCheck analysis now retains a structured signal report and evaluates more than the normalized score and individual risk list. It includes the largest holder and sorted top-ten concentration, creator share (from creator holder attribution or creator balance / supply), RugCheck's rugged flag, token mutability combined with freeze authority, metadata update authority, transfer-fee percentage and authority, graph-linked insider count, LP-provider count and reported market liquidity. These remain separate from on-chain token-account authority concentration, which is not a beneficial-owner identity check.
+
+Configurable risk thresholds:
+- `TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT` (50), `TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT` (30)
+- `TROJAN_RUGCHECK_MAX_TOP10_PCT` (80), `TROJAN_RUGCHECK_WARN_TOP10_PCT` (60)
+- `TROJAN_RUGCHECK_MAX_CREATOR_PCT` (20), `TROJAN_RUGCHECK_WARN_CREATOR_PCT` (10)
+- `TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT` (10)
+- `TROJAN_RUGCHECK_MAX_GRAPH_INSIDERS` (3)
+- `TROJAN_RUGCHECK_MAX_MEDIUM_RISKS` (3)
+
+Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the existing buy gate. Missing optional extended fields are exposed as unknown rather than fabricated. A positive transfer fee or active transfer-fee authority adds risk; a rugged token, critical concentration/creator share, excessive transfer fee, or other high-severity signal rejects the report.
