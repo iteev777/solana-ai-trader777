@@ -154,7 +154,7 @@ def _decode_pool(protocol, raw):
             "status": "active", "price_mode": "reserves"
         }
     if protocol == "raydium_cpmm":
-        if len(raw) < 333 or raw[:8] != _discriminator("PoolState"):
+        if len(raw) < 413 or raw[:8] != _discriminator("PoolState"):
             raise ValueError("invalid Raydium CPMM PoolState discriminator/layout")
         status = raw[329]
         return {
