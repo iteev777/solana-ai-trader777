@@ -23,9 +23,19 @@ def record_validation(declared_protocol, pool_address, mint, snapshot=None, erro
         source = str(snapshot.get("marketSource") or "")
         if source.startswith("solana_rpc_"):
             protocol = source[len("solana_rpc_"):]
+    success = isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True
+    if not success and pool_address:
+        try:
+            from solana_onchain import PROGRAMS, _account
+            owner = _account(pool_address).get("owner")
+            protocol = next(
+                (name for name, program_id in PROGRAMS.items() if program_id == owner),
+                protocol
+            )
+        except Exception:
+            pass
     if protocol not in SUPPORTED:
         protocol = "unknown"
-    success = isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True
     try:
         import database
         database.record_protocol_validation(
