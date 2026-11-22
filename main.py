@@ -402,13 +402,7 @@ def analyze_token_task(address, strategy_name, token):
         rpc_configured = get_onchain_status().get("rpc_configured")
         if pool_address and rpc_configured:
             import pool_analysis
-            if pool_analysis.should_skip_pool(pool_address):
-                log_event(
-                    "ONCHAIN POOL READ BACKOFF",
-                    address,
-                    pool_analysis.get_pool_analysis_status()
-                )
-            else:
+            if not pool_analysis.should_skip_pool(pool_address):
                 try:
                     onchain_snapshot = decode_pool_snapshot(
                         pool_address, pool_protocol, address
