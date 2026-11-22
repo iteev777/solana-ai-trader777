@@ -180,6 +180,19 @@ class OnchainStreamTests(unittest.TestCase):
         with mock.patch.dict("os.environ", {"SOLANA_WS_URL": "", "SOLANA_RPC_URL": "https://rpc.example"}, clear=False):
             self.assertEqual(onchain_stream._rpc_ws_url(), "wss://rpc.example")
 
+    def test_sync_removes_closed_position_pool_subscriptions_and_cache(self):
+        key = ("pool-closed", "raydium_cpmm", "mint")
+        with onchain_stream._lock:
+            onchain_stream._watches[key] = True
+            onchain_stream._snapshots[key] = {
+                "data": {"priceUsd": "1"},
+                "observed_at": 1000.0
+            }
+        self.assertEqual(onchain_stream.sync_watched_pools([]), 0)
+        with onchain_stream._lock:
+            self.assertNotIn(key, onchain_stream._watches)
+            self.assertNotIn(key, onchain_stream._snapshots)
+
 class IndicatorTests(unittest.TestCase):
     def test_ohlcv_indicators_return_technical_confirmation(self):
         candles = []
