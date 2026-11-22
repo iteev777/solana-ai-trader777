@@ -51,6 +51,7 @@ class ExitPolicyTests(unittest.TestCase):
     def test_break_even_protection_arms_from_peak(self):
         policy = {**self.policy, "break_even_activation_pct": 8.0, "break_even_offset_pct": 1.0}
         position = {**self.position, "metadata": {"peak_price": 110.0}}
+        policy["trailing_activation_pct"] = 20.0
         self.assertEqual(
             exit_policy.evaluate_exit(position, 100.5, now=1100, policy=policy),
             "BREAK-EVEN PROTECTION",
@@ -58,8 +59,9 @@ class ExitPolicyTests(unittest.TestCase):
 
     def test_stagnation_exit_requires_duration_and_near_flat_pnl(self):
         policy = {**self.policy, "stagnation_seconds": 300, "max_hold_seconds": 0}
+        position = {**self.position, "metadata": {"peak_price": 100.0}}
         self.assertEqual(
-            exit_policy.evaluate_exit(self.position, 100.5, now=1400, policy=policy),
+            exit_policy.evaluate_exit(position, 100.5, now=1400, policy=policy),
             "STAGNATION EXIT",
         )
 
