@@ -22,7 +22,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -192,6 +192,12 @@ def initialize_database():
             "strategy",
             "TEXT NOT NULL DEFAULT 'main'"
         )
+        add_column_if_missing(
+            connection,
+            "trades",
+            "copy_wallet",
+            "TEXT"
+        )
 
         add_column_if_missing(
             connection,
@@ -335,6 +341,22 @@ def initialize_database():
                 raw_summary TEXT,
                 timestamp TEXT NOT NULL
             )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS protocol_validation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                protocol TEXT NOT NULL,
+                pool_address TEXT,
+                token_mint TEXT,
+                success INTEGER NOT NULL,
+                reason TEXT,
+                observed_at REAL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_protocol_validation_protocol
+            ON protocol_validation_events(protocol, timestamp)
         """)
 
         connection.execute("""
@@ -638,23 +660,13 @@ def open_position_atomic(
         connection.execute("""
             INSERT INTO trades
             (
-                token_address,
-                action,
-                price,
-                amount,
-                profit_loss,
-                timestamp,
-                mode,
-                strategy
+                token_address, action, price, amount, profit_loss,
+                timestamp, mode, strategy, copy_wallet
             )
-            VALUES (?, 'BUY', ?, ?, 0, ?, ?, ?)
+            VALUES (?, 'BUY', ?, ?, 0, ?, ?, ?, ?)
         """, (
-            token_address,
-            entry_price,
-            invested,
-            now(),
-            mode,
-            strategy
+            token_address, entry_price, invested, now(), mode, strategy,
+            position_metadata.get("copy_wallet")
         ))
 
     return "POSITION OPENED"
@@ -705,9 +717,10 @@ def add_position_investment_atomic(
         """, (float(account["balance"]) - additional_investment - fee, now(), mode))
         connection.execute("""
             INSERT INTO trades (token_address, action, price, amount, profit_loss,
-                                timestamp, mode, strategy)
-            VALUES (?, 'BUY', ?, ?, 0, ?, ?, ?)
-        """, (token_address, current_price, additional_investment, now(), mode, position["strategy"]))
+                                timestamp, mode, strategy, copy_wallet)
+            VALUES (?, 'BUY', ?, ?, 0, ?, ?, ?, ?)
+        """, (token_address, current_price, additional_investment, now(), mode,
+              position["strategy"], stored.get("copy_wallet")))
     return {
         "result": "DCA ADDED", "entry_price": new_entry,
         "invested": new_invested, "additional_investment": additional_investment
@@ -764,9 +777,10 @@ def partial_close_position_atomic(
         """, (new_balance, new_daily_loss, new_daily_pnl, today(), now(), mode))
         connection.execute("""
             INSERT INTO trades (token_address, action, price, amount, profit_loss,
-                                timestamp, mode, strategy)
-            VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?)
-        """, (token_address, current_price, returned, profit_loss, now(), mode, position["strategy"]))
+                                timestamp, mode, strategy, copy_wallet)
+            VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?, ?)
+        """, (token_address, current_price, returned, profit_loss, now(), mode,
+              position["strategy"], metadata.get("copy_wallet")))
     return {
         "result": reason, "profit_loss": profit_loss,
         "balance": round(new_balance, 2), "strategy": position["strategy"],
@@ -907,17 +921,13 @@ def close_position_atomic(
                 profit_loss,
                 timestamp,
                 mode,
-                strategy
+                strategy,
+                copy_wallet
             )
-            VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?)
+            VALUES (?, 'SELL', ?, ?, ?, ?, ?, ?, ?)
         """, (
-            token_address,
-            current_price,
-            returned_amount,
-            profit_loss,
-            now(),
-            mode,
-            strategy
+            token_address, current_price, returned_amount, profit_loss,
+            now(), mode, strategy, position_metadata.get("copy_wallet")
         ))
 
     return {
@@ -1072,7 +1082,8 @@ def save_trade(
     amount,
     profit_loss=0,
     mode="paper",
-    strategy="main"
+    strategy="main",
+    copy_wallet=None
 ):
 
     validate_mode(mode)
@@ -1098,18 +1109,13 @@ def save_trade(
                 profit_loss,
                 timestamp,
                 mode,
-                strategy
+                strategy,
+                copy_wallet
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            token,
-            action,
-            price,
-            amount,
-            profit_loss,
-            now(),
-            mode,
-            strategy
+            token, action, price, amount, profit_loss, now(),
+            mode, strategy, copy_wallet
         ))
 
 
@@ -1620,3 +1626,148 @@ if __name__ == "__main__":
     print(get_database_health())
 
     print("TROJAN V2 DATABASE TEST COMPLETED")
+
+
+
+# ==========================================
+# COPY WALLET PERFORMANCE + PROTOCOL VALIDATION
+# ==========================================
+
+def get_copy_wallet_performance():
+    with connect() as connection:
+        trade_rows = connection.execute("""
+            SELECT copy_wallet AS wallet,
+                   SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS closed_trades,
+                   SUM(CASE WHEN action='SELL' AND profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
+                   SUM(CASE WHEN action='SELL' AND profit_loss <= 0 THEN 1 ELSE 0 END) AS losses,
+                   COALESCE(SUM(CASE WHEN action='SELL' THEN profit_loss ELSE 0 END), 0) AS realized_pnl,
+                   COALESCE(SUM(CASE WHEN action='BUY' THEN amount ELSE 0 END), 0) AS gross_buys,
+                   COALESCE(SUM(CASE WHEN action='SELL' AND date(timestamp)=? THEN profit_loss ELSE 0 END), 0) AS daily_realized_pnl,
+                   COALESCE(SUM(CASE WHEN action='SELL' AND date(timestamp)=? AND profit_loss < 0 THEN -profit_loss ELSE 0 END), 0) AS daily_loss
+            FROM trades
+            WHERE mode='paper' AND copy_wallet IS NOT NULL AND copy_wallet <> ''
+            GROUP BY copy_wallet
+        """, (today(), today())).fetchall()
+        event_rows = connection.execute("""
+            SELECT wallet,
+                   COUNT(*) AS observed_events,
+                   SUM(CASE WHEN action='BUY' THEN 1 ELSE 0 END) AS buys,
+                   SUM(CASE WHEN action='SELL' THEN 1 ELSE 0 END) AS sells
+            FROM copy_trade_events
+            GROUP BY wallet
+        """).fetchall()
+        position_rows = connection.execute("""
+            SELECT metadata, invested FROM positions WHERE mode='paper'
+        """).fetchall()
+
+    result = {}
+    for row in trade_rows:
+        wallet = row["wallet"]
+        closed = int(row["closed_trades"] or 0)
+        wins = int(row["wins"] or 0)
+        result[wallet] = {
+            "wallet": wallet, "closed_trades": closed, "wins": wins,
+            "losses": int(row["losses"] or 0),
+            "win_rate": round(wins / closed * 100, 2) if closed else 0.0,
+            "realized_pnl": round(float(row["realized_pnl"] or 0), 4),
+            "daily_realized_pnl": round(float(row["daily_realized_pnl"] or 0), 4),
+            "daily_loss": round(float(row["daily_loss"] or 0), 4),
+            "gross_buys": round(float(row["gross_buys"] or 0), 4),
+            "open_positions": 0, "open_exposure_usd": 0.0,
+            "observed_events": 0, "observed_buys": 0, "observed_sells": 0,
+        }
+    for row in event_rows:
+        item = result.setdefault(row["wallet"], {
+            "wallet": row["wallet"], "closed_trades": 0, "wins": 0,
+            "losses": 0, "win_rate": 0.0, "realized_pnl": 0.0,
+            "gross_buys": 0.0, "daily_realized_pnl": 0.0,
+            "daily_loss": 0.0, "open_positions": 0,
+            "open_exposure_usd": 0.0, "observed_events": 0,
+            "observed_buys": 0, "observed_sells": 0,
+        })
+        item["observed_events"] = int(row["observed_events"] or 0)
+        item["observed_buys"] = int(row["buys"] or 0)
+        item["observed_sells"] = int(row["sells"] or 0)
+    for row in position_rows:
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except (ValueError, TypeError):
+            metadata = {}
+        wallet = metadata.get("copy_wallet") if isinstance(metadata, dict) else None
+        if not wallet:
+            continue
+        item = result.setdefault(wallet, {
+            "wallet": wallet, "closed_trades": 0, "wins": 0, "losses": 0,
+            "win_rate": 0.0, "realized_pnl": 0.0, "gross_buys": 0.0,
+            "open_positions": 0, "open_exposure_usd": 0.0,
+            "observed_events": 0, "observed_buys": 0, "observed_sells": 0,
+        })
+        item["open_positions"] += 1
+        item["open_exposure_usd"] += float(row["invested"] or 0)
+    for item in result.values():
+        item["open_exposure_usd"] = round(item["open_exposure_usd"], 4)
+    return sorted(result.values(), key=lambda item: item["realized_pnl"], reverse=True)
+
+
+def record_protocol_validation(protocol, pool_address, token_mint, success,
+                               reason=None, observed_at=None):
+    with connect() as connection:
+        connection.execute("""
+            INSERT INTO protocol_validation_events
+            (protocol, pool_address, token_mint, success, reason, observed_at, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(protocol or "unknown")[:64],
+            str(pool_address or "")[:128],
+            str(token_mint or "")[:128],
+            1 if success else 0,
+            str(reason or "")[:220] or None,
+            float(observed_at) if observed_at is not None else None,
+            now()
+        ))
+
+
+def get_protocol_validation_summary():
+    with connect() as connection:
+        rows = connection.execute("""
+            SELECT protocol, COUNT(*) AS attempts,
+                   SUM(success) AS successes,
+                   SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failures,
+                   MAX(timestamp) AS last_seen,
+                   MAX(CASE WHEN success=0 THEN reason ELSE NULL END) AS last_error
+            FROM protocol_validation_events
+            GROUP BY protocol
+            ORDER BY protocol
+        """).fetchall()
+    by_protocol = {row["protocol"]: {
+        "protocol": row["protocol"],
+        "attempts": int(row["attempts"] or 0),
+        "successes": int(row["successes"] or 0),
+        "failures": int(row["failures"] or 0),
+        "success_rate": round(
+            float(row["successes"] or 0) / int(row["attempts"] or 1) * 100, 2
+        ),
+        "last_seen": row["last_seen"],
+        "last_error": row["last_error"],
+    } for row in rows}
+    supported = [
+        "pumpswap", "pumpfun_legacy", "raydium_amm_v4", "raydium_cpmm",
+        "raydium_clmm", "orca_whirlpool", "meteora_dlmm", "meteora_damm_v2",
+        "meteora_dbc", "fluxbeam_amm", "moonit_amm",
+    ]
+    return {
+        "supported_protocols": supported,
+        "validated_protocols": sum(
+            1 for protocol in supported
+            if by_protocol.get(protocol, {}).get("successes", 0) > 0
+        ),
+        "protocols": [
+            by_protocol.get(protocol, {
+                "protocol": protocol, "attempts": 0, "successes": 0,
+                "failures": 0, "success_rate": 0.0,
+                "last_seen": None, "last_error": None
+            }) for protocol in supported
+        ],
+        "unclassified": by_protocol.get("unknown"),
+        "commitment": "confirmed",
+    }

@@ -15,6 +15,13 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["route_labels"], ["Raydium", "Orca"])
         self.assertTrue(result["is_split_route"])
 
+    def test_sequential_full_weight_hops_are_not_split_routes(self):
+        result = live_execution._route_diagnostics([
+            {"percent": 100, "swapInfo": {"label": "Raydium"}},
+            {"percent": 100, "swapInfo": {"label": "Orca"}},
+        ])
+        self.assertFalse(result["is_split_route"])
+
     def test_base_unit_amount_preserves_large_integer_precision(self):
         amount = "18446744073709551615"
         self.assertEqual(live_execution._amount(amount, "amount"), 18446744073709551615)
@@ -58,6 +65,35 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
         get.return_value = response
         with self.assertRaisesRegex(ValueError, "transaction-bearing"):
             live_execution.get_jupiter_quote("mintA", "mintB", 1000)
+
+    def test_route_quality_rejects_excessive_price_impact(self):
+        result = live_execution.evaluate_route_quality({
+            "price_impact_percent": 4.0,
+            "platform_fee_bps": 10,
+            "route_diagnostics": {"hop_count": 1, "route_labels": ["Raydium"]}
+        })
+        self.assertEqual(result["status"], "REJECT")
+        self.assertIn("PRICE_IMPACT_ABOVE_LIMIT", result["reasons"])
+
+    @patch("solana_onchain._rpc")
+    @patch.object(live_execution, "_jupiter_get")
+    def test_unsigned_simulation_never_signs_or_broadcasts(self, get_order, rpc):
+        get_order.return_value = {"transaction": "A" * 120, "router": "metis",
+                                  "inAmount": "1000", "outAmount": "2000"}
+        rpc.return_value = {"context": {"slot": 123}, "value": {
+            "err": None, "unitsConsumed": 50000, "logs": ["Program success"]
+        }}
+        result = live_execution.simulate_unsigned_swap(
+            "11111111111111111111111111111111",
+            "SysvarRent111111111111111111111111111111111",
+            1000, taker="11111111111111111111111111111111"
+        )
+        self.assertEqual(result["status"], "PASS")
+        self.assertFalse(result["signed"])
+        self.assertFalse(result["broadcast"])
+        self.assertEqual(rpc.call_args.args[0], "simulateTransaction")
+        self.assertFalse(rpc.call_args.args[1][1]["sigVerify"])
+        self.assertTrue(rpc.call_args.args[1][1]["replaceRecentBlockhash"])
 
     def test_plan_keeps_execution_locked(self):
         quote = {
