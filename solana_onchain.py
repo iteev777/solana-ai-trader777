@@ -533,15 +533,19 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         total_fee = sum(fee_amounts)
         output_amount = gross_quote_out - total_fee
         impact_basis_input = amount_in
+        impact_output_amount = gross_quote_out
         spot_price = reserve_quote / reserve_base
         output_mint = decoded["quote_mint"]
         unspent_input = 0
+
+    if is_buy:
+        impact_output_amount = output_amount
 
     output_reserve = reserve_base if is_buy else reserve_quote
     if output_amount <= 0 or output_amount >= output_reserve:
         raise ValueError("PumpSwap quote rounds to zero or exceeds available pool reserves")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
-    execution_price = output_amount / impact_basis_input
+    execution_price = impact_output_amount / impact_basis_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
     age = time.time() - snapshot_started
     if age < 0 or age > max_snapshot_age:
