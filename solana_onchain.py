@@ -842,8 +842,9 @@ def decode_pool_snapshot(pool_address, protocol, token_mint, _force=False,
     result = {
         "priceUsd": str(token_price),
         "liquidity": {"usd": (base_amount * base_price_usd + quote_amount * quote_price_usd)},
-        "baseToken": {"address": token_mint},
-        "quoteToken": {"address": other_mint},
+        # Preserve the actual pool orientation; priceUsd still refers to token_mint.
+        "baseToken": {"address": decoded["base_mint"]},
+        "quoteToken": {"address": decoded["quote_mint"]},
         "marketSource": "solana_rpc_" + protocol,
         "poolAddress": pool_address,
         "onchainVerified": True,
