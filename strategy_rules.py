@@ -1,0 +1,162 @@
+"""Configurable, safe strategy rule trees for Trojan V2.
+
+Set TROJAN_STRATEGY_RULES to JSON, for example:
+{
+  "main": {"all": [
+    {"field": "liquidity_usd", "op": "gte", "value": 12000},
+    {"field": "buy_ratio", "op": "gte", "value": 0.58},
+    {"field": "price_change_m5", "op": "between", "value": [0.1, 4.0]}
+  ]},
+  "sniper": {"all": [
+    {"field": "liquidity_usd", "op": "gte", "value": 3000},
+    {"field": "buy_ratio", "op": "gte", "value": 0.55}
+  ]}
+}
+
+No configured rules means the existing strategy remains unchanged.
+Expressions support all / any / not and numeric comparisons only.
+"""
+import json
+import os
+import time
+import math
+
+ALLOWED_FIELDS = {
+    "liquidity_usd", "volume_m5", "volume_h24",
+    "price_change_m5", "price_change_h1", "price_change_h24",
+    "buy_ratio", "score", "source_count", "txns_m5_total",
+    "pair_age_minutes"
+}
+ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
+
+
+def _number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+        return result if math.isfinite(result) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _context(token, score):
+    token = token if isinstance(token, dict) else {}
+    liquidity = token.get("liquidity")
+    volume = token.get("volume")
+    changes = token.get("priceChange")
+    txns = token.get("txns")
+    liquidity = liquidity if isinstance(liquidity, dict) else {}
+    volume = volume if isinstance(volume, dict) else {}
+    changes = changes if isinstance(changes, dict) else {}
+    txns = txns if isinstance(txns, dict) else {}
+    m5 = txns.get("m5") if isinstance(txns.get("m5"), dict) else {}
+    buys = _number(m5.get("buys"))
+    sells = _number(m5.get("sells"))
+    total = buys + sells if buys is not None and sells is not None else None
+    pair_created = _number(token.get("pairCreatedAt"))
+    age = max(0, (time.time() * 1000 - pair_created) / 60000) if pair_created else None
+    sources = token.get("discovery_sources", [])
+    return {
+        "liquidity_usd": _number(liquidity.get("usd")),
+        "volume_m5": _number(volume.get("m5")),
+        "volume_h24": _number(volume.get("h24")),
+        "price_change_m5": _number(changes.get("m5")),
+        "price_change_h1": _number(changes.get("h1")),
+        "price_change_h24": _number(changes.get("h24")),
+        "buy_ratio": buys / total if total and buys is not None else None,
+        "score": _number(score),
+        "source_count": len(sources) if isinstance(sources, list) else 0,
+        "txns_m5_total": total,
+        "pair_age_minutes": age
+    }
+
+
+def _evaluate(node, context, path="root"):
+    if not isinstance(node, dict):
+        return False, [path + ": invalid rule node"]
+    groups = [key for key in ("all", "any", "not") if key in node]
+    if groups:
+        if len(groups) != 1:
+            return False, [path + ": exactly one group operator is required"]
+        key = groups[0]
+        children = node[key]
+        if not isinstance(children, list) or not children:
+            return False, [path + ": rule group must contain conditions"]
+        results = [_evaluate(child, context, path + "." + key + "[" + str(i) + "]") for i, child in enumerate(children)]
+        if key == "all":
+            passed = all(item[0] for item in results)
+        elif key == "any":
+            passed = any(item[0] for item in results)
+        else:
+            if len(results) != 1:
+                return False, [path + ": not requires exactly one condition"]
+            passed = not results[0][0]
+        reasons = [reason for ok, messages in results if not ok for reason in messages]
+        return passed, ([] if passed else reasons or [path + ": group failed"])
+    field = node.get("field")
+    op = node.get("op")
+    if field not in ALLOWED_FIELDS or op not in ALLOWED_OPERATORS:
+        return False, [path + ": unsupported field or operator"]
+    actual = context.get(field)
+    if actual is None:
+        return False, [field + ": data unavailable"]
+    expected = node.get("value")
+    if op == "between":
+        if not isinstance(expected, list) or len(expected) != 2:
+            return False, [field + ": between expects [min, max]"]
+        low, high = _number(expected[0]), _number(expected[1])
+        if low is None or high is None or low > high:
+            return False, [field + ": invalid range"]
+        passed = low <= actual <= high
+        description = str(low) + "–" + str(high)
+    else:
+        target = _number(expected)
+        if target is None:
+            return False, [field + ": invalid numeric threshold"]
+        passed = {
+            "gt": actual > target, "gte": actual >= target,
+            "lt": actual < target, "lte": actual <= target,
+            "eq": actual == target
+        }[op]
+        description = op + " " + str(target)
+    return passed, ([] if passed else [field + " failed (" + str(actual) + " " + description + ")"])
+
+
+def get_config():
+    raw = os.getenv("TROJAN_STRATEGY_RULES", "").strip()
+    if not raw:
+        return {"enabled": False, "valid": True, "rules": {}, "error": None}
+    try:
+        config = json.loads(raw)
+        if not isinstance(config, dict):
+            raise ValueError("Top-level JSON must be an object")
+        unknown = set(config) - {"main", "sniper"}
+        if unknown:
+            raise ValueError("Unknown strategy names: " + ", ".join(sorted(unknown)))
+        return {"enabled": True, "valid": True, "rules": config, "error": None}
+    except (ValueError, TypeError) as error:
+        return {"enabled": True, "valid": False, "rules": {}, "error": str(error)[:300]}
+
+
+def evaluate_strategy_rules(token, score, strategy):
+    config = get_config()
+    if not config["enabled"]:
+        return True, "No custom strategy rules configured"
+    if not config["valid"]:
+        return False, "Custom strategy rules invalid: " + str(config["error"])
+    rule = config["rules"].get(strategy)
+    if rule is None:
+        return True, "No custom rules for " + strategy
+    passed, reasons = _evaluate(rule, _context(token, score))
+    return passed, "Custom rules passed" if passed else "; ".join(reasons)
+
+
+def get_strategy_rules_status():
+    config = get_config()
+    return {
+        "enabled": config["enabled"],
+        "valid": config["valid"],
+        "strategies_configured": sorted(config["rules"].keys()),
+        "error": config["error"]
+    }
