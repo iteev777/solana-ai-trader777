@@ -6,6 +6,8 @@ import requests
 import math
 import time
 import threading
+import os
+import re
 
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
@@ -76,6 +78,45 @@ def get_risk_level(risk):
         return "LOW"
 
     return "UNKNOWN"
+
+
+def _env_limit(name, default, minimum=0.0, maximum=100.0):
+    value = get_number(os.getenv(name, str(default)))
+    if value is None or value < minimum or value > maximum:
+        return float(default)
+    return value
+
+
+def _percentage_from_text(value):
+    if not isinstance(value, str):
+        return None
+    match = re.search(r"(?<![\\w.])([0-9]+(?:\\.[0-9]+)?)\\s*%", value)
+    if match:
+        number = get_number(match.group(1))
+        return number if number is not None and 0 <= number <= 100 else None
+    lowered = value.lower()
+    if "unlock" in lowered or "not locked" in lowered:
+        return 0.0
+    if "locked" in lowered and "partial" not in lowered:
+        return 100.0
+    return None
+
+
+def _lp_lock_percentage(risks):
+    for risk in risks:
+        if not isinstance(risk, dict):
+            continue
+        name = str(risk.get("name", "")).lower()
+        description = str(risk.get("description", "")).lower()
+        if not (("lp" in name and "lock" in name)
+                or ("liquidity" in description and "lock" in description)):
+            continue
+        for field in ("value", "description", "name"):
+            result = _percentage_from_text(risk.get(field))
+            if result is not None:
+                return result
+    return None
+
 
 
 # ==========================================
@@ -244,6 +285,75 @@ def analyze_rugcheck_report(data):
 
         reasons.append("Top holder data unavailable")
 
+    # Holder distribution and insider signals. Percentages are read from the
+    # provider's report; they are never inferred from token-account RPC balances.
+    top_three_pct = None
+    top_ten_insider_count = None
+    insider_total_pct = None
+    graph_insider_share_pct = None
+    creator_balance_pct = get_number(data.get("creatorBalancePct"))
+    if creator_balance_pct is None:
+        creator_balance_pct = get_number(token_data.get("creatorBalancePct"))
+
+    if holders_valid:
+        ranked = sorted(holder_percentages, reverse=True)
+        top_three_pct = sum(ranked[:3])
+        top_ten = [h for h in top_holders[:10] if isinstance(h, dict)]
+        if any("insider" in h for h in top_ten):
+            insiders = [h for h in top_ten if h.get("insider") is True]
+            top_ten_insider_count = len(insiders)
+            insider_total_pct = sum(
+                pct for pct in (get_number(h.get("pct")) for h in insiders)
+                if pct is not None and 0 <= pct <= 100
+            )
+
+        max_top_three = _env_limit("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 85.0)
+        if top_three_pct > max_top_three:
+            high_risks += 1
+            reasons.append("Top three holder concentration exceeds configured maximum")
+
+        max_insiders = int(_env_limit("TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 10, 0, 10))
+        max_insider_pct = _env_limit("TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 100.0)
+        if top_ten_insider_count is not None:
+            if top_ten_insider_count > max_insiders:
+                high_risks += 1
+                reasons.append("Too many insider wallets among top ten holders")
+            if insider_total_pct is not None and insider_total_pct > max_insider_pct:
+                high_risks += 1
+                reasons.append("Insider holder balance exceeds configured maximum")
+
+    insiders_detected = get_number(data.get("graphInsidersDetected"))
+    total_holders = get_number(data.get("totalHolders"))
+    if insiders_detected is None:
+        insiders_detected = get_number(token_data.get("graphInsidersDetected"))
+    if total_holders is None:
+        total_holders = get_number(token_data.get("totalHolders"))
+    if insiders_detected is not None and total_holders is not None and total_holders > 0:
+        graph_insider_share_pct = min(100.0, max(0.0, insiders_detected / total_holders * 100.0))
+        max_graph_share = _env_limit("TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 100.0)
+        if graph_insider_share_pct > max_graph_share:
+            high_risks += 1
+            reasons.append("Graph insider share exceeds configured maximum")
+    elif os.getenv("TROJAN_RUGCHECK_REQUIRE_GRAPH_INSIDER_DATA", "false").lower() == "true":
+        unknown_risks += 1
+        reasons.append("Graph insider share data required but unavailable")
+
+    max_creator_balance = _env_limit("TROJAN_RUGCHECK_MAX_CREATOR_BALANCE_PCT", 100.0)
+    if creator_balance_pct is not None and creator_balance_pct > max_creator_balance:
+        high_risks += 1
+        reasons.append("Creator token balance exceeds configured maximum")
+
+    lp_lock_pct = _lp_lock_percentage(risks)
+    token_type = str(data.get("tokenType") or token_data.get("tokenType") or "").lower()
+    minimum_lp_lock = _env_limit("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
+    if minimum_lp_lock > 0 and "pump" in token_type:
+        if lp_lock_pct is None:
+            unknown_risks += 1
+            reasons.append("Pump token LP lock data required but unavailable")
+        elif lp_lock_pct < minimum_lp_lock:
+            high_risks += 1
+            reasons.append("Pump token LP lock is below configured minimum")
+
     # Fail closed when essential data is missing.
 
     if raw_score is None:
@@ -297,6 +407,13 @@ def analyze_rugcheck_report(data):
         "low_risks": low_risks,
         "mint_authority": mint_authority,
         "freeze_authority": freeze_authority,
+        "top_holder_pct": max(holder_percentages) if holders_valid else None,
+        "top_three_holders_pct": round(top_three_pct, 4) if top_three_pct is not None else None,
+        "top_ten_insider_count": top_ten_insider_count,
+        "insider_total_pct": round(insider_total_pct, 4) if insider_total_pct is not None else None,
+        "graph_insider_share_pct": round(graph_insider_share_pct, 4) if graph_insider_share_pct is not None else None,
+        "creator_balance_pct": creator_balance_pct,
+        "lp_lock_pct": lp_lock_pct,
         "reasons": reasons
     }
 
