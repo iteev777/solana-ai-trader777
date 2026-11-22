@@ -324,3 +324,6 @@ The filter pipeline supports optional metadata completeness gates: `TROJAN_FILTE
 
 Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_LIQUIDITY_USD` (maximum 0 disables the ceiling). Valuation bands are independently configurable with `TROJAN_FILTER_MIN_FDV_USD`, `TROJAN_FILTER_MAX_FDV_USD`, `TROJAN_FILTER_MIN_MARKET_CAP_USD` and `TROJAN_FILTER_MAX_MARKET_CAP_USD`. A positive floor with missing data returns WAIT; a configured ceiling only applies when the measurement exists. Invalid negative valuations are rejected. Existing default behavior remains permissive when optional metadata and floors are disabled.
 
+
+
+RugCheck's structured `analysis` and `signals` are carried with each candidate's approval or rejection result. The same report object is evaluated and propagated, avoiding a second provider request and ensuring the dashboard/API can inspect the exact risk evidence behind the gate. Missing or invalid reports remain rejected; the propagation does not weaken the gate.
