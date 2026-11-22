@@ -36,8 +36,8 @@ _batch_refresh_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pool
 _dirty_pools = set()
 _batch_refreshing = False
 _batch_status = {"last_refresh_pools": 0, "last_priced_pools": 0,
-                 "last_failed_pools": 0, "last_rpc_batches": 0,
-                 "last_accounts_requested": 0}
+                 "last_failed_pools": 0, "last_skipped_pools": 0,
+                 "last_rpc_batches": 0, "last_accounts_requested": 0}
 
 
 def _rpc_ws_url():
@@ -145,11 +145,17 @@ def get_latest_snapshot(pool_address, protocol, token_mint, max_age=1.0):
 
 
 def get_stream_status():
+    try:
+        import pool_analysis
+        analysis_status = pool_analysis.get_pool_analysis_status()
+    except Exception:
+        analysis_status = {}
     with _lock:
         _prune_candidate_watches_locked()
         return {
             **_status,
             **_batch_status,
+            "pool_analysis": analysis_status,
             "batch_poll_interval_seconds": POOL_BATCH_POLL_INTERVAL,
             "configured": bool(_rpc_ws_url()),
             "watched_pools": len(set(_watches) | set(_candidate_watches)),
