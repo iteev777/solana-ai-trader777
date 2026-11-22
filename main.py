@@ -785,6 +785,18 @@ def process_completed_tasks():
                 address,
                 str(trade_result)
             )
+            if isinstance(trade_result, dict) and str(trade_result.get("paper", "")).startswith("PAPER BUY:"):
+                try:
+                    from telegram_alerts import send_alert
+                    send_alert(
+                        "TROJAN PAPER BUY\nToken: " + address
+                        + "\nStrategy: " + strategy_name
+                        + "\nPrice: $" + str(price)
+                        + "\nSize: $" + str(paper.TRADE_SIZE)
+                        + "\nLive trading: LOCKED"
+                    )
+                except Exception as alert_error:
+                    log_event("TELEGRAM ALERT ERROR", address, repr(alert_error))
 
         except Exception as error:
 
@@ -1021,6 +1033,16 @@ def record_sale(address, result):
     if not isinstance(result, dict):
         return
 
+    try:
+        from telegram_alerts import send_alert
+        send_alert(
+            "TROJAN PAPER SELL\nToken: " + address
+            + "\nReason: " + str(result.get("result", "SELL"))
+            + "\nRealized P/L: $" + str(result.get("profit_loss", "n/a"))
+        )
+    except Exception as alert_error:
+        log_event("TELEGRAM ALERT ERROR", address, repr(alert_error))
+
     log_event(
         "PAPER SALE",
         address,
@@ -1037,6 +1059,8 @@ def record_sale(address, result):
 
 def monitor_positions():
 
+    import service_health
+    service_health.heartbeat("position_monitor")
     positions = list(paper.get_positions().items())
 
     if not positions:
@@ -1237,6 +1261,12 @@ def run_bot():
 
     sniper.start_listener()
 
+    try:
+        from copy_trade import start_copy_monitor
+        start_copy_monitor()
+    except Exception as copy_error:
+        log_event("COPY WATCH START ERROR", reason=repr(copy_error))
+
     log_event("SNIPER THREAD STARTED")
     log_event("BOT STARTED")
 
@@ -1282,6 +1312,8 @@ def run_bot():
             # Monitor all positions through batch market data.
 
             monitor_positions()
+            import service_health
+            service_health.heartbeat("main_loop")
 
             if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
 
