@@ -317,3 +317,6 @@ Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the exis
 ## Dynamic copy-wallet watchlist
 
 The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite schema v7 and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass wallet-specific risk limits and the conservative swap-event classifier.
+
+
+Moonit is supported for its verified `ConstantProductV1` SOL-collateral curve only. The adapter reads the curve, legacy SPL mint and live ConfigAccount in one confirmed context, uses the protocol's initial virtual reserves and curve position, and applies the configured fee with the protocol's floor rounding. Non-SOL collateral, other curve types and Token-2022 mints are refused rather than approximated.
