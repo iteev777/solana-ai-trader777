@@ -132,6 +132,8 @@ def _positions():
             "peak_price": (position.get("metadata") or {}).get("peak_price"),
             "dca_count": int((position.get("metadata") or {}).get("dca_count", 0) or 0),
             "partial_take_profit_done": bool((position.get("metadata") or {}).get("partial_take_profit_done")),
+            "copy_wallet": (position.get("metadata") or {}).get("copy_wallet"),
+            "copy_latency_seconds": (position.get("metadata") or {}).get("copy_latency_seconds"),
         })
     return result
 
