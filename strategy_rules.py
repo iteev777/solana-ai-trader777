@@ -208,9 +208,17 @@ def evaluate_strategy_rules(token, score, strategy):
 
 def get_strategy_rules_status():
     config = get_config()
+    saved = {}
+    try:
+        import database
+        saved = database.get_strategy_configs()
+    except Exception:
+        pass
     return {
         "enabled": config["enabled"],
         "valid": config["valid"],
         "strategies_configured": sorted(config["rules"].keys()),
+        "rules": config["rules"],
+        "updated_at": {name: item.get("updated_at") for name, item in saved.items()},
         "error": config["error"]
     }
