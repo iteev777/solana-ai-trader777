@@ -194,17 +194,19 @@ footer{color:var(--muted);font-size:11px;text-align:center;padding:24px}
 <div class="split"><section class="panel section"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th></tr></thead><tbody id="positions"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 <section class="panel section"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+<section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 <section class="panel section"><h2>SYSTEM EVENTS</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Event</th><th>Details</th><th>Token</th></tr></thead><tbody id="events"></tbody></table></div></section>
 </main><footer>Read-only dashboard · no wallet keys · no live trade controls · Trojan V2</footer>
 <script>
+const esc=v=>String(v===null||v===undefined?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=(v,n=2)=>v===null||v===undefined?'—':Number(v).toFixed(n);
 const usd=v=>v===null||v===undefined?'—':'$'+fmt(v);
 const short=v=>v?String(v).slice(0,6)+'…'+String(v).slice(-5):'—';
 const time=v=>v?new Date(v).toLocaleTimeString():'—';
 async function get(path){const r=await fetch(path);if(r.status===401){document.body.innerHTML='<main><h2>Authentication required</h2><p>Reload and sign in using your dashboard token.</p></main>';throw Error('auth');}if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
 async function loadAll(){try{
-const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45')]);
-const o=data[0],t=data[1],e=data[2],a=o.account,s=o.stats;
+const data=await Promise.all([get('/api/overview'),get('/api/trades?limit=35'),get('/api/events?limit=45'),get('/api/filtering')]);
+const o=data[0],t=data[1],e=data[2],f=data[3],a=o.account,s=o.stats;
 document.getElementById('balance').textContent=usd(a.balance);
 document.getElementById('pnl').textContent=usd(s.total_profit);
 document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
@@ -220,7 +222,10 @@ const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending m
 document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
 document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
 document.getElementById('trades').innerHTML=t.length?t.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td class="'+(x.action==='SELL'?'bad':'good')+'">'+x.action+'</td><td class="token">'+short(x.token_address)+'</td><td>'+fmt(x.price,8)+'</td><td>'+usd(x.amount)+'</td><td class="'+(x.profit_loss>=0?'good':'bad')+'">'+usd(x.profit_loss)+'</td><td>'+x.strategy+'</td></tr>';}).join(''):'<tr><td colspan="7" class="muted">No trades recorded</td></tr>';
-document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+x.event_type+'</td><td>'+(x.message||'').slice(0,180)+'</td><td class="token">'+short(x.token_address)+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';
+const decisions=f.summary.decisions||{};
+document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
+document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
+document.getElementById('events').innerHTML=e.length?e.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.event_type)+'</td><td>'+esc((x.message||'').slice(0,180))+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="4" class="muted">No events recorded</td></tr>';
 }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}}
 loadAll();setInterval(loadAll,5000);
 </script></body></html>"""
