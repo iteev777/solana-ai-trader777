@@ -882,11 +882,12 @@ def process_completed_tasks():
 
         try:
 
+            approved_trade_size = safe_float(analysis.get("trade_size"))
             trade_result = manager.process_approved_signal(
                 address,
                 price,
                 strategy=strategy_name,
-                trade_size=trade_decision.get("trade_size"),
+                trade_size=approved_trade_size,
                 metadata={
                     "pool_address": result.get("pool_address"),
                     "market_source": result.get("market_source"),
@@ -908,7 +909,7 @@ def process_completed_tasks():
                         "TROJAN PAPER BUY\nToken: " + address
                         + "\nStrategy: " + strategy_name
                         + "\nPrice: $" + str(price)
-                        + "\nSize: $" + str(paper.TRADE_SIZE)
+                        + "\nSize: $" + str(approved_trade_size if approved_trade_size is not None else paper.TRADE_SIZE)
                         + "\nLive trading: LOCKED"
                     )
                 except Exception as alert_error:
