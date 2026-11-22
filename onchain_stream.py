@@ -1,27 +1,34 @@
-"""Shared Solana accountSubscribe feed for live paper-position prices.
+"""Shared Solana accountSubscribe feed for active candidate and position pool prices.
 
-One WebSocket connection watches all active position pools. Account notifications
-trigger verified read-only RPC snapshots; no signing or transaction broadcast.
+Pool state and reserve vault accounts are subscribed together. Candidate watches
+expire automatically; open-position watches remain until the position monitor
+removes them. All RPC reads remain read-only.
 """
 import json
 import os
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import websocket
 
 _lock = threading.RLock()
+# Position watches are authoritative and persist until sync_watched_pools replaces them.
 _watches = {}
+# Discovery candidates are a bounded, expiring LRU so the subscription set cannot grow forever.
+_candidate_watches = OrderedDict()
 _snapshots = {}
 _refreshing = set()
 _last_refresh_at = {}
 MIN_POOL_REFRESH_INTERVAL = max(0.25, float(os.getenv("TROJAN_POOL_REFRESH_INTERVAL", "0.5")))
+CANDIDATE_WATCH_TTL = max(30.0, float(os.getenv("TROJAN_CANDIDATE_WATCH_TTL", "300")))
+MAX_CANDIDATE_WATCHES = max(10, int(os.getenv("TROJAN_MAX_CANDIDATE_WATCHES", "100")))
 _thread = None
 _status = {
     "configured": False, "running": False, "subscriptions": 0,
-    "notifications": 0, "coalesced_notifications": 0, "refresh_errors": 0, "last_update": None,
-    "last_error": None, "last_latency_ms": None
+    "notifications": 0, "coalesced_notifications": 0, "refresh_errors": 0,
+    "last_update": None, "last_error": None, "last_latency_ms": None
 }
 _refresh_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="onchain-price")
 
@@ -38,8 +45,43 @@ def _rpc_ws_url():
     return ""
 
 
-def sync_watched_pools(items):
+def _remove_snapshot_if_unwatched_locked(key):
+    if key not in _watches and key not in _candidate_watches:
+        _snapshots.pop(key, None)
+        _last_refresh_at.pop(key, None)
+
+
+def _prune_candidate_watches_locked(now=None):
+    now = time.time() if now is None else float(now)
+    expired = [
+        key for key, seen_at in _candidate_watches.items()
+        if now - seen_at > CANDIDATE_WATCH_TTL
+    ]
+    for key in expired:
+        _candidate_watches.pop(key, None)
+        _remove_snapshot_if_unwatched_locked(key)
+    while len(_candidate_watches) > MAX_CANDIDATE_WATCHES:
+        key, _ = _candidate_watches.popitem(last=False)
+        _remove_snapshot_if_unwatched_locked(key)
+    return len(expired)
+
+
+def _active_watch_keys_locked():
+    _prune_candidate_watches_locked()
+    return set(_watches) | set(_candidate_watches)
+
+
+def _ensure_thread_locked():
     global _thread
+    if _thread is None or not _thread.is_alive():
+        _thread = threading.Thread(
+            target=_run, name="trojan-onchain-price-stream", daemon=True
+        )
+        _thread.start()
+
+
+def sync_watched_pools(items):
+    """Replace the open-position watch set without deleting discovery candidates."""
     normalized = set()
     for item in items or []:
         if not isinstance(item, (tuple, list)) or len(item) != 3:
@@ -49,26 +91,34 @@ def sync_watched_pools(items):
         normalized.add(tuple(x.strip() for x in item))
     with _lock:
         removed = set(_watches) - normalized
-        for key in removed:
-            _snapshots.pop(key, None)
         _watches.clear()
         _watches.update({key: True for key in normalized})
+        for key in removed:
+            _remove_snapshot_if_unwatched_locked(key)
         _status["configured"] = bool(_rpc_ws_url())
-        if normalized and (_thread is None or not _thread.is_alive()):
-            _thread = threading.Thread(target=_run, name="trojan-onchain-price-stream", daemon=True)
-            _thread.start()
+        if _active_watch_keys_locked():
+            _ensure_thread_locked()
     return len(normalized)
 
 
 def watch_pool_price(pool_address, protocol, token_mint):
-    if not all(isinstance(x, str) and x.strip() for x in (pool_address, protocol, token_mint)):
+    """Add or refresh a short-lived discovery-candidate watch."""
+    if not all(isinstance(x, str) and x.strip()
+               for x in (pool_address, protocol, token_mint)):
         return False
-    with _lock:
-        current = list(_watches)
     key = (pool_address.strip(), protocol.strip(), token_mint.strip())
-    current.append(key)
-    sync_watched_pools(current)
+    with _lock:
+        _candidate_watches[key] = time.time()
+        _candidate_watches.move_to_end(key)
+        _prune_candidate_watches_locked()
+        _status["configured"] = bool(_rpc_ws_url())
+        _ensure_thread_locked()
     return True
+
+
+def get_watched_pools():
+    with _lock:
+        return sorted(_active_watch_keys_locked())
 
 
 def get_latest_snapshot(pool_address, protocol, token_mint, max_age=1.0):
@@ -78,21 +128,30 @@ def get_latest_snapshot(pool_address, protocol, token_mint, max_age=1.0):
         if not item:
             return None
         age = time.time() - item["observed_at"]
-        if age > max_age:
+        if age < 0 or age > max_age:
             return None
         result = dict(item["data"])
         result["streamAgeMs"] = round(age * 1000, 1)
+        result["snapshotAgeSeconds"] = round(age, 3)
         return result
 
 
 def get_stream_status():
     with _lock:
-        return {**_status, "configured": bool(_rpc_ws_url()),
-                "watched_pools": len(_watches)}
+        _prune_candidate_watches_locked()
+        return {
+            **_status,
+            "configured": bool(_rpc_ws_url()),
+            "watched_pools": len(set(_watches) | set(_candidate_watches)),
+            "position_watches": len(_watches),
+            "candidate_watches": len(_candidate_watches),
+            "candidate_watch_ttl_seconds": CANDIDATE_WATCH_TTL,
+            "max_candidate_watches": MAX_CANDIDATE_WATCHES,
+        }
 
 
 def should_refresh_pool(key, now=None):
-    """Coalesce bursts to at most one snapshot refresh per pool per interval."""
+    """Coalesce notification bursts to at most one snapshot refresh per interval."""
     now = time.monotonic() if now is None else float(now)
     with _lock:
         last = _last_refresh_at.get(key, 0.0)
@@ -109,14 +168,20 @@ def _refresh(key):
     try:
         from solana_onchain import decode_pool_snapshot
         pool, protocol, mint = key
-        snapshot = decode_pool_snapshot(pool, protocol, mint, _force=True, _register_watch=False)
+        snapshot = decode_pool_snapshot(
+            pool, protocol, mint, _force=True, _register_watch=False
+        )
         if not isinstance(snapshot, dict):
             return
-        observed = time.time()
+        observed = snapshot.get("observedAt")
+        if not isinstance(observed, (int, float)) or observed <= 0:
+            observed = time.time()
         with _lock:
             _snapshots[key] = {"data": snapshot, "observed_at": observed}
             _status["last_update"] = observed
-            _status["last_latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            _status["last_latency_ms"] = round(
+                (time.perf_counter() - started) * 1000, 1
+            )
             _status["last_error"] = None
     except Exception as error:
         with _lock:
@@ -133,62 +198,107 @@ def _run():
         url = _rpc_ws_url()
         if not url:
             with _lock:
-                _status.update({"running": False, "configured": False,
-                                "last_error": "SOLANA_WS_URL or SOLANA_RPC_URL is required"})
+                _status.update({
+                    "running": False, "configured": False,
+                    "last_error": "SOLANA_WS_URL or SOLANA_RPC_URL is required"
+                })
             time.sleep(10)
             continue
         ws = None
         try:
             ws = websocket.create_connection(url, timeout=8, enable_multithread=True)
             ws.settimeout(1)
+            # subscription id -> (pool key, account); request id -> same tuple.
             subscriptions = {}
             sent = {}
+            account_cache = {}
             request_id = 1
             with _lock:
                 _status.update({"running": True, "configured": True, "last_error": None})
             while True:
                 with _lock:
-                    current = set(_watches)
-                for key in list(sent):
-                    if key not in current:
+                    current = _active_watch_keys_locked()
+
+                # Remove every pool's state and reserve subscriptions when it leaves
+                # both the position set and the candidate LRU.
+                removed_keys = set(account_cache) - current
+                for key in removed_keys:
+                    account_cache.pop(key, None)
+                for pair in list(sent):
+                    if pair[0] not in current:
                         subscription_id = next(
-                            (sid for sid, watched_key in subscriptions.items() if watched_key == key),
-                            None
+                            (sid for sid, active_pair in subscriptions.items()
+                             if active_pair == pair), None
                         )
                         if subscription_id is not None:
                             ws.send(json.dumps({
                                 "jsonrpc": "2.0", "id": request_id,
-                                "method": "accountUnsubscribe", "params": [subscription_id]
+                                "method": "accountUnsubscribe",
+                                "params": [subscription_id]
                             }))
                             request_id += 1
                             subscriptions.pop(subscription_id, None)
-                        sent.pop(key, None)
-                        with _lock:
-                            _status["subscriptions"] = len(subscriptions)
+                        sent.pop(pair, None)
+                with _lock:
+                    _status["subscriptions"] = len(subscriptions)
+
+                # Discover each pool's actual reserve accounts once per connection.
+                from solana_onchain import get_pool_watch_accounts
                 for key in current:
-                    if key in sent:
+                    if key in account_cache:
                         continue
-                    ws.send(json.dumps({
-                        "jsonrpc": "2.0", "id": request_id,
-                        "method": "accountSubscribe",
-                        "params": [key[0], {"encoding": "base64", "commitment": "processed"}]
-                    }))
-                    sent[key] = request_id
-                    request_id += 1
+                    try:
+                        accounts = get_pool_watch_accounts(key[0], key[1])
+                        if not accounts:
+                            raise ValueError("pool returned no watchable accounts")
+                        account_cache[key] = accounts
+                    except Exception as error:
+                        with _lock:
+                            _status["last_error"] = (
+                                "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
+                            )
+                        continue
+                    for account in account_cache[key]:
+                        pair = (key, account)
+                        if pair in sent:
+                            continue
+                        ws.send(json.dumps({
+                            "jsonrpc": "2.0", "id": request_id,
+                            "method": "accountSubscribe",
+                            "params": [account, {
+                                "encoding": "base64", "commitment": "processed"
+                            }]
+                        }))
+                        sent[pair] = request_id
+                        request_id += 1
+
                 try:
                     payload = json.loads(ws.recv())
                 except websocket.WebSocketTimeoutException:
                     continue
-                if "id" in payload and "result" in payload:
-                    key = next((k for k, rid in sent.items() if rid == payload["id"]), None)
-                    if key:
-                        subscriptions[payload["result"]] = key
+
+                if "id" in payload:
+                    pair = next(
+                        (item for item, rid in sent.items() if rid == payload["id"]),
+                        None
+                    )
+                    if pair and "result" in payload:
+                        subscriptions[payload["result"]] = pair
+                    elif pair and "error" in payload:
+                        sent.pop(pair, None)
                         with _lock:
-                            _status["subscriptions"] = len(subscriptions)
+                            _status["last_error"] = (
+                                "ACCOUNT SUBSCRIPTION REJECTED: "
+                                + str(payload["error"])[:150]
+                            )
+                    with _lock:
+                        _status["subscriptions"] = len(subscriptions)
                     continue
+
                 params = payload.get("params") or {}
-                key = subscriptions.get(params.get("subscription"))
-                if key and isinstance(params.get("result"), dict):
+                pair = subscriptions.get(params.get("subscription"))
+                if pair and isinstance(params.get("result"), dict):
+                    key = pair[0]
                     with _lock:
                         _status["notifications"] += 1
                     if should_refresh_pool(key):
@@ -196,8 +306,10 @@ def _run():
             delay = 1
         except Exception as error:
             with _lock:
-                _status.update({"running": False, "subscriptions": 0,
-                                "last_error": str(error)[:200]})
+                _status.update({
+                    "running": False, "subscriptions": 0,
+                    "last_error": str(error)[:200]
+                })
             time.sleep(delay)
             delay = min(delay * 2, 30)
         finally:
