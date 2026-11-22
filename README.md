@@ -182,3 +182,10 @@ Optional Railway environment variables:
 - `TROJAN_POOL_REFRESH_INTERVAL`: WebSocket notification coalescing interval in seconds (default `0.5`, minimum `0.25`).
 
 Dashboard on-chain status reports position/candidate watches, successful/failed pool refreshes, RPC batch and account counts, and the latest refresh latency. This subsystem is read-only; it does not sign or broadcast transactions.
+
+
+## Multi-source pool registry
+
+The fast market-data path uses the DexScreener batch endpoint. In the background, each token is refreshed through DexScreener's full token-pairs endpoint (up to 30 pools). If that list is empty, capped, or has no SOL-native pair, the registry completes it through GeckoTerminal's token-pools endpoint. Pools are merged by pool address, source provenance is retained, and the canonical selector prefers SOL-native reserve liquidity with an 80% incumbent keep threshold.
+
+GeckoTerminal requests share the API client's host-wide rate limiter and 60-second response cache with the existing Gecko discovery scanners. Registry jobs run in a bounded background queue and never block the trading loop. The dashboard reports separate DexScreener and GeckoTerminal queues, completed/failed jobs, and registered token count.
