@@ -223,12 +223,6 @@ def process_approved_signal(
             "live": "LIVE EXECUTION LOCKED"
         }
 
-    if float(trade_size) != paper.TRADE_SIZE:
-        return {
-            "paper": "TRADE SIZE DOES NOT MATCH PAPER ENGINE",
-            "live": "LIVE EXECUTION LOCKED"
-        }
-
     approved, reason = check_trade_approval(
         token_address,
         trade_size,
@@ -257,7 +251,8 @@ def process_approved_signal(
             token_address,
             float(price),
             strategy=strategy,
-            metadata=metadata
+            metadata=metadata,
+            trade_size=float(trade_size)
         )
 
     # Shadow signals never execute real trades.
