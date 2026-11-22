@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pool_account_fetcher as fetcher
 import onchain_stream
+import pool_analysis
 
 
 class PoolAccountBatchPlanningTests(unittest.TestCase):
@@ -36,6 +37,7 @@ class PoolAccountBatchPlanningTests(unittest.TestCase):
 class BatchedPoolRefreshTests(unittest.TestCase):
     def setUp(self):
         fetcher.clear_fetcher_state()
+        pool_analysis.clear_pool_analysis_state()
 
     def test_multiple_pool_snapshots_share_one_confirmed_account_batch(self):
         key_a = ("pool-a", "pumpswap", "mint-a")
@@ -70,6 +72,38 @@ class BatchedPoolRefreshTests(unittest.TestCase):
         self.assertEqual({item[1] for item in decoded}, {987})
         self.assertEqual(len(stored), 2)
         self.assertEqual({item[0] for item in stored}, {key_a, key_b})
+
+    def test_rpc_batches_run_independently_and_transient_pool_is_backed_off(self):
+        key_a = ("pool-a", "pumpswap", "mint-a")
+        key_b = ("pool-b", "pumpswap", "mint-b")
+        account_sets = {
+            key_a: ["pool-a"] + ["a-" + str(i) for i in range(29)],
+            key_b: ["pool-b"] + ["b-" + str(i) for i in range(29)],
+        }
+
+        def fetch_accounts(keys):
+            if "pool-a" in keys:
+                raise RuntimeError("All configured Solana RPC endpoints failed")
+            return ({key: {"owner": "mock", "data": b"x"} for key in keys}, 999, 1234.5)
+
+        with patch("solana_onchain.get_pool_snapshot_accounts",
+                   side_effect=lambda p, proto, m: account_sets[(p, proto, m)]), \
+             patch("solana_onchain.fetch_pool_account_batch",
+                   side_effect=fetch_accounts) as batch_fetch, \
+             patch("solana_onchain.decode_pool_snapshot",
+                   return_value={"priceUsd": "1", "observedAt": 1234.5}), \
+             patch.object(onchain_stream, "store_pool_snapshot", return_value=True):
+            first = fetcher.refresh_pools([key_a, key_b])
+            second = fetcher.refresh_pools([key_a, key_b])
+
+        self.assertEqual(first["last_rpc_batches"], 2)
+        self.assertEqual(first["last_priced_pools"], 1)
+        self.assertEqual(first["last_failed_pools"], 1)
+        self.assertEqual(second["last_skipped_pools"], 1)
+        self.assertEqual(second["last_rpc_batches"], 1)
+        self.assertEqual(second["last_priced_pools"], 1)
+        self.assertEqual(batch_fetch.call_count, 3)
+        self.assertEqual(pool_analysis.get_pool_analysis_status()["transient_backoff_pools"], 1)
 
     def test_failed_pool_discovery_does_not_prevent_other_pools_refreshing(self):
         good = ("pool-good", "pumpswap", "mint-good")
