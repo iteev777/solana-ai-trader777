@@ -96,6 +96,22 @@ class CopyEventParserTests(unittest.TestCase):
         tx["meta"]["err"] = None
         self.assertIsNone(parse_wallet_transaction(tx, "OtherWallet"))
 
+
+    def test_non_fee_payer_wallet_is_not_misclassified_as_copy_trade(self):
+        tx = transaction(
+            [], [balance(MINT, WALLET, 1_000_000, 6)],
+            PROGRAMS["raydium_cpmm"], pre_sol=10_000_000_000,
+            post_sol=9_000_000_000, fee=5000
+        )
+        tx["transaction"]["message"]["accountKeys"].insert(
+            0, {"pubkey": "OtherFeePayer1111111111111111111111111111", "signer": True}
+        )
+        tx["meta"]["preBalances"].insert(0, 5_000_000_000)
+        tx["meta"]["postBalances"].insert(0, 5_000_000_000)
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
+        self.assertEqual(event["classification_reason"], "WATCHED_WALLET_NOT_FEE_PAYER")
+
     def test_unknown_if_swap_program_has_no_opposing_quote_flow(self):
         tx = transaction([], [balance(MINT, WALLET, 1_000_000, 6)], PROGRAMS["orca_whirlpool"])
         event = parse_wallet_transaction(tx, WALLET)
