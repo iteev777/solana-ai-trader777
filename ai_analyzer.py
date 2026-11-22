@@ -53,6 +53,15 @@ def reject(reason):
     }
 
 
+def watch(reason):
+    return {
+        "score": 0,
+        "decision": "WATCH",
+        "reasons": [reason],
+        "source_count": 0
+    }
+
+
 def get_discovery_sources(token):
     sources = token.get("discovery_sources", [])
     if not isinstance(sources, list):
@@ -86,9 +95,9 @@ def analyze_token(token, strategy="main"):
     txns_h1_sells = get_nested_number(token, "txns", "h1", "sells")
 
     if liquidity is None or volume_h24 is None:
-        return reject("Missing liquidity or volume")
+        return watch("Waiting for liquidity or volume data")
     if liquidity < MIN_LIQUIDITY_BY_STRATEGY[strategy]:
-        return reject("Liquidity below strategy minimum")
+        return watch("Liquidity below strategy minimum; keep watching")
     if volume_h24 < 0:
         return reject("Invalid volume data")
 
@@ -104,22 +113,22 @@ def analyze_token(token, strategy="main"):
         minimum_transactions = 5
 
     if buys is None or sells is None or buys < 0 or sells < 0:
-        return reject("Missing or invalid buy/sell transactions")
+        return watch("Waiting for valid recent buy/sell data")
 
     total_transactions = buys + sells
     if total_transactions < minimum_transactions:
-        return reject("Insufficient recent transaction activity")
+        return watch("Waiting for more recent transactions")
 
     if price_m5 is None:
         # Without a short-window change we cannot verify a local rebound.
-        return reject("No 5-minute price signal; waiting for reversal data")
+        return watch("Waiting for a 5-minute reversal signal")
     if price_h1 is None:
-        return reject("Missing hourly price data")
+        return watch("Waiting for hourly price data")
     if price_h24 is None:
-        return reject("Missing daily price data")
+        return watch("Waiting for daily price data")
 
     if price_m5 <= 0:
-        return reject("No confirmed 5-minute rebound")
+        return watch("Waiting for buyers to turn the 5-minute candle positive")
     if price_m5 > MAX_FIVE_MINUTE_GAIN:
         return reject("Short-term move already extended; avoid chasing")
     if price_h1 < -25:
@@ -129,7 +138,7 @@ def analyze_token(token, strategy="main"):
     if price_h24 < -70:
         return reject("Extreme daily collapse")
     if buys <= sells:
-        return reject("Buyers have not taken control")
+        return watch("Waiting for buyers to take control")
 
     volume_ratio = volume_h24 / max(liquidity, 1)
     if volume_ratio > MAX_VOLUME_LIQUIDITY_RATIO:
