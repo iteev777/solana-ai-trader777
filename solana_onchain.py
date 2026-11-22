@@ -555,6 +555,20 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     }
 
 
+def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
+    """Dispatch read-only direct quotes from the actual pool account owner."""
+    discovered = _account(pool_address)
+    owner = discovered.get("owner")
+    protocol = next((name for name, program in PROGRAMS.items() if program == owner), None)
+    if protocol == "raydium_cpmm":
+        return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol == "raydium_amm_v4":
+        return quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol is None:
+        raise ValueError("Pool owner is not a supported Solana DEX program")
+    raise ValueError("Direct quote adapter is not implemented for " + protocol)
+
+
 def _token_amount(account, expected_mint):
     if not account or len(account["data"]) < 72:
         raise ValueError("invalid SPL token vault account")
