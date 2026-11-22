@@ -7,6 +7,18 @@ import math
 # ==========================================
 
 MIN_LIQUIDITY = 10000
+MIN_LIQUIDITY_BY_STRATEGY = {
+    "main": 10000,
+    "sniper": 2500
+}
+MIN_TOKEN_AGE_MINUTES = {
+    "main": 10,
+    "sniper": 0
+}
+MIN_TRANSACTIONS_BY_STRATEGY = {
+    "main": 5,
+    "sniper": 5
+}
 MIN_SCORE = 50
 
 MAX_HOURLY_GAIN = 50
@@ -82,7 +94,10 @@ def get_discovery_sources(token):
 # MAIN ANALYSIS
 # ==========================================
 
-def analyze_token(token):
+def analyze_token(token, strategy="main"):
+
+    if strategy not in MIN_LIQUIDITY_BY_STRATEGY:
+        return reject("Unknown strategy")
 
     if not isinstance(token, dict):
         return reject("Invalid token data")
@@ -124,7 +139,9 @@ def analyze_token(token):
     if liquidity <= 0 or volume < 0:
         return reject("Invalid market data")
 
-    if liquidity < MIN_LIQUIDITY:
+    minimum_liquidity = MIN_LIQUIDITY_BY_STRATEGY[strategy]
+
+    if liquidity < minimum_liquidity:
         return reject("Liquidity below minimum requirement")
 
     if price_h1 is None:
@@ -145,7 +162,9 @@ def analyze_token(token):
 
     total_transactions = buys + sells
 
-    if total_transactions < MIN_TRANSACTIONS:
+    minimum_transactions = MIN_TRANSACTIONS_BY_STRATEGY[strategy]
+
+    if total_transactions < minimum_transactions:
         return reject("Insufficient hourly transaction activity")
 
     # ======================================
@@ -177,7 +196,9 @@ def analyze_token(token):
             current_time_ms - pair_created
         ) / 60000
 
-        if age_minutes < 10:
+        minimum_age = MIN_TOKEN_AGE_MINUTES[strategy]
+
+        if age_minutes < minimum_age:
             return reject("Trading pair too new")
 
     # ======================================
