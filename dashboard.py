@@ -763,7 +763,7 @@ async function loadHome(){
   document.getElementById('positions').innerHTML=positionRows;
   document.getElementById('positions-copy').innerHTML=positionRows;
   const m=o.market_data,r=o.runtime,pr=m.pool_registry||{};
-  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['Gecko pool queue',pr.pending||0],['Gecko completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
+  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['DexScreener pool queue',pr.dex_pending||0],['Gecko pool queue',pr.gecko_pending||0],['Pool source jobs completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
   document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
   document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
  }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}
