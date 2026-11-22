@@ -3,7 +3,9 @@ import struct
 import unittest
 from unittest import mock
 
-from solana_onchain import _decode_pool, _discriminator, PROGRAMS, normalize_protocol
+from solana_onchain import (_decode_pool, _decode_raydium_amm_config, _discriminator,
+                            _b58decode, quote_raydium_cpmm_pool, PROGRAMS,
+                            normalize_protocol, TOKEN_PROGRAM)
 from indicators import calculate_indicators
 from strategy_rules import validate_rules_config
 import onchain_stream
@@ -25,8 +27,101 @@ class OnchainDecoderTests(unittest.TestCase):
         self.assertEqual(result["base_mint"], _decode_pool("pumpswap", bytes(raw))["base_mint"])
         self.assertEqual(result["price_mode"], "reserves")
 
+
+    def test_raydium_cpmm_fee_config_layout(self):
+        raw = bytearray(236)
+        raw[:8] = _discriminator("AmmConfig")
+        struct.pack_into("<Q", raw, 12, 2500)
+        struct.pack_into("<Q", raw, 20, 120000)
+        struct.pack_into("<Q", raw, 28, 100000)
+        struct.pack_into("<Q", raw, 108, 1000)
+        decoded = _decode_raydium_amm_config(bytes(raw))
+        self.assertEqual(decoded["trade_fee_rate"], 2500)
+        self.assertEqual(decoded["creator_fee_rate"], 1000)
+
+    def test_raydium_cpmm_quote_uses_confirmed_snapshot_and_fee_side(self):
+        import solana_onchain
+        pool = bytearray(420)
+        pool[:8] = _discriminator("PoolState")
+        put_key(pool, 8, 8)       # AmmConfig
+        put_key(pool, 72, 3)      # vault token0
+        put_key(pool, 104, 4)     # vault token1
+        put_key(pool, 168, 1)     # mint token0
+        put_key(pool, 200, 2)     # mint token1
+        pool[232:264] = _b58decode(TOKEN_PROGRAM)  # token program token0
+        pool[264:296] = _b58decode(TOKEN_PROGRAM)  # token program token1
+        struct.pack_into("<Q", pool, 373, 0)
+        pool[389] = 1             # creator fee only on token0
+        pool[390] = 1             # creator fee enabled
+
+        config = bytearray(236)
+        config[:8] = _discriminator("AmmConfig")
+        struct.pack_into("<Q", config, 12, 2500)
+        struct.pack_into("<Q", config, 20, 120000)
+        struct.pack_into("<Q", config, 28, 100000)
+        struct.pack_into("<Q", config, 108, 1000)
+
+        def token_account(mint_byte, amount):
+            raw = bytearray(165)
+            raw[:32] = bytes([mint_byte]) * 32
+            struct.pack_into("<Q", raw, 64, amount)
+            return {"owner": TOKEN_PROGRAM, "data": bytes(raw)}
+
+        def mint_account(decimals):
+            raw = bytearray(82)
+            raw[44] = decimals
+            return {"owner": TOKEN_PROGRAM, "data": bytes(raw)}
+
+        pool_account = {"owner": PROGRAMS["raydium_cpmm"], "data": bytes(pool)}
+        config_account = {"owner": PROGRAMS["raydium_cpmm"], "data": bytes(config)}
+        accounts = [
+            pool_account, config_account,
+            token_account(1, 1_000_000), token_account(2, 2_000_000),
+            mint_account(6), mint_account(9),
+        ]
+        with mock.patch.object(solana_onchain, "_account", return_value=pool_account), \
+             mock.patch.object(solana_onchain, "_multiple_accounts_with_context",
+                               return_value=(accounts, 777)):
+            quote = quote_raydium_cpmm_pool(
+                "pool", _decode_pool("raydium_cpmm", bytes(pool))["quote_mint"],
+                1000, 100
+            )
+        self.assertEqual(quote["slot"], 777)
+        self.assertFalse(quote["creator_fee_on_input"])
+        self.assertEqual(quote["creator_fee_output_amount"], 1)
+        self.assertEqual(quote["out_amount"], 497)
+        self.assertEqual(quote["execution"], "DISABLED")
+
+    def test_raydium_cpmm_quote_rejects_token_2022(self):
+        import solana_onchain
+        pool = bytearray(420)
+        pool[:8] = _discriminator("PoolState")
+        put_key(pool, 8, 8)
+        put_key(pool, 72, 3)
+        put_key(pool, 104, 4)
+        put_key(pool, 168, 1)
+        put_key(pool, 200, 2)
+        pool[389] = 0
+        config = bytearray(236)
+        config[:8] = _discriminator("AmmConfig")
+        struct.pack_into("<Q", config, 12, 2500)
+        pool_account = {"owner": PROGRAMS["raydium_cpmm"], "data": bytes(pool)}
+        accounts = [
+            pool_account,
+            {"owner": PROGRAMS["raydium_cpmm"], "data": bytes(config)},
+            {"owner": TOKEN_PROGRAM, "data": bytes(165)},
+            {"owner": TOKEN_PROGRAM, "data": bytes(165)},
+            {"owner": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "data": bytes(82)},
+            {"owner": TOKEN_PROGRAM, "data": bytes(82)},
+        ]
+        with mock.patch.object(solana_onchain, "_account", return_value=pool_account), \
+             mock.patch.object(solana_onchain, "_multiple_accounts_with_context",
+                               return_value=(accounts, 777)):
+            with self.assertRaisesRegex(ValueError, "Token-2022"):
+                quote_raydium_cpmm_pool("pool", "mint", 1000)
+
     def test_raydium_cpmm_pool_layout(self):
-        raw = bytearray(400)
+        raw = bytearray(420)
         raw[:8] = _discriminator("PoolState")
         put_key(raw, 72, 1)
         put_key(raw, 104, 2)

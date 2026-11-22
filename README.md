@@ -151,3 +151,20 @@ fetch pool snapshots; therefore it is not advertised as a live direct-pool
 provider and is not included in best-route selection. Jupiter/Raptor remain the
 only live quote providers until the decoder and integration are independently
 validated. No transaction signing or broadcasting is added.
+
+
+### Raydium CPMM direct quote (read-only)
+
+The route comparison endpoint accepts an optional `pool_address` query parameter.
+When supplied, Trojan fetches the Raydium CPMM pool, then fetches the pool state,
+AmmConfig, both vaults and both mint accounts together through one confirmed
+`getMultipleAccounts` context slot. It subtracts accrued protocol, fund and
+creator fee balances from vault reserves, reads the current fee tier, and
+accounts for creator fees charged on either the input or output side. Token-2022
+and unsupported token programs fail closed until transfer-fee-aware quoting is
+implemented. The result is compared by minimum output alongside Jupiter and
+Raptor. This remains quote-only: no transaction is built, signed or broadcast.
+
+Example:
+`/api/route-comparison?input_mint=...&output_mint=...&amount=1000000&pool_address=...`
+
