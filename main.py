@@ -1119,6 +1119,12 @@ def run_bot():
     initialize_database()
     paper.refresh_account()
 
+    try:
+        from dashboard import start_dashboard
+        start_dashboard()
+    except Exception as dashboard_error:
+        log_event("DASHBOARD START ERROR", reason=repr(dashboard_error))
+
     sniper.start_listener()
 
     log_event("SNIPER THREAD STARTED")
