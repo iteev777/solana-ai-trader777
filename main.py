@@ -16,6 +16,7 @@ import database
 
 from scanner import scan_tokens
 from discovery.token_aggregator import collect_tokens
+from candidate_quality import rank_candidates, get_quality_status
 
 from rugcheck import get_rugcheck_report
 from liquidity_monitor import check_liquidity
@@ -1117,14 +1118,47 @@ def add_discovery_tokens():
             elif key not in candidate or candidate[key] in (None, "", {}, []):
                 candidate[key] = value
 
+    # Fill market-data gaps in bounded batches before ranking. Tokens without
+    # enough data remain in the watch/weak tiers; absence is not a safety verdict.
+    candidates = list(merged.values())
+    candidates.sort(
+        key=lambda item: len(item.get("discovery_sources", []))
+        if isinstance(item.get("discovery_sources"), list) else 0,
+        reverse=True
+    )
+    missing_market = [
+        item["tokenAddress"] for item in candidates
+        if not isinstance(item.get("market_data"), dict)
+    ][:90]
+    market_enrichment = {}
+    if missing_market:
+        try:
+            market_enrichment = get_market_data_batch(missing_market) or {}
+        except Exception as error:
+            log_event("DISCOVERY MARKET ENRICHMENT ERROR", reason=repr(error))
+
+    candidates = rank_candidates(candidates, market_enrichment)
+    quality_status = get_quality_status(candidates)
+
     added = 0
     already_seen = 0
     already_pending = 0
     already_open = 0
     cooldown = 0
     blocked = 0
+    hard_rejected = 0
 
-    for address, token in merged.items():
+    for token in candidates:
+        address = token["tokenAddress"]
+        quality = token.get("candidate_quality", {})
+        if quality.get("hard_reject") is True:
+            hard_rejected += 1
+            log_event(
+                "DISCOVERY CANDIDATE REJECTED",
+                reason=" | ".join(quality.get("reasons", []))[:240],
+                token=address
+            )
+            continue
         if address in pending_tasks:
             already_pending += 1
             continue
@@ -1154,6 +1188,10 @@ def add_discovery_tokens():
             + " | open_positions=" + str(already_open)
             + " | reject_cooldown=" + str(cooldown)
             + " | blocked=" + str(blocked)
+            + " | quality_strong=" + str(quality_status["tiers"]["strong"])
+            + " | quality_watch=" + str(quality_status["tiers"]["watch"])
+            + " | quality_weak=" + str(quality_status["tiers"]["weak"])
+            + " | quality_hard_rejected=" + str(hard_rejected)
         )
     )
 

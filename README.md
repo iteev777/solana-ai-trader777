@@ -199,3 +199,9 @@ Pool candidates and their provider provenance are stored in SQLite with a bounde
 ## Pool analysis resilience
 
 Pool RPC transport failures (timeouts, provider outages and rate limits) are kept separate from structural pool/layout failures. Transient failures use per-pool exponential backoff from 60 seconds up to 10 minutes; structural failures are quarantined for one hour. The pool refresher runs up to four independent confirmed account batches concurrently and continues refreshing healthy pools when one batch fails. Only snapshots explicitly marked on-chain verified are published. Structurally invalid pools are rejected rather than used with external-only prices. Dashboard health exposes active transient backoffs, structural quarantines and skipped pool refreshes.
+
+## Multi-stage token discovery and candidate ranking
+
+Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata.
+
+Before scheduling analysis, the discovery loop fills missing market-data snapshots in bounded batches and ranks candidates using liquidity, 5m/1h/6h/24h volume, buy/sell flow, source agreement, pool age, and multi-window momentum. Candidate tiers (strong/watch/weak/reject) are exposed through `/api/discovery` and the dashboard. Incomplete data remains visible as unknown and is not silently converted into a rejection. Only explicit invalid market facts (for example zero liquidity or a non-positive quoted price) are hard-rejected by this ranking stage. Scores are prioritisation signals, not buy signals, and do not unlock live trading.
