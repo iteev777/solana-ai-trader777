@@ -98,8 +98,16 @@ def analyze_token(token, strategy="main"):
         return watch("Waiting for liquidity or volume data")
     if liquidity < MIN_LIQUIDITY_BY_STRATEGY[strategy]:
         return watch("Liquidity below strategy minimum; keep watching")
-    if volume_h24 < 0:
+    if volume_h24 < 0 or (volume_m5 is not None and volume_m5 < 0):
         return reject("Invalid volume data")
+
+    # Reject impossible percentage moves instead of allowing malformed
+    # provider payloads to influence the scoring model.
+    for label, change in (
+        ("5m", price_m5), ("1h", price_h1), ("24h", price_h24)
+    ):
+        if change is not None and (change < -100 or change > 100000):
+            return reject("Invalid " + label + " price-change data")
 
     # Prefer the 5-minute tape. Fall back to hourly transactions only
     # when the provider has not published short-window fields yet.
@@ -114,6 +122,9 @@ def analyze_token(token, strategy="main"):
 
     if buys is None or sells is None or buys < 0 or sells < 0:
         return watch("Waiting for valid recent buy/sell data")
+
+    if not float(buys).is_integer() or not float(sells).is_integer():
+        return watch("Waiting for integer transaction-count data")
 
     total_transactions = buys + sells
     if total_transactions < minimum_transactions:
