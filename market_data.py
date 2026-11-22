@@ -298,7 +298,8 @@ def normalize_gecko_pool(pool):
             created_ms = None
     return {
         "chainId": "solana",
-        "dexId": "geckoterminal",
+        "dexId": attributes.get("dex_id") or attributes.get("dex") or "geckoterminal",
+        "poolName": attributes.get("name"),
         "pairAddress": attributes.get("address"),
         "baseToken": {"address": address, "name": "Unknown", "symbol": "Unknown"},
         "quoteToken": {},
