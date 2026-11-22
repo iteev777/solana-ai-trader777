@@ -102,6 +102,10 @@ Optional environment variables:
 
 Copy-wallet tracking reads public wallet activity, stores unique signatures in SQLite and sends alerts. Set `TROJAN_COPY_PAPER_ENABLED=true` to mirror BUY/SELL signals in the paper ledger only. Paper copy limits default to 3 open positions, $25 total exposure and $5 per ticket per followed wallet; override with `TROJAN_COPY_MAX_POSITIONS_PER_WALLET`, `TROJAN_COPY_MAX_EXPOSURE_PER_WALLET_USD` and `TROJAN_COPY_MAX_TRADE_SIZE_USD`. Because the paper ledger is keyed by mint, a token already held by another wallet or strategy is rejected rather than mixing ownership. No private key is used and no live transaction is signed or broadcast. Never enter a wallet seed phrase or private key into these settings.
 
+## Jupiter route intelligence
+
+Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. Signing, transaction simulation and broadcast remain disabled in code.
+
 ## Health and readiness
 
 The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, and `/api/performance`. The strategy-performance view counts closed SELL trades only and reports realized P/L and win rate separately for MAIN and SNIPER. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.

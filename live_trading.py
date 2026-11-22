@@ -40,6 +40,12 @@ class LiveTrading:
     def get_execution_status(self):
         return live_execution.get_execution_status()
 
+    def get_jupiter_quote(self, input_mint, output_mint, amount, slippage_bps=None):
+        """Read-only Jupiter v2 quote; never requests a transaction."""
+        return live_execution.get_jupiter_quote(
+            input_mint, output_mint, amount, slippage_bps
+        )
+
     def prepare_swap_plan(self, quote, side):
         return live_execution.build_execution_plan(quote, side)
 
