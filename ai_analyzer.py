@@ -3,64 +3,48 @@ import math
 
 
 # ==========================================
-# TROJAN V2 - AI TOKEN ANALYZER
+# TROJAN V2 - DIP REVERSAL / MOMENTUM ANALYZER
 # ==========================================
 
-MIN_LIQUIDITY = 10000
 MIN_LIQUIDITY_BY_STRATEGY = {
-    "main": 10000,
+    "main": 8000,
     "sniper": 2500
 }
 MIN_TOKEN_AGE_MINUTES = {
-    "main": 10,
+    "main": 5,
     "sniper": 0
 }
-MIN_TRANSACTIONS_BY_STRATEGY = {
-    "main": 5,
-    "sniper": 5
-}
 MIN_SCORE = 50
+MINIMUM_APPROVAL_SCORE = {
+    "main": 70,
+    "sniper": 75
+}
 
-MAX_HOURLY_GAIN = 50
-MAX_VOLUME_LIQUIDITY_RATIO = 10
+MAX_HOURLY_GAIN = 35
+MAX_FIVE_MINUTE_GAIN = 8
+MAX_VOLUME_LIQUIDITY_RATIO = 15
 
-MIN_TRANSACTIONS = 5
-
-
-# ==========================================
-# DATA VALIDATION
-# ==========================================
 
 def get_number(value):
-
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
-
-        if not math.isfinite(number):
-            return None
-
-        return number
-
-    except (ValueError, TypeError):
+        return number if math.isfinite(number) else None
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
 def get_nested_number(data, *keys):
-
     current = data
-
     for key in keys:
-
         if not isinstance(current, dict):
             return None
-
         current = current.get(key)
-
     return get_number(current)
 
 
 def reject(reason):
-
     return {
         "score": 0,
         "decision": "REJECT",
@@ -70,336 +54,196 @@ def reject(reason):
 
 
 def get_discovery_sources(token):
-
     sources = token.get("discovery_sources", [])
-
     if not isinstance(sources, list):
         return []
+    return sorted({
+        source.strip().lower()
+        for source in sources
+        if isinstance(source, str) and source.strip()
+    })
 
-    valid_sources = set()
-
-    for source in sources:
-
-        if isinstance(source, str):
-
-            source = source.strip().lower()
-
-            if source:
-                valid_sources.add(source)
-
-    return sorted(valid_sources)
-
-
-# ==========================================
-# MAIN ANALYSIS
-# ==========================================
 
 def analyze_token(token, strategy="main"):
-
     if strategy not in MIN_LIQUIDITY_BY_STRATEGY:
         return reject("Unknown strategy")
-
     if not isinstance(token, dict):
         return reject("Invalid token data")
 
-    score = 0
     reasons = []
+    score = 0
 
-    # ======================================
-    # MARKET DATA
-    # ======================================
+    liquidity = get_nested_number(token, "liquidity", "usd")
+    volume_h24 = get_nested_number(token, "volume", "h24")
+    volume_m5 = get_nested_number(token, "volume", "m5")
+    price_m5 = get_nested_number(token, "priceChange", "m5")
+    price_h1 = get_nested_number(token, "priceChange", "h1")
+    price_h24 = get_nested_number(token, "priceChange", "h24")
 
-    liquidity = get_nested_number(
-        token, "liquidity", "usd"
-    )
+    txns_m5_buys = get_nested_number(token, "txns", "m5", "buys")
+    txns_m5_sells = get_nested_number(token, "txns", "m5", "sells")
+    txns_h1_buys = get_nested_number(token, "txns", "h1", "buys")
+    txns_h1_sells = get_nested_number(token, "txns", "h1", "sells")
 
-    volume = get_nested_number(
-        token, "volume", "h24"
-    )
+    if liquidity is None or volume_h24 is None:
+        return reject("Missing liquidity or volume")
+    if liquidity < MIN_LIQUIDITY_BY_STRATEGY[strategy]:
+        return reject("Liquidity below strategy minimum")
+    if volume_h24 < 0:
+        return reject("Invalid volume data")
 
-    price_h1 = get_nested_number(
-        token, "priceChange", "h1"
-    )
+    # Prefer the 5-minute tape. Fall back to hourly transactions only
+    # when the provider has not published short-window fields yet.
+    if txns_m5_buys is not None and txns_m5_sells is not None:
+        buys, sells = txns_m5_buys, txns_m5_sells
+        window = "5m"
+        minimum_transactions = 3 if strategy == "sniper" else 4
+    else:
+        buys, sells = txns_h1_buys, txns_h1_sells
+        window = "1h"
+        minimum_transactions = 5
 
-    price_h24 = get_nested_number(
-        token, "priceChange", "h24"
-    )
+    if buys is None or sells is None or buys < 0 or sells < 0:
+        return reject("Missing or invalid buy/sell transactions")
 
-    buys = get_nested_number(
-        token, "txns", "h1", "buys"
-    )
+    total_transactions = buys + sells
+    if total_transactions < minimum_transactions:
+        return reject("Insufficient recent transaction activity")
 
-    sells = get_nested_number(
-        token, "txns", "h1", "sells"
-    )
-
-    if liquidity is None or volume is None:
-        return reject("Missing liquidity or volume data")
-
-    if liquidity <= 0 or volume < 0:
-        return reject("Invalid market data")
-
-    minimum_liquidity = MIN_LIQUIDITY_BY_STRATEGY[strategy]
-
-    if liquidity < minimum_liquidity:
-        return reject("Liquidity below minimum requirement")
-
+    if price_m5 is None:
+        # Without a short-window change we cannot verify a local rebound.
+        return reject("No 5-minute price signal; waiting for reversal data")
     if price_h1 is None:
         return reject("Missing hourly price data")
-
     if price_h24 is None:
         return reject("Missing daily price data")
 
-    # ======================================
-    # TRANSACTION VALIDATION
-    # ======================================
+    if price_m5 <= 0:
+        return reject("No confirmed 5-minute rebound")
+    if price_m5 > MAX_FIVE_MINUTE_GAIN:
+        return reject("Short-term move already extended; avoid chasing")
+    if price_h1 < -25:
+        return reject("Severe hourly downtrend")
+    if price_h1 > MAX_HOURLY_GAIN:
+        return reject("Hourly move too extended")
+    if price_h24 < -70:
+        return reject("Extreme daily collapse")
+    if buys <= sells:
+        return reject("Buyers have not taken control")
 
-    if buys is None or sells is None:
-        return reject("Missing transaction data")
+    volume_ratio = volume_h24 / max(liquidity, 1)
+    if volume_ratio > MAX_VOLUME_LIQUIDITY_RATIO:
+        return reject("Abnormal volume/liquidity ratio")
 
-    if buys < 0 or sells < 0:
-        return reject("Invalid transaction data")
+    pair_created = get_number(token.get("pairCreatedAt"))
+    if pair_created is not None and pair_created > 0:
+        current_ms = time.time() * 1000
+        if pair_created > current_ms + 300000:
+            return reject("Pair creation timestamp is in the future")
+        age_minutes = (current_ms - pair_created) / 60000
+        if age_minutes < MIN_TOKEN_AGE_MINUTES[strategy]:
+            return reject("Trading pair too new")
 
-    total_transactions = buys + sells
-
-    minimum_transactions = MIN_TRANSACTIONS_BY_STRATEGY[strategy]
-
-    if total_transactions < minimum_transactions:
-        return reject("Insufficient hourly transaction activity")
-
-    # ======================================
-    # DISCOVERY SOURCES
-    # ======================================
-
+    buy_ratio = buys / total_transactions
     sources = get_discovery_sources(token)
     source_count = len(sources)
 
-    # ======================================
-    # TOKEN AGE VALIDATION
-    # ======================================
-
-    if "pairCreatedAt" in token:
-
-        pair_created = get_number(
-            token.get("pairCreatedAt")
-        )
-
-        if pair_created is None or pair_created <= 0:
-            return reject("Invalid token creation timestamp")
-
-        current_time_ms = time.time() * 1000
-
-        if pair_created > current_time_ms + 300000:
-            return reject("Token creation timestamp is in the future")
-
-        age_minutes = (
-            current_time_ms - pair_created
-        ) / 60000
-
-        minimum_age = MIN_TOKEN_AGE_MINUTES[strategy]
-
-        if age_minutes < minimum_age:
-            return reject("Trading pair too new")
-
-    # ======================================
-    # SAFETY CHECKS
-    # ======================================
-
-    if price_h1 > MAX_HOURLY_GAIN:
-        return reject("Extreme hourly price increase")
-
-    volume_ratio = volume / liquidity
-
-    if volume_ratio > MAX_VOLUME_LIQUIDITY_RATIO:
-        return reject("Suspicious volume to liquidity ratio")
-
-    if total_transactions >= 10 and sells > buys * 1.5:
-        return reject("Excessive selling pressure")
-
-    # ======================================
-    # LIQUIDITY SCORE: MAX 25
-    # ======================================
-
+    # Liquidity: 25 points.
     if liquidity >= 100000:
         score += 25
-        reasons.append("Very strong liquidity")
-
+        reasons.append("Deep liquidity")
     elif liquidity >= 50000:
         score += 22
         reasons.append("Strong liquidity")
-
-    elif liquidity >= 25000:
+    elif liquidity >= 20000:
         score += 18
-        reasons.append("Good liquidity")
-
+        reasons.append("Healthy liquidity")
     else:
         score += 12
-        reasons.append("Acceptable liquidity")
+        reasons.append("Minimum liquidity passed")
 
-    # ======================================
-    # VOLUME SCORE: MAX 20
-    # ======================================
-
-    if volume >= 100000:
-        score += 20
-        reasons.append("Very high trading volume")
-
-    elif volume >= 50000:
-        score += 17
-        reasons.append("High trading volume")
-
-    elif volume >= 10000:
-        score += 13
-        reasons.append("Good trading volume")
-
-    elif volume >= 5000:
-        score += 8
-        reasons.append("Moderate trading volume")
-
-    else:
-        score += 3
-        reasons.append("Low trading volume")
-
-    # ======================================
-    # BUYING PRESSURE: MAX 20
-    # ======================================
-
-    if total_transactions >= 20:
-
-        score += 5
-        reasons.append("Active trading")
-
-    else:
-
-        score += 3
-        reasons.append("Some trading activity")
-
-    buy_ratio = buys / total_transactions
-
-    if buy_ratio >= 0.70:
+    # Recent activity: 15 points.
+    recent_volume = volume_m5 if volume_m5 is not None else volume_h24
+    if recent_volume >= 5000:
         score += 15
-        reasons.append("Very strong buying pressure")
-
-    elif buy_ratio >= 0.60:
-        score += 12
-        reasons.append("Strong buying pressure")
-
-    elif buy_ratio >= 0.52:
-        score += 8
-        reasons.append("Positive buying pressure")
-
-    elif buy_ratio <= 0.35:
-        score -= 10
-        reasons.append("Strong selling pressure")
-
-    elif buy_ratio < 0.45:
-        score -= 5
-        reasons.append("Selling pressure detected")
-
-    # ======================================
-    # SHORT-TERM MOMENTUM: MAX 15
-    # ======================================
-
-    if 0 < price_h1 <= 10:
-        score += 15
-        reasons.append("Healthy positive momentum")
-
-    elif 10 < price_h1 <= 20:
-        score += 8
-        reasons.append("Strong short-term movement")
-
-    elif price_h1 < -10:
-        score -= 10
-        reasons.append("Significant negative momentum")
-
-    elif price_h1 < 0:
-        score -= 5
-        reasons.append("Negative short-term momentum")
-
-    elif price_h1 == 0:
-        reasons.append("No hourly price movement")
-
-    # ======================================
-    # DAILY MOMENTUM: MAX 10
-    # ======================================
-
-    if 0 < price_h24 <= 30:
-        score += 10
-        reasons.append("Positive daily momentum")
-
-    elif price_h24 > 30:
-        score += 5
-        reasons.append("Strong daily price increase")
-
-    elif price_h24 < -20:
-        score -= 10
-        reasons.append("Heavy daily price decline")
-
-    elif price_h24 < 0:
-        score -= 5
-        reasons.append("Negative daily momentum")
-
-    # ======================================
-    # DISCOVERY SOURCE SCORE: MAX 10
-    # ======================================
-
-    if source_count >= 4:
-        score += 10
-        reasons.append("Detected by multiple discovery sources")
-
-    elif source_count == 3:
+        reasons.append("Strong recent volume")
+    elif recent_volume >= 1000:
+        score += 11
+        reasons.append("Good recent volume")
+    elif recent_volume >= 100:
         score += 7
-        reasons.append("Detected by three discovery sources")
-
-    elif source_count == 2:
-        score += 4
-        reasons.append("Detected by two discovery sources")
-
+        reasons.append("Recent volume present")
     else:
-        reasons.append("Limited discovery confirmation")
+        score += 3
+        reasons.append("Thin recent volume")
 
-    # ======================================
-    # FINAL SCORE
-    # ======================================
+    # Buy pressure: 25 points.
+    if buy_ratio >= 0.75:
+        score += 25
+        reasons.append("Aggressive buyer dominance (" + window + ")")
+    elif buy_ratio >= 0.65:
+        score += 21
+        reasons.append("Strong buyer dominance (" + window + ")")
+    elif buy_ratio >= 0.58:
+        score += 16
+        reasons.append("Buyers in control (" + window + ")")
+    elif buy_ratio >= 0.52:
+        score += 10
+        reasons.append("Slight positive buy pressure")
+    else:
+        return reject("Buy pressure too weak")
+
+    # Reversal: prefer a small positive 5m turn while hourly movement
+    # is still modest, rather than buying a vertical candle.
+    if 0 < price_m5 <= 2:
+        score += 20
+        reasons.append("Early 5-minute rebound")
+    elif 2 < price_m5 <= 5:
+        score += 15
+        reasons.append("Confirmed short-term rebound")
+    else:
+        score += 8
+        reasons.append("Late but valid rebound")
+
+    if -12 <= price_h1 <= 8:
+        score += 10
+        reasons.append("Hourly structure not overextended")
+    elif price_h1 <= 15:
+        score += 5
+        reasons.append("Moderate hourly momentum")
+
+    if source_count >= 3:
+        score += 5
+        reasons.append("Multi-source discovery confirmation")
+    elif source_count == 2:
+        score += 3
+        reasons.append("Two discovery sources agree")
 
     score = max(0, min(100, round(score)))
+    decision = (
+        "APPROVE"
+        if score >= MINIMUM_APPROVAL_SCORE[strategy]
+        else "WATCH" if score >= MIN_SCORE else "REJECT"
+    )
 
-    if score >= 70:
-
-        decision = "APPROVE"
-        reasons.append("High quality candidate")
-
-    elif score >= MIN_SCORE:
-
-        decision = "WATCH"
-        reasons.append("Candidate requires further monitoring")
-
-    else:
-
-        decision = "REJECT"
-        reasons.append("Insufficient quality score")
+    reasons.append(
+        "Dip-reversal candidate" if decision == "APPROVE"
+        else "Waiting for a stronger entry" if decision == "WATCH"
+        else "Entry quality too low"
+    )
 
     return {
         "score": score,
         "decision": decision,
         "reasons": reasons,
-        "source_count": source_count
+        "source_count": source_count,
+        "buy_ratio": round(buy_ratio, 3),
+        "price_change_m5": price_m5,
+        "price_change_h1": price_h1,
+        "transaction_window": window
     }
 
 
-# ==========================================
-# STARTUP
-# ==========================================
-
 if __name__ == "__main__":
-
-    print("================================")
-    print("TROJAN V2 AI ANALYZER")
-    print("================================")
-
-    print("MINIMUM LIQUIDITY:", MIN_LIQUIDITY)
-    print("MINIMUM SCORE:", MIN_SCORE)
-    print("MAX HOURLY GAIN:", MAX_HOURLY_GAIN)
-    print("MINIMUM TRANSACTIONS:", MIN_TRANSACTIONS)
-
-    print("AI ANALYZER READY")
+    print("TROJAN V2 DIP-REVERSAL ANALYZER READY")
+    print("STRATEGIES:", MINIMUM_APPROVAL_SCORE)
