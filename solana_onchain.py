@@ -33,6 +33,12 @@ PROGRAMS = {
     "moonit_amm": "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG",
 }
 
+PUMPSWAP_GLOBAL_CONFIG = "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
+PUMPSWAP_FEE_CONFIG = "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx"
+PUMP_FEES_PROGRAM = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+PUMPSWAP_GLOBAL_CONFIG_DISCRIMINATOR = bytes([149, 8, 156, 202, 160, 252, 176, 217])
+PUMPSWAP_FEE_CONFIG_DISCRIMINATOR = bytes([143, 52, 146, 187, 219, 123, 76, 155])
+
 PROTOCOL_ALIASES = {
     "pump_swap": "pumpswap", "pumpfun_amm": "pumpswap", "pump_amm": "pumpswap",
     "pumpfun": "pumpfun_legacy", "pump.fun": "pumpfun_legacy",
@@ -149,8 +155,15 @@ def _decode_pool(protocol, raw):
         if len(raw) < 244 or raw[:8] != bytes([241,154,109,4,17,177,109,188]):
             raise ValueError("invalid PumpSwap Pool discriminator/layout")
         return {
+            "creator": _key(raw, 11),
             "base_mint": _key(raw, 43), "quote_mint": _key(raw, 75),
             "vault_base": _key(raw, 139), "vault_quote": _key(raw, 171),
+            "coin_creator": _key(raw, 211) if len(raw) >= 243 else None,
+            "is_mayhem_mode": bool(raw[243]) if len(raw) >= 244 else False,
+            "is_cashback_coin": bool(raw[244]) if len(raw) >= 245 else False,
+            "virtual_quote_reserves": int.from_bytes(raw[245:261], "little", signed=True) if len(raw) >= 261 else 0,
+            "creator_fee_bps": _u64(raw, 261) if len(raw) >= 269 else 0,
+            "is_holder_reward": bool(raw[270]) if len(raw) >= 271 else False,
             "status": "active", "price_mode": "reserves"
         }
     if protocol == "raydium_cpmm":
