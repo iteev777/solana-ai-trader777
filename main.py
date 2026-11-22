@@ -1,6 +1,6 @@
 # ==========================================
 # TROJAN V2 - MAIN TRADING ENGINE
-# DIAGNOSTICS UPDATE
+# QUEUE OPTIMIZATION UPDATE
 # ==========================================
 
 import time
@@ -33,7 +33,10 @@ from database import (
 
 API_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 
-WORKERS = 4
+# Increased from 4 to 6
+WORKERS = 6
+
+# Keep queue limit unchanged
 MAX_PENDING_TASKS = 100
 
 SCAN_INTERVAL = 60
@@ -87,7 +90,6 @@ def safe_float(value):
         return None
 
     try:
-
         number = float(value)
 
         if not math.isfinite(number):
@@ -142,6 +144,10 @@ def remove_pending_duplicates(address):
     pending_sniper_tokens.pop(address, None)
     pending_discovery_tokens.pop(address, None)
 
+
+# ==========================================
+# RETRY HANDLER
+# ==========================================
 
 def queue_retry(
     address,
@@ -1056,6 +1062,8 @@ def run_bot():
     print("TROJAN V2 - SOLANA AI TRADING BOT")
     print("====================================")
     print("PAPER TRADING: ENABLED")
+    print("WORKERS:", WORKERS)
+    print("MAX PENDING TASKS:", MAX_PENDING_TASKS)
     print("LIVE EXECUTION: LOCKED")
     print("====================================")
 
@@ -1073,10 +1081,16 @@ def run_bot():
 
         try:
 
+            # IMPORTANT:
+            # Free completed task slots BEFORE scheduling new work.
+
+            process_completed_tasks()
+
+            # Then receive and schedule new tokens.
+
             receive_sniper_tokens()
             process_sniper_tokens()
             process_discovery_pending()
-            process_completed_tasks()
 
             if time.time() - last_scan_time >= SCAN_INTERVAL:
 
