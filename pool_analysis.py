@@ -6,10 +6,12 @@ same invalid pool is not fetched on every market-data heartbeat.
 """
 import threading
 import time
+from collections import OrderedDict
 
 TRANSIENT_INITIAL_SECONDS = 60.0
 TRANSIENT_MAX_SECONDS = 600.0
 STRUCTURAL_BLOCK_SECONDS = 3600.0
+MAX_TRACKED_POOLS = 5000
 
 _TRANSIENT_MARKERS = (
     "all configured solana rpc endpoints failed",
@@ -43,8 +45,8 @@ _STRUCTURAL_MARKERS = (
 )
 
 _lock = threading.RLock()
-_transient = {}
-_structural = {}
+_transient = OrderedDict()
+_structural = OrderedDict()
 _total_transient_failures = 0
 _total_structural_failures = 0
 _last_error = None
@@ -109,6 +111,9 @@ def record_transient_failure(pool_address, error=None, now=None):
             "failures": (previous["failures"] + 1) if previous else 1,
             "last_error": str(error)[:180] if error is not None else None,
         }
+        _transient.move_to_end(key)
+        while len(_transient) > MAX_TRACKED_POOLS:
+            _transient.popitem(last=False)
         _total_transient_failures += 1
         _last_error = str(error)[:180] if error is not None else _last_error
         return {"retry_at": retry_at, "retry_in_seconds": delay,
@@ -128,6 +133,9 @@ def record_structural_failure(pool_address, error=None, now=None):
             "retry_at": retry_at,
             "last_error": str(error)[:180] if error is not None else None,
         }
+        _structural.move_to_end(key)
+        while len(_structural) > MAX_TRACKED_POOLS:
+            _structural.popitem(last=False)
         _total_structural_failures += 1
         _last_error = str(error)[:180] if error is not None else _last_error
         return {"retry_at": retry_at, "retry_in_seconds": STRUCTURAL_BLOCK_SECONDS}
@@ -160,6 +168,7 @@ def get_pool_analysis_status(now=None):
             "transient_initial_seconds": TRANSIENT_INITIAL_SECONDS,
             "transient_max_seconds": TRANSIENT_MAX_SECONDS,
             "structural_block_seconds": STRUCTURAL_BLOCK_SECONDS,
+            "max_tracked_pools": MAX_TRACKED_POOLS,
             "last_error": _last_error,
         }
 
