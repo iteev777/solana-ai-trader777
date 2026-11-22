@@ -31,7 +31,7 @@ def record_validation(declared_protocol, pool_address, mint, snapshot=None, erro
                 "recorded": False,
             }
         pool_analysis.record_structural_failure(pool_address, error)
-    elif isinstance(snapshot, dict) and pool_address:
+    elif isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True and pool_address:
         pool_analysis.record_success(pool_address)
     if isinstance(snapshot, dict):
         source = str(snapshot.get("marketSource") or "")
