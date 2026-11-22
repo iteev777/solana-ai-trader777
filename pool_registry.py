@@ -231,6 +231,8 @@ def fetch_dexscreener_token_pools(mint):
     with _lock:
         _full_refresh_at[mint] = time.time()
         _full_refresh_retry_at.pop(mint, None)
+        _status["last_success_at"] = time.time()
+        _status["last_error"] = None
     incomplete = is_dexscreener_list_incomplete(token_pairs)
     if incomplete:
         enqueue_gecko_pool_fetch(mint)
