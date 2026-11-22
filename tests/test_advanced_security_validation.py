@@ -28,9 +28,9 @@ class TokenSecurityTests(unittest.TestCase):
                            "mintAuthority": None, "freezeAuthority": None
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 6}},
-            {"value": {"value": [
+            {"value": [
                 {"address": "11111111111111111111111111111111", "amount": "30000000"}
-            ]}},
+            ]},
             {"value": [{"data": {"parsed": {"info": {"owner": "11111111111111111111111111111111"}}}}]},
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
