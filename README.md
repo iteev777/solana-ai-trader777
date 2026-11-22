@@ -11,7 +11,7 @@ A multi-source Solana token scanner with a dip-reversal entry model and rapid pa
 - Monitors paper positions frequently, with a 9% stop loss, 10% take-profit target, 4% trailing activation, 3.5% trailing distance, and a 15-minute rotation exit.
 - Paper P/L includes an estimated 0.75% fee on each swap side. Actual Solana execution costs and slippage vary.
 - Market prices are mapped only to the DexScreener pair's base token; a base-token USD price is never assigned to the quote token.
-- GeckoTerminal new-pool results carry normalized market snapshots into analysis; known Gecko pool addresses are retained with paper positions and used as a rate-limited fallback when DexScreener has no quote. This is an API pool-data fallback, not a direct on-chain reserve decoder.
+- GeckoTerminal new-pool results carry normalized market snapshots into analysis; known Gecko pool addresses are retained with paper positions and used as a rate-limited fallback when DexScreener has no complete quote. Discovery-provided pool addresses are also used for a token-mint-checked Gecko fallback during candidate analysis. Gecko OHLCV indicators are applied only when the candidate mint is the pool's base token. This is an API pool-data fallback, not a direct on-chain reserve decoder.
 - Token filter decisions (pass, wait, reject, error) are stored in SQLite with reasons and exposed through the dashboard filtering analytics endpoint.
 
 ## Important limitations
@@ -27,6 +27,22 @@ python main.py
 ```
 
 Keep the bot in paper mode while validating signal quality, net P/L, drawdown, trade count, and API reliability.
+
+### Risk limits
+
+The risk manager reads these optional Railway variables (values below are the defaults):
+
+- `TROJAN_MAX_TRADE_SIZE_USD=5`
+- `TROJAN_MIN_TRADE_SIZE_USD=1`
+- `TROJAN_MAX_DAILY_LOSS_USD=10` (10% of the $100 paper starting balance)
+- `TROJAN_MAX_TRADE_BALANCE_FRACTION=0.10` (each new position is capped at 10% of remaining balance)
+- `TROJAN_MAX_MAIN_POSITIONS=10`
+- `TROJAN_MAX_SNIPER_POSITIONS=10`
+- `TROJAN_MAX_TOTAL_POSITIONS=15`
+- `TROJAN_STOP_LOSS_PERCENT=20`
+- `TROJAN_TAKE_PROFIT_PERCENT=30`
+
+The strategy engine automatically scales the paper order size down as the account balance falls. A trade is blocked if its size would exceed the configured balance fraction or the minimum ticket cannot be met.
 
 
 ## Read-only dashboard
@@ -88,4 +104,8 @@ Copy-wallet tracking is read-only: it identifies token balance changes and SOL m
 
 ## Health and readiness
 
-The dashboard exposes `/api/readiness`, `/api/copy-trades`, and the strategy configuration endpoints. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
+The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, and `/api/performance`. The strategy-performance view counts closed SELL trades only and reports realized P/L and win rate separately for MAIN and SNIPER. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
+
+## Automated safety tests
+
+Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. GitHub Actions runs the same suite on feature-branch pushes and pull requests.
