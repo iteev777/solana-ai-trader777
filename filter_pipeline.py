@@ -174,6 +174,99 @@ def _momentum_stage(token):
     })
 
 
+def _age_stage(token):
+    created = _number(token.get("pairCreatedAt"))
+    if created is None:
+        created = _number(token.get("created_at_ms"))
+    if created is None:
+        if os.getenv("TROJAN_FILTER_REQUIRE_POOL_AGE", "false").lower() == "true":
+            return _result("WAIT", "age", "POOL_AGE_UNKNOWN")
+        return _result("PASS", "age", "POOL_AGE_NOT_REQUIRED")
+    # Providers normally expose milliseconds; tolerate Unix seconds explicitly.
+    created_seconds = created / 1000.0 if created > 10_000_000_000 else created
+    age_minutes = max(0.0, (time.time() - created_seconds) / 60.0)
+    minimum = _env_float("TROJAN_FILTER_MIN_POOL_AGE_MINUTES", 0.0, 0.0, 10_000_000.0)
+    maximum = _env_float("TROJAN_FILTER_MAX_POOL_AGE_MINUTES", 10_000_000.0, 0.0, 10_000_000.0)
+    if age_minutes < minimum:
+        return _result("WAIT", "age", "POOL_TOO_NEW", {
+            "age_minutes": round(age_minutes, 2), "minimum_minutes": minimum
+        })
+    if age_minutes > maximum:
+        return _result("REJECT", "age", "POOL_TOO_OLD", {
+            "age_minutes": round(age_minutes, 2), "maximum_minutes": maximum
+        })
+    return _result("PASS", "age", "POOL_AGE_WITHIN_BOUNDS", {
+        "age_minutes": round(age_minutes, 2)
+    })
+
+
+def _valuation_stage(token):
+    fdv = _number(token.get("fdv"))
+    market_cap = _number(token.get("marketCap"))
+    liquidity = _number(_get(token, "liquidity", "usd"))
+    max_fdv = _env_float("TROJAN_FILTER_MAX_FDV_USD", 1e15, 0.0, 1e18)
+    min_liquidity_ratio = _env_float("TROJAN_FILTER_MIN_LIQUIDITY_FDV_RATIO", 0.0, 0.0, 100.0)
+    if fdv is not None and fdv < 0 or market_cap is not None and market_cap < 0:
+        return _result("REJECT", "valuation", "NEGATIVE_VALUATION")
+    if fdv is not None and fdv > max_fdv:
+        return _result("REJECT", "valuation", "FDV_ABOVE_MAXIMUM", {
+            "fdv_usd": fdv, "maximum_usd": max_fdv
+        })
+    valuation = fdv if fdv is not None else market_cap
+    if min_liquidity_ratio > 0:
+        if valuation is None or valuation <= 0 or liquidity is None:
+            return _result("WAIT", "valuation", "LIQUIDITY_VALUATION_RATIO_UNKNOWN")
+        ratio = liquidity / valuation
+        if ratio < min_liquidity_ratio:
+            return _result("REJECT", "valuation", "LIQUIDITY_VALUATION_RATIO_TOO_LOW", {
+                "liquidity_to_fdv_ratio": round(ratio, 6),
+                "minimum_ratio": min_liquidity_ratio
+            })
+        return _result("PASS", "valuation", "VALUATION_WITHIN_BOUNDS", {
+            "fdv_usd": fdv, "market_cap_usd": market_cap,
+            "liquidity_to_fdv_ratio": round(ratio, 6)
+        })
+    return _result("PASS", "valuation", "VALUATION_NOT_RESTRICTED", {
+        "fdv_usd": fdv, "market_cap_usd": market_cap
+    })
+
+
+def _provenance_stage(token):
+    sources = token.get("discovery_sources", token.get("sources", []))
+    if not isinstance(sources, list):
+        sources = []
+    normalized = {
+        value.strip().lower() for value in sources
+        if isinstance(value, str) and value.strip()
+    }
+    minimum = _env_int("TROJAN_FILTER_MIN_DISCOVERY_SOURCES", 0, 0, 20)
+    if len(normalized) < minimum:
+        return _result("WAIT", "provenance", "SOURCE_AGREEMENT_BELOW_MINIMUM", {
+            "source_count": len(normalized), "minimum": minimum
+        })
+    return _result("PASS", "provenance", "SOURCE_PROVENANCE_VALID", {
+        "source_count": len(normalized), "sources": sorted(normalized)
+    })
+
+
+def _quality_stage(token):
+    minimum = _env_float("TROJAN_FILTER_MIN_QUALITY_SCORE", 0.0, 0.0, 100.0)
+    if minimum <= 0:
+        return _result("PASS", "quality", "QUALITY_GATE_DISABLED")
+    quality = token.get("candidate_quality")
+    score = _number(quality.get("score")) if isinstance(quality, dict) else None
+    tier = quality.get("tier") if isinstance(quality, dict) else None
+    if score is None:
+        return _result("WAIT", "quality", "CANDIDATE_QUALITY_UNKNOWN")
+    if score < minimum:
+        return _result("REJECT", "quality", "CANDIDATE_QUALITY_BELOW_MINIMUM", {
+            "quality_score": score, "minimum": minimum, "tier": tier
+        })
+    return _result("PASS", "quality", "CANDIDATE_QUALITY_ACCEPTED", {
+        "quality_score": score, "tier": tier
+    })
+
+
 def evaluate_token(token, mint, strategy="main"):
     """Run the ordered local filter stages and return the first non-pass result.
 
@@ -184,16 +277,22 @@ def evaluate_token(token, mint, strategy="main"):
     stages = (
         _metadata_stage(token, mint),
         _market_stage(token, strategy),
+        _age_stage(token),
+        _valuation_stage(token),
         _activity_stage(token),
         _momentum_stage(token),
+        _provenance_stage(token),
+        _quality_stage(token),
     )
+    decisions = []
     for item in stages:
+        decisions.append(item)
         if item["status"] != "PASS":
             return {
                 "status": item["status"],
                 "reason": item["reason"],
                 "stage": item["stage"],
-                "decisions": list(stages[:stages.index(item) + 1]),
+                "decisions": decisions,
                 "evaluated_at": time.time(),
             }
     return {
