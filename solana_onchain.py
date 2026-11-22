@@ -15,6 +15,8 @@ import requests
 RPC_URL = os.getenv("SOLANA_RPC_URL", "").strip()
 TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+TOKEN_PROGRAMS = {TOKEN_PROGRAM, TOKEN_2022_PROGRAM}
 PROGRAMS = {
     "pumpswap": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
     "raydium_cpmm": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
@@ -175,16 +177,22 @@ def _decode_pool(protocol, raw):
     raise ValueError("unsupported Solana pool protocol")
 
 
-def _token_amount(account):
+def _token_amount(account, expected_mint):
     if not account or len(account["data"]) < 72:
         raise ValueError("invalid SPL token vault account")
+    if account.get("owner") not in TOKEN_PROGRAMS:
+        raise ValueError("pool vault is not owned by an SPL token program")
     raw = account["data"]
+    if _key(raw, 0) != expected_mint:
+        raise ValueError("pool vault mint does not match pool state")
     return int.from_bytes(raw[64:72], "little")
 
 
 def _mint_decimals(account):
     if not account or len(account["data"]) < 45:
         raise ValueError("invalid SPL mint account")
+    if account.get("owner") not in TOKEN_PROGRAMS:
+        raise ValueError("pool mint is not owned by an SPL token program")
     return account["data"][44]
 
 
@@ -239,8 +247,8 @@ def decode_pool_snapshot(pool_address, protocol, token_mint):
         decoded["vault_base"], decoded["vault_quote"],
         decoded["base_mint"], decoded["quote_mint"]
     ])
-    base_amount = _token_amount(vaults[0]) / (10 ** _mint_decimals(vaults[2]))
-    quote_amount = _token_amount(vaults[1]) / (10 ** _mint_decimals(vaults[3]))
+    base_amount = _token_amount(vaults[0], decoded["base_mint"]) / (10 ** _mint_decimals(vaults[2]))
+    quote_amount = _token_amount(vaults[1], decoded["quote_mint"]) / (10 ** _mint_decimals(vaults[3]))
     if base_amount <= 0 or quote_amount <= 0:
         raise ValueError("pool vault reserves are empty")
     if decoded["price_mode"] == "sqrt_price":
