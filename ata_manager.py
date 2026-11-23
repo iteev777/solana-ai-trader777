@@ -69,7 +69,7 @@ def _compile_create_message(payer, ata, owner, mint, token_program, blockhash):
     account_indexes = bytes(index[key] for key, _, _ in metas)
     instruction = (
         bytes([index[program]]) + _shortvec(len(account_indexes)) + account_indexes
-        + _shortvec(1) + b"\\x01"
+        + _shortvec(1) + bytes([1])
     )
     message = (
         bytes([1, readonly_signed, readonly_unsigned])
