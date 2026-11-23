@@ -69,9 +69,10 @@ inspection endpoints are diagnostic only; they do not imply that the account
 can be used by any current native swap builder.
 
 **Inspection is not Token-2022 swap support.** The response explicitly keeps
-`swap_eligibility` blocked and `execution_enabled` false. Native builders and
-wallet preflight still require the legacy SPL Token program. Transfer-fee
-extensions change net received amounts and need epoch-aware fee calculations;
+`swap_eligibility` blocked and `execution_enabled` false. Most native builders and wallet preflight still require the legacy SPL Token
+program. FluxBeam has a deliberately narrow Token-2022 path for zero-fee mints
+without transfer hooks; non-zero transfer fees and unsupported extensions are
+rejected. Transfer-fee extensions change net received amounts and need epoch-aware fee calculations;
 confidential transfers need client-side proof flows; transfer hooks require
 additional account/program handling. Token-2022 ATA sizing also depends on the
 mint's required account extensions, so the legacy 165-byte ATA path must not be
@@ -267,3 +268,33 @@ Endpoints:
 Live execution remains locked. The native broadcast environment gate remains
 off by default, and this builder's successful simulation is not proof that a
 real wallet-signed transaction will land or confirm.
+
+
+## Native direct-DEX builder coverage
+
+Trojan now has native unsigned swap builders registered for all eleven direct
+venues represented by the ScreenerBot Solana direct-swap venue set:
+
+- Raydium CPMM, CLMM and AMM v4
+- Orca Whirlpool
+- Meteora DLMM, DAMM v2 and DBC
+- Pump.fun Legacy and PumpSwap V2
+- FluxBeam AMM
+- Moonit AMM
+
+Each builder re-quotes immediately before transaction construction, checks the
+pool and token-account snapshot, validates the requested mint direction and
+minimum output, and returns a wallet-signable transaction without server-side
+signing or broadcasting. Pool-specific account layouts and unsupported modes
+fail closed. Builder registration does not itself prove a successful mainnet
+trade; protocol-specific Devnet and live-readiness tests remain separate.
+
+Native transactions prepend Solana Compute Budget instructions. The current
+default compute-unit limit is 300,000 and the default priority price is 10,000
+micro-lamports per compute unit. The priority price can be adjusted with
+`TROJAN_PRIORITY_FEE_MICROLAMPORTS` (integer range 0–1,000,000,000). The value
+is returned in the unsigned order response so the wallet can review it before
+signing. This is a configured fee policy, not a live network-fee oracle.
+
+Live trading remains locked. The user must inspect and sign any transaction in
+their own wallet; the bot does not hold wallet secrets.
