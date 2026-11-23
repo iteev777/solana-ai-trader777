@@ -46,9 +46,9 @@ orca_whirlpool_quote.py	production	unreviewed
 paper_fill_model.py	production	unreviewed
 paper_trading.py	production	unreviewed
 pool_account_fetcher.py	production	reviewed
-pool_analysis.py	production	unreviewed
-pool_registry.py	production	unreviewed
-pool_selection.py	production	unreviewed
+pool_analysis.py	production	reviewed
+pool_registry.py	production	reviewed
+pool_selection.py	production	reviewed
 position_policy.py	production	unreviewed
 protocol_quotes.py	production	unreviewed
 protocol_validation.py	production	unreviewed

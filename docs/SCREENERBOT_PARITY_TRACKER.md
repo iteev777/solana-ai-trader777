@@ -40,21 +40,25 @@ status in this review.
 | `rpc_transport.py` | `src/rpc/errors.rs` | Reference separates request errors, rate limits and availability failures. Trojan retains its read-only allowlist and simpler endpoint failover. | `6047172` Count JSON-RPC errors before failover, discard error envelopes even with a result, and sanitize rate-limit labels. | Mock failover and paper-lock tests pass. |
 | `pool_account_fetcher.py` | `src/chains/solana/pools/fetcher_types.rs` (targeted packing comparison) | Both deduplicate account reads and keep pool bundles coherent. Full review of the reference fetcher family remains open, including refresh priority and spare capacity scheduling. | `0bbcdcb` Isolate oversized account bundles and use monotonic topology TTLs. | Mixed valid/oversized mock batch passes. |
 
+| `pool_analysis.py` | `src/chains/solana/pools/analyzer.rs` (targeted error/backoff comparison) | Both distinguish provider faults from invalid on-chain layouts and back off transient failures. Reference stores structural failure history in SQLite; full analyzer review remains open. | `60b9ab7` Classify HTTP client failures as transient, reset long-expired retry history, and keep exception text out of status. | Regression tests pass. |
+| `pool_selection.py` | `src/chains/solana/pools/selection.rs` | Reference records a single selected pool after analysis and removes superseded subscriptions via its directory. Trojan selects from base-side market data with hysteresis; release on re-selection belongs to the stream review. | `1bd1f00` Exclude malformed and foreign-chain rows before ranking; ignore nonfinite implied SOL prices. | Regression tests pass. |
+| `pool_registry.py` | `src/tokens/pool_data/cache.rs` (targeted TTL and hydration comparison) | Both bound freshness and hydrate persisted pool snapshots. Reference has priority prefetch lanes and optional server cache. Full reference cache review remains open. | `4d84a3f` Empty/foreign-chain updates cannot refresh pool age, future SQLite snapshots are ignored, and stale readers no longer delete persisted rows that could have been concurrently replaced. Persistent stale-row cleanup remains open. | Regression tests pass. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Twenty-one of 61 production
+path in this branch, including review artifacts. Twenty-four of 61 production
 Python files have completed this review. The last completed file is
-`pool_account_fetcher.py`. Resume at `pool_analysis.py` for pool failure classification and backoff.
+`pool_registry.py`. Resume at `protocol_validation.py` for decoder validation telemetry.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Thirty source files are reviewed and 1,981 remain
+are listed as well. Thirty-one source files are reviewed and 1,980 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 594 tests passed, including the process-level paper/dashboard and live
+All 598 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

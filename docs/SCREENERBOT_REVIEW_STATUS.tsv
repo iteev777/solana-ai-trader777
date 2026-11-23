@@ -934,7 +934,7 @@ src/chains/solana/pools/layouts/raydium_clmm.rs	source	unreviewed	Pending review
 src/chains/solana/pools/layouts/raydium_cpmm.rs	source	unreviewed	Pending review
 src/chains/solana/pools/mod.rs	source	unreviewed	Pending review
 src/chains/solana/pools/reserve_accounts.rs	source	unreviewed	Pending review
-src/chains/solana/pools/selection.rs	source	unreviewed	Pending review
+src/chains/solana/pools/selection.rs	source	reviewed	pool_selection.py keeps one market-data incumbent per mint. Reference gates price publishing on analysis and releases replaced pool resources; compare that lifecycle in onchain_stream.py.
 src/chains/solana/pools/service.rs	source	unreviewed	Pending review
 src/chains/solana/pools/types.rs	source	unreviewed	Pending review
 src/chains/solana/rent.rs	source	unreviewed	Pending review
