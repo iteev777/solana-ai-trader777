@@ -1860,6 +1860,7 @@ def _service_manager_health():
     import copy_trade
     import pool_registry
     import telegram_alerts
+    import rpc_transport
     from service_manager import ServiceManager, ServiceSpec, set_global_service_manager
 
     def dashboard_health():
@@ -1908,6 +1909,13 @@ def _service_manager_health():
         return {
             "status": "healthy" if status.get("worker_running") else "unhealthy",
             "message": None if status.get("worker_running") else "Telegram alert worker is not running",
+        }
+
+    def rpc_transport_health():
+        status = rpc_transport.get_rpc_status()
+        return {
+            "status": "healthy" if status.get("configured") else "unhealthy",
+            "message": None if status.get("configured") else "No secure read-only RPC endpoint configured",
         }
 
     def start_sniper():
@@ -1965,6 +1973,16 @@ def _service_manager_health():
         priority=40,
         essential=False,
         enabled=lambda: bool(telegram_alerts.get_telegram_status().get("configured")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="rpc_transport",
+        start=lambda: rpc_transport.get_rpc_status(),
+        stop=lambda _handle: rpc_transport.shutdown_rpc_sidecars(timeout=1.0),
+        health=rpc_transport_health,
+        priority=10,
+        essential=False,
+        enabled=lambda: bool(rpc_transport.get_rpc_status().get("configured")),
         stops_alone=True,
     ))
     set_global_service_manager(service_manager)
