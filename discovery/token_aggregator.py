@@ -10,7 +10,7 @@ from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
-from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coingecko, scan_defillama
+from discovery.screenerbot_sources import (\n    scan_rugcheck_new, scan_rugcheck_recent, scan_rugcheck_trending,\n    scan_rugcheck_verified, scan_jupiter, scan_coingecko, scan_defillama,\n)
 import database
 
 def _env_enabled(name, default=True):
@@ -36,13 +36,30 @@ def _dexscreener_scanners_from_env():
     ]
 
 
+def _rugcheck_scanners_from_env():
+    """Mirror ScreenerBot's independently configurable RugCheck stats feeds."""
+    if not _env_enabled("TROJAN_RUGCHECK_ENABLED", True):
+        return []
+    configured = [
+        ("TROJAN_RUGCHECK_NEW_ENABLED", "rugcheck_new", scan_rugcheck_new),
+        ("TROJAN_RUGCHECK_RECENT_ENABLED", "rugcheck_recent", scan_rugcheck_recent),
+        ("TROJAN_RUGCHECK_TRENDING_ENABLED", "rugcheck_trending", scan_rugcheck_trending),
+        ("TROJAN_RUGCHECK_VERIFIED_ENABLED", "rugcheck_verified", scan_rugcheck_verified),
+    ]
+    return [
+        (label, scanner)
+        for env_name, label, scanner in configured
+        if _env_enabled(env_name, True)
+    ]
+
+
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
     ("pumpfun", scan_pumpfun),
     ("birdeye", scan_birdeye),
     *_dexscreener_scanners_from_env(),
-    ("rugcheck", scan_rugcheck),
+    *_rugcheck_scanners_from_env(),
     ("jupiter", scan_jupiter),
     ("coingecko", scan_coingecko),
     ("defillama", scan_defillama),
