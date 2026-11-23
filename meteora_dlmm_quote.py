@@ -1,7 +1,7 @@
 """Read-only exact-input quotes for Meteora DLMM bin pools.
 
-This adapter walks at most three consecutive bin arrays in the requested
-direction. It models market-making bin liquidity and dynamic fees, but not
+This adapter walks a bounded set of consecutive bin arrays in the requested
+direction. Bitmap-extension traversal beyond the configured pool range remains unsupported. It models market-making bin liquidity and dynamic fees, but not
 limit-order fills or Token-2022 transfer hooks; unsupported account modes fail
 closed rather than assuming extra output.
 """
