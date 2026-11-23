@@ -1,6 +1,7 @@
 """Concurrent multi-source Solana token discovery and source health telemetry."""
 import time
 import math
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -204,16 +205,33 @@ def _merge_candidate(candidate, token):
             candidate[key] = _merge_value(candidate[key], value)
 
 
+# Match ScreenerBot's chain-adapter validation for Solana discovery:
+# base58 account shape, followed by exclusion of native/quote assets.
+BASE58_MINT_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+SOLANA_NON_DISCOVERY_ASSETS = {
+    "So11111111111111111111111111111111111111112",  # WSOL / native SOL
+    "11111111111111111111111111111111",             # System Program alias
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", # USDT
+}
+
+
 def normalize_token(token):
+    """Return only valid, non-quote Solana token mints, like ScreenerBot's adapter."""
     if not isinstance(token, dict):
         return None
     address = token.get("tokenAddress")
     chain = token.get("chainId")
-    if not isinstance(address, str) or not address.strip():
+    if not isinstance(address, str) or not isinstance(chain, str):
         return None
-    if not isinstance(chain, str) or chain.lower().strip() != "solana":
+    address = address.strip()
+    if chain.lower().strip() != "solana":
         return None
-    return address.strip()
+    if not BASE58_MINT_RE.fullmatch(address):
+        return None
+    if address in SOLANA_NON_DISCOVERY_ASSETS:
+        return None
+    return address
 
 
 def get_discovery_status():
