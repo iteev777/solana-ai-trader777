@@ -39,8 +39,17 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build persistent Rust RPC sidecar
+        run: cargo build --release --manifest-path benchmarks/rust_rpc/Cargo.toml --bin rpc_sidecar
+
       - name: Prepare common pool workload and measure Trojan
         run: python benchmarks/pool_rpc_parity.py
+
+      - name: Measure Trojan through the Rust sidecar
+        env:
+          TROJAN_RUST_RPC_BIN: benchmarks/rust_rpc/target/release/rpc_sidecar
+          SOLANA_RPC_MIN_INTERVAL: "0.0"
+        run: python benchmarks/rust_rpc/sidecar_smoke.py
 
       - name: Measure ScreenerBot-compatible Rust RPC fetcher
         run: cargo run --release --manifest-path benchmarks/rust_rpc/Cargo.toml -- benchmark_accounts.json > rust-rpc-stdout.json
@@ -55,4 +64,5 @@ jobs:
             rust-rpc-benchmark.json
             benchmark_accounts.json
             rust-rpc-stdout.json
+            rust-sidecar-benchmark.json
           if-no-files-found: warn
