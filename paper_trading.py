@@ -44,6 +44,15 @@ _lock = threading.RLock()
 
 
 
+def _force_stop_active():
+    try:
+        import trading_control
+        return trading_control.is_force_stopped()
+    except Exception:
+        # Safety control failure must never silently permit paper execution.
+        return True
+
+
 def _positive_finite(value):
     """Return a finite positive float, or None for unsafe market input."""
     try:
@@ -112,6 +121,9 @@ def get_positions():
 # ==========================================
 
 def open_position(
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
     token_address,
     entry_price,
     strategy="main",
@@ -249,6 +261,9 @@ def open_position(
 # ==========================================
 
 def close_position(
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
     token_address,
     current_price,
     reason="MANUAL EXIT"
@@ -310,6 +325,9 @@ def close_position(
 # ==========================================
 
 def emergency_sell(token_address, current_price):
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
     return close_position(
         token_address,
         current_price,
@@ -322,6 +340,9 @@ def emergency_sell(token_address, current_price):
 # ==========================================
 
 def update_position(token_address, current_price):
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
 
     current_price = _positive_finite(current_price)
     if current_price is None:
