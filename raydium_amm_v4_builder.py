@@ -126,8 +126,9 @@ def build_raydium_amm_v4_swap(quote, wallet, user_input_token_account,
         raise ValueError("AMM v4 vault is not initialized or is frozen")
     chain._token_amount(vault_base, current["base_mint"])
     chain._token_amount(vault_quote, current["quote_mint"])
-    if chain._mint_decimals(mint_base) != current.get("base_decimals") or chain._mint_decimals(mint_quote) != current.get("quote_decimals"):
-        raise ValueError("AMM v4 mint decimals changed or do not match pool state")
+    if (chain._mint_decimals(mint_base) != fresh.get("base_decimals")
+            or chain._mint_decimals(mint_quote) != fresh.get("quote_decimals")):
+        raise ValueError("AMM v4 mint decimals changed since the fresh quote")
 
     input_balance = _decode_user_token_account(user_input, wallet, input_mint, "Input token account")
     _decode_user_token_account(user_output, wallet, output_mint, "Output token account")
