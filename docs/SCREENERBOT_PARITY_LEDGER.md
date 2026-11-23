@@ -170,8 +170,9 @@ The repositories are not considered parity-complete until every row and every fi
 
 - `strategy_rules.py`: aligned rule-tree evaluation with the reference's bounded evaluation behavior by adding a configurable 1–1000 ms deadline (default 50 ms) and short-circuiting AND on decisive false and OR on decisive true. Timeout is a distinct fail-closed result and propagates through nested groups; unknown data remains three-valued and cannot be inverted into approval by NOT.
 - `strategy_catalog.py`: exposes evaluation timeout, maximum rule depth (4), maximum group children (30) and fail-closed missing-data semantics to dashboard consumers.
-- Focused tests added for AND/OR short-circuit behavior, expired evaluation deadline and catalog policy exposure. Commit headlines: `feat(strategy): bound rule evaluation and short-circuit groups`; `test(strategy): cover rule timeout and short-circuit semantics`; `feat(strategy): expose bounded evaluation policy in catalog`; `test(strategy): verify evaluation limits are exposed in catalog`.
+- Focused tests added for AND/OR short-circuit behavior, expired evaluation deadline and catalog policy exposure. A further comparison found that selecting a non-1m condition timeframe must also replace the top-level metric aliases; `strategy_conditions.py` now uses the selected frame consistently. Commit headlines: `feat(strategy): bound rule evaluation and short-circuit groups`; `test(strategy): cover rule timeout and short-circuit semantics`; `feat(strategy): expose bounded evaluation policy in catalog`; `test(strategy): verify evaluation limits are exposed in catalog`; `fix(strategy): read selected timeframe metrics consistently`.
 - Remaining strategy-engine differences: no bounded concurrent evaluation semaphore, no context/rules-fingerprint result cache, and no explicit switched-off node tree/outcome payload. The strategy engine remains partial.
+- Latest validation after the strategy changes: 952 unit tests passed; full validation succeeded on `d7f271ddd417e0925ad4e52a5c7fd28d706b4dba` (runs `45250140083` and `45250156565`).
 
 
 ## Strategy timeframe selection implementation (2026-11-23)
