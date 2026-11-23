@@ -378,7 +378,9 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Meteora DLMM reserve vaults are empty")
 
     clock_data = clock_acc.get("data", b"")
-    if len(clock_data) < 40:
+    if clock_acc.get("owner") != "Sysvar1111111111111111111111111111111111":
+        raise ValueError("Meteora DLMM Clock sysvar owner is invalid")
+    if not isinstance(clock_data, (bytes, bytearray)) or len(clock_data) < 40:
         raise ValueError("Meteora DLMM Clock sysvar is truncated")
     now = _i64(clock_data, 32)
     _update_references(state, now)
