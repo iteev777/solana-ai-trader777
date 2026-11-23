@@ -1,6 +1,14 @@
 name: Trojan V2 tests
 
 on:
+  push:
+    branches:
+      - feature/dex-jupiter-noncustodial-execution-current
+    paths:
+      - "**.py"
+      - "tests/**"
+      - "requirements.txt"
+      - ".github/workflows/tests.yml"
   workflow_dispatch:
 
 jobs:
