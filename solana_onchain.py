@@ -955,6 +955,145 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
 
 
 
+def quote_moonit_pool(pool_address, input_mint, amount_in,
+                     slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only Moonit ConstantProductV1 quote from confirmed curve/config state."""
+    initial_token_reserves = 1_073_000_000_000_000_000
+    initial_collateral_reserves = 30_000_000_000
+    constant_product = initial_token_reserves * initial_collateral_reserves
+    config_address = "36Eru7v11oU5Pfrojyn5oY3nETA1a1iqsw2WUu6afkM9"
+    config_discriminator = bytes([189, 255, 97, 70, 186, 189, 24, 102])
+
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("Moonit curve address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+        raise ValueError("Maximum snapshot age must be positive and finite")
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["moonit_amm"]:
+        raise ValueError("Curve account is not owned by the Moonit program")
+    first = _decode_pool("moonit_amm", discovered["data"])
+    if first.get("curve_type") != 1:
+        raise ValueError("Moonit direct quotes support only verified ConstantProductV1 curves")
+    if first.get("collateral_currency") != 0:
+        raise ValueError("Moonit direct quotes support only native-SOL collateral curves")
+    if first.get("curve_amount", 0) <= 0 or first.get("curve_amount", 0) > first.get("total_supply", 0):
+        raise ValueError("Moonit curve amount is empty or exceeds total supply")
+    if first.get("total_supply", 0) >= initial_token_reserves:
+        raise ValueError("Moonit total supply leaves no headroom under virtual token reserves")
+    if first.get("token_decimals") != 9:
+        raise ValueError("Moonit ConstantProductV1 direct quotes require the verified 9-decimal token format")
+
+    keys = [pool_address, first["base_mint"], config_address]
+    snapshot_started = time.time()
+    accounts, slot = _multiple_accounts_with_context(keys)
+    if any(item is None for item in accounts):
+        raise ValueError("Moonit snapshot is missing a required account")
+    pool_acc, mint_acc, config_acc = accounts
+    if pool_acc.get("owner") != PROGRAMS["moonit_amm"]:
+        raise ValueError("Moonit curve owner changed during snapshot")
+    decoded = _decode_pool("moonit_amm", pool_acc["data"])
+    for field in ("base_mint", "total_supply", "curve_amount",
+                  "curve_type", "collateral_currency", "token_decimals"):
+        if decoded.get(field) != first.get(field):
+            raise ValueError("Moonit curve state changed during snapshot")
+    if mint_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("Moonit direct quotes require a legacy SPL Token mint")
+    config_raw = config_acc.get("data", b"")
+    if (config_acc.get("owner") != PROGRAMS["moonit_amm"]
+            or len(config_raw) < 170
+            or config_raw[:8] != config_discriminator):
+        raise ValueError("Moonit ConfigAccount owner, discriminator or layout is invalid")
+    fee_bps = int.from_bytes(config_raw[168:170], "little")
+    if fee_bps < 0 or fee_bps > 10_000:
+        raise ValueError("Moonit fee configuration is invalid")
+    decimals = _mint_decimals(mint_acc)
+    if decimals != decoded["token_decimals"]:
+        raise ValueError("Moonit curve decimals do not match the mint account")
+
+    curve_position = decoded["total_supply"] - decoded["curve_amount"]
+    virtual_token = initial_token_reserves - curve_position
+    if virtual_token <= 0:
+        raise ValueError("Moonit virtual token reserve is empty")
+    virtual_collateral = constant_product // virtual_token
+    if virtual_collateral <= 0:
+        raise ValueError("Moonit virtual collateral reserve is empty")
+
+    token_mint = decoded["base_mint"]
+    if input_mint == SOL_MINT:
+        output_mint = token_mint
+        fee = (amount_in * fee_bps) // 10_000
+        net_collateral = amount_in - fee
+        new_collateral = virtual_collateral + net_collateral
+        if new_collateral <= 0:
+            raise ValueError("Moonit buy collateral reserve is invalid")
+        remaining_virtual_token = (constant_product + new_collateral - 1) // new_collateral
+        gross_output = virtual_token - remaining_virtual_token
+        output_amount = min(gross_output, decoded["curve_amount"])
+        reserve_in, reserve_out = virtual_collateral, virtual_token
+        fee_in_input = fee
+    elif input_mint == token_mint:
+        output_mint = SOL_MINT
+        new_token = virtual_token + amount_in
+        if new_token <= 0:
+            raise ValueError("Moonit sell token reserve is invalid")
+        remaining_virtual_collateral = (constant_product + new_token - 1) // new_token
+        gross_output = virtual_collateral - remaining_virtual_collateral
+        fee = (gross_output * fee_bps) // 10_000
+        output_amount = gross_output - fee
+        reserve_in, reserve_out = virtual_token, virtual_collateral
+        fee_in_input = 0
+    else:
+        raise ValueError("Input mint does not belong to this Moonit SOL curve")
+
+    if output_amount <= 0 or output_amount >= reserve_out or output_amount > 2**64 - 1:
+        raise ValueError("Moonit quote rounds to zero, exceeds u64, or exceeds curve reserves")
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    net_for_impact = max(1, amount_in - fee_in_input)
+    spot_price = reserve_out / reserve_in
+    execution_price = output_amount / net_for_impact
+    impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Moonit snapshot is stale")
+    if not math.isfinite(impact):
+        raise ValueError("Moonit price impact is invalid")
+
+    return {
+        "provider": "moonit_direct",
+        "protocol": "moonit_amm",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "fee_bps": fee_bps,
+        "fee_amount": fee,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "price_impact_percent": round(impact, 6),
+        "token_decimals": decimals,
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
+
+
+
+
+
+
+
+
+
 def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
                               slippage_bps=100, max_snapshot_age=5.0):
     """Read-only Pump bonding-curve quote for SOL-paired legacy SPL mints."""
