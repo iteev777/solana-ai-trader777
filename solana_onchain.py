@@ -565,15 +565,33 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
         raise ValueError("PumpSwap fee config is not owned by the Pump Fees program")
     fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
-    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("PumpSwap Token-2022 mints are refused until transfer-fee and hook behavior is verified")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM or vault_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("PumpSwap vaults must use the legacy SPL Token program")
-
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("PumpSwap mint uses an unsupported token program")
+    base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_base_acc.get("data", b""))
+        if token_program_base == TOKEN_2022_PROGRAM else None
+    )
+    quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc.get("data", b""))
+        if token_program_quote == TOKEN_2022_PROGRAM else None
+    )
+    if (vault_base_acc.get("owner") != token_program_base
+            or vault_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("PumpSwap vault token program does not match its mint")
+    reserve_base = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], pool_address,
+        "PumpSwap base vault",
+    )
+    raw_quote_reserve = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], pool_address,
+        "PumpSwap quote vault",
+    )
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    reserve_base = _token_amount(vault_base_acc, decoded["base_mint"])
-    raw_quote_reserve = _token_amount(vault_quote_acc, decoded["quote_mint"])
     reserve_quote = raw_quote_reserve + decoded["virtual_quote_reserves"]
     if reserve_base <= 0 or reserve_quote <= 0:
         raise ValueError("PumpSwap effective pool reserves are empty or invalid")
@@ -595,8 +613,20 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if total_fee_bps >= 10_000:
         raise ValueError("PumpSwap fee configuration is not tradable")
 
+    input_transfer_config = (
+        quote_token2022 if is_buy else base_token2022
+    )
+    output_transfer_config = (
+        base_token2022 if is_buy else quote_token2022
+    )
+    received_by_pool = token2022.conservative_net_amount(
+        (input_transfer_config or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire PumpSwap input")
+
     if is_buy:
-        net_input, _ = _pumpswap_spendable_quote(amount_in, fee_rates)
+        net_input, _ = _pumpswap_spendable_quote(received_by_pool, fee_rates)
         # The deployed buy path uses one raw unit less than the mathematical
         # maximum affordable amount. Recompute each separately rounded fee
         # after that adjustment so the quote never overstates token output.
@@ -605,30 +635,35 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         total_fee = sum(fee_amounts)
         if net_input <= 0:
             raise ValueError("PumpSwap quote input is consumed by fees")
-        output_amount = (reserve_base * net_input) // (reserve_quote + net_input)
+        gross_output_amount = (reserve_base * net_input) // (reserve_quote + net_input)
+        output_amount = token2022.conservative_net_amount(
+            (output_transfer_config or {}).get("transfer_fee_config"), gross_output_amount
+        )
         impact_basis_input = net_input
         spot_price = reserve_base / reserve_quote
         output_mint = decoded["base_mint"]
-        unspent_input = amount_in - net_input - total_fee
+        unspent_input = received_by_pool - net_input - total_fee
     else:
         gross_quote_out = min(
-            (reserve_quote * amount_in) // (reserve_base + amount_in),
+            (reserve_quote * received_by_pool) // (reserve_base + received_by_pool),
             raw_quote_reserve,
         )
         fee_amounts = [_fee_amount_ceil(gross_quote_out, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
-        output_amount = gross_quote_out - total_fee
-        impact_basis_input = amount_in
+        gross_output_amount = gross_quote_out - total_fee
+        output_amount = token2022.conservative_net_amount(
+            (output_transfer_config or {}).get("transfer_fee_config"), gross_output_amount
+        )
+        impact_basis_input = received_by_pool
         impact_output_amount = gross_quote_out
         spot_price = reserve_quote / reserve_base
         output_mint = decoded["quote_mint"]
-        unspent_input = 0
+        unspent_input = amount_in - received_by_pool
 
     if is_buy:
         impact_output_amount = output_amount
 
     output_reserve = reserve_base if is_buy else raw_quote_reserve
-    gross_output_amount = output_amount if is_buy else gross_quote_out
     if output_amount <= 0 or output_amount >= output_reserve:
         raise ValueError("PumpSwap quote rounds to zero or exceeds available pool reserves")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
@@ -646,6 +681,14 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint, "output_mint": output_mint, "input_amount": amount_in,
         "output_amount_gross": gross_output_amount, "out_amount": output_amount,
         "minimum_out_amount": minimum_out, "unspent_input_amount": unspent_input,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
+        "token_program_input": token_program_quote if is_buy else token_program_base,
+        "token_program_output": token_program_base if is_buy else token_program_quote,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < gross_output_amount,
+        "token2022_output_gross_amount": gross_output_amount,
         "fee_policy": "CONSERVATIVE_MAX_CONFIGURED_ONCHAIN_SCHEDULE",
         "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
