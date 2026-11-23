@@ -434,3 +434,6 @@ The read-only DAMM v2 adapter models its single-band Q64.64 constant-liquidity c
 
 
 Orca Whirlpool direct quotes now require a full pool account snapshot, a classic static fee tier (`fee_tier_index == tick_spacing`), and fee rates within the protocol's documented caps. The quote subtracts `protocol_fee_owed_a` and `protocol_fee_owed_b` from vault balances before checking spendable reserves; owed protocol fees are not treated as swap liquidity. Adaptive-fee oracles, dynamic tick arrays and Token-2022 mints remain fail-closed.
+
+
+Meteora DAMM v2 quotes also verify the pool's activation point against the confirmed snapshot slot or that slot's block time. `OnlyB` and `Compounding` fee modes both collect the trade fee in token B; a B-to-A swap therefore deducts the fee from input B before curve math. Pools that have not activated or whose timestamp cannot be verified are rejected.
