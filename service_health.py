@@ -2,10 +2,31 @@
 import os
 import time
 import threading
+import math
 
 _lock = threading.Lock()
 _heartbeats = {}
 _last_report = None
+
+def _heartbeat_check(name, beats, now, max_age_seconds=30):
+    """A heartbeat is healthy only when finite, present, non-future and fresh."""
+    stamp = beats.get(name)
+    if isinstance(stamp, bool):
+        stamp = None
+    try:
+        stamp = float(stamp) if stamp is not None else None
+    except (TypeError, ValueError, OverflowError):
+        stamp = None
+    if stamp is None or not math.isfinite(stamp):
+        return {"name": name, "ok": False, "age_seconds": None, "required": True}
+    age = now - stamp
+    return {
+        "name": name,
+        "ok": 0.0 <= age < max_age_seconds,
+        "age_seconds": round(age, 1),
+        "required": True,
+    }
+
 
 
 def heartbeat(service):
@@ -19,12 +40,7 @@ def get_readiness_report():
     with _lock:
         beats = dict(_heartbeats)
     for name in ("main_loop", "position_monitor"):
-        age = now - beats.get(name, 0) if beats.get(name) else None
-        checks.append({
-            "name": name, "ok": age is not None and age < 30,
-            "age_seconds": round(age, 1) if age is not None else None,
-            "required": True
-        })
+        checks.append(_heartbeat_check(name, beats, now))
     try:
         import database
         db = database.get_database_health()
