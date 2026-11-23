@@ -271,14 +271,35 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         wallet = chain._b58encode(bytes([31]) * 32)
         user_in = chain._b58encode(bytes([32]) * 32)
         user_out = chain._b58encode(bytes([33]) * 32)
-        mint1 = bytearray(82)
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        fee_config = bytearray(108)
+        fee_config[80:88] = (10_000).to_bytes(8, "little")
+        fee_config[88:90] = (100).to_bytes(2, "little")
+        fee_config[98:106] = (10_000).to_bytes(8, "little")
+        fee_config[106:108] = (100).to_bytes(2, "little")
+        mint1 = bytearray(166)
         mint1[44] = 6
         mint1[45] = 1
+        mint1[165] = MINT_ACCOUNT_TYPE
+        mint1.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + fee_config)
         mint1_account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint1)}
-        vault1 = self.token_account(self.mint1, 10**12, self.pool)
-        vault1["owner"] = chain.TOKEN_2022_PROGRAM
-        input_account = self.token_account(self.mint1, 10**9, wallet)
-        input_account["owner"] = chain.TOKEN_2022_PROGRAM
+
+        def token2022_account(mint, owner, amount, immutable_owner=False):
+            raw = bytearray(182 if immutable_owner else 178)
+            raw[:32] = chain._b58decode(mint)
+            raw[32:64] = chain._b58decode(owner)
+            raw[64:72] = amount.to_bytes(8, "little")
+            raw[108] = 1
+            raw[165] = 2  # Token account type
+            raw[166:168] = (2).to_bytes(2, "little")  # TransferFeeAmount
+            raw[168:170] = (8).to_bytes(2, "little")
+            if immutable_owner:
+                raw[178:180] = (7).to_bytes(2, "little")
+                raw[180:182] = (0).to_bytes(2, "little")
+            return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+
+        vault1 = token2022_account(self.mint1, self.pool, 10**12)
+        input_account = token2022_account(self.mint1, wallet, 10**9, immutable_owner=True)
         output_account = self.token_account(self.mint0, 0, wallet)
         observation = chain._b58encode(bytes([34]) * 32)
         observation_raw = bytearray(40)
