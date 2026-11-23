@@ -299,10 +299,10 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not an initialized legacy SPL Token mint"):
             self.build(account_map=accounts)
 
-    def test_rejects_token2022_mint_and_curve_balance_mismatch(self):
+    def test_rejects_mint_owner_mismatch_and_curve_balance_mismatch(self):
         accounts = dict(self.account_map)
         accounts[self.mint] = dict(accounts[self.mint], owner=chain.TOKEN_2022_PROGRAM)
-        with self.assertRaisesRegex(ValueError, "legacy SPL Token"):
+        with self.assertRaisesRegex(ValueError, "mint owner changed"):
             self.build(account_map=accounts)
         accounts = dict(self.account_map)
         accounts[self.curve_ata] = _pump_token_account(self.mint, self.pool, 499_999)
