@@ -100,6 +100,13 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
             [builder.BONDING_CURVE_V2_SEED, chain._b58decode(self.mint)],
             builder.PROGRAM_ID,
         )[0]
+        self.creator_vault = chain._find_program_address(
+            [builder.CREATOR_VAULT_SEED, chain._b58decode(self.creator)],
+            builder.PROGRAM_ID,
+        )[0]
+        self.event_authority = chain._find_program_address(
+            [builder.EVENT_AUTHORITY_SEED], builder.PROGRAM_ID
+        )[0]
         curve = bytearray(162)
         curve[:8] = bytes([23, 183, 248, 55, 96, 216, 172, 96])
         curve[8:16] = (1_000_000).to_bytes(8, "little")
@@ -219,7 +226,7 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(accounts[5], self.user_ata)
         self.assertEqual(accounts[8], self.creator_vault)
         self.assertEqual(accounts[9:14], [
-            chain.TOKEN_PROGRAM, builder.EVENT_AUTHORITY_ADDRESS if hasattr(builder, "EVENT_AUTHORITY_ADDRESS") else accounts[10],
+            chain.TOKEN_PROGRAM, self.event_authority,
             builder.PROGRAM_ID, self.fee_config_address, builder.FEE_PROGRAM_ID,
         ])
         self.assertEqual(accounts[14:], [self.curve_v2, self.buyback_one, self.buyback_two])
