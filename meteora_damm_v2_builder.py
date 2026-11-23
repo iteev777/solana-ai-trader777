@@ -108,16 +108,19 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
     first = damm_quote._decode_pool(discovered.get("data"), chain)
     if first["pool_status"] != 0 or first["liquidity"] <= 0:
         raise ValueError("Meteora DAMM pool is disabled or has no active liquidity")
-    for field in ("sqrt_price", "liquidity", "fee_version", "pool_status", "collect_fee_mode"):
-        quote_field = {
-            "sqrt_price": "sqrt_price_before_x64",
-            "liquidity": "liquidity",
-            "fee_version": "fee_version",
-            "pool_status": "pool_status",
-            "collect_fee_mode": "collect_fee_mode",
-        }[field]
-        if quote.get(quote_field) != fresh.get(quote_field):
-            raise ValueError("Meteora DAMM state changed since the supplied quote")
+    for field in ("sqrt_price_before_x64", "liquidity", "fee_version",
+                  "pool_status", "collect_fee_mode", "fee_rate_numerator",
+                  "fee_cap_numerator"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("Meteora DAMM state or fee schedule changed since the supplied quote")
+    if (first["sqrt_price"] != fresh.get("sqrt_price_before_x64")
+            or first["liquidity"] != fresh.get("liquidity")
+            or first["fee_version"] != fresh.get("fee_version")
+            or first["pool_status"] != fresh.get("pool_status")
+            or first["collect_fee_mode"] != fresh.get("collect_fee_mode")
+            or first["fee_numerator"] != fresh.get("fee_rate_numerator")
+            or first["fee_cap"] != fresh.get("fee_cap_numerator")):
+        raise ValueError("Meteora DAMM pool state changed after the fresh quote")
 
     pool_authority = POOL_AUTHORITY
     event_authority, _ = chain._find_program_address(
