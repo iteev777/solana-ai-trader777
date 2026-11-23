@@ -121,7 +121,7 @@ def get_position_limit(strategy):
 # TRADE APPROVAL WITH REASON
 # ==========================================
 
-def _check_history_guards(token_address, mode):
+def _check_history_guards(token_address, mode, strategy):
     """Fail closed on rolling realized-loss and per-token re-entry guards.
 
     The portfolio-wide loss guard must run even when a caller has no mint
@@ -149,7 +149,7 @@ def _check_history_guards(token_address, mode):
 
     if REENTRY_COOLDOWN_MINUTES > 0:
         try:
-            last_exit = database.get_last_exit_timestamp(token_address, mode)
+            last_exit = database.get_last_exit_timestamp(token_address, mode, strategy=strategy)
         except Exception:
             return False, "RE-ENTRY COOLDOWN HISTORY UNAVAILABLE"
         if last_exit:
@@ -243,7 +243,7 @@ def check_trade_risk(
     if daily_loss >= MAX_DAILY_LOSS:
         return False, "DAILY LOSS LIMIT REACHED"
 
-    history_allowed, history_reason = _check_history_guards(token_address, mode)
+    history_allowed, history_reason = _check_history_guards(token_address, mode, strategy)
     if not history_allowed:
         return False, history_reason
 
