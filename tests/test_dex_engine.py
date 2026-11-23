@@ -172,6 +172,9 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["available"])
         self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_required"])
         self.assertFalse(status["native_transaction_builders"]["raydium_cpmm"]["live_execution"])
+        self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["available"])
+        self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["rpc_simulation_required"])
+        self.assertFalse(status["native_transaction_builders"]["pumpswap_v2"]["live_execution"])
         self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
     @patch("dex_engine.build_routes")
