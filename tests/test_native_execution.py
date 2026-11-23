@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import native_execution as native
+import dex_capabilities as capabilities
 import raydium_cpmm_builder as builder
 import solana_onchain as chain
 
@@ -62,6 +63,17 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertFalse(status["server_signing"])
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
             self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_every_registered_native_builder_has_an_approval_protocol(self):
+        supported = set(native.get_native_execution_status()["supported_protocols"])
+        for protocol in capabilities.NATIVE_BUILDERS:
+            with self.subTest(protocol=protocol):
+                self.assertIn(protocol, supported)
+                approval = native.register_native_approval(
+                    self.unsigned, protocol, 200,
+                    {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+                )
+                self.assertTrue(approval["request_id"])
 
     def test_pumpswap_v2_approval_matches_registered_builder_protocol(self):
         approval = native.register_native_approval(
