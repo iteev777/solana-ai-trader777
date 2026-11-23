@@ -354,3 +354,7 @@ Trailing protection can use peak-profit tiers through `TROJAN_TRAILING_BANDS_JSO
 
 OHLCV analysis now uses SMA-seeded exponential moving averages, Wilder-smoothed RSI(14) and ATR(14), and a conventionally aligned MACD(12,26,9). Malformed candles are excluded, MACD stays explicitly unavailable until its full signal history exists, and the indicator payload reports the calculation methods used. This avoids treating short or incomplete history as a fabricated technical signal.
 
+
+Moonit direct quotes are read-only and limited to the verified ConstantProductV1 native-SOL curve. The adapter validates the ConfigAccount discriminator and fee, uses conservative ceiling arithmetic for remaining virtual reserves, and caps buy output by the curve's actual remaining token amount. Unsupported curve/collateral modes and Token-2022 mints remain refused.
+
+
