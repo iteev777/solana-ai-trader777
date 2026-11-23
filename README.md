@@ -344,3 +344,8 @@ RugCheck report retrieval coalesces simultaneous requests for the same mint into
 ## Paper position input safety
 
 Paper entry and exit paths reject non-finite or non-positive prices before reaching the database. Persisted trailing peaks are normalized before use, and DCA/exit policy configuration is fully parsed before a monitoring cycle mutates position state. Invalid policy configuration returns a controlled wait/error result rather than interrupting the position monitor. Reserved engine, strategy and adaptive-sizing metadata cannot be overwritten by caller metadata.
+
+
+## Advanced paper exit protection
+
+Trailing protection can use peak-profit tiers through `TROJAN_TRAILING_BANDS_JSON`, for example `[{"activation_pct":10,"distance_pct":5},{"activation_pct":20,"distance_pct":3}]`. Thresholds must increase and trailing distances may only stay equal or tighten as peak profit rises. The selected tier is based on the persisted peak since entry; trailing-profit exits only fire while the current mark remains above entry. An optional time-loss rule uses `TROJAN_TIME_LOSS_EXIT_SECONDS` (0 disables it) and `TROJAN_TIME_LOSS_THRESHOLD_PCT` (default -10%). Existing fixed stop, take-profit, break-even, stagnation and max-hold rules remain available.

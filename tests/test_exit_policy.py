@@ -87,5 +87,69 @@ class ExitPolicyTests(unittest.TestCase):
                 exit_policy.get_exit_policy()
 
 
+    def test_trailing_stop_never_converts_a_losing_retracement_into_profit_exit(self):
+        self.assertIsNone(
+            exit_policy.evaluate_exit(self.position, 96.0, now=1100, policy=self.policy)
+        )
+
+    def test_trailing_band_uses_peak_profit_tier_distance(self):
+        policy = {
+            **self.policy,
+            "take_profit_pct": 100.0,
+            "trailing_bands": [
+                {"activation_pct": 10.0, "distance_pct": 5.0},
+                {"activation_pct": 20.0, "distance_pct": 8.0},
+            ],
+        }
+        position = {**self.position, "metadata": {"peak_price": 130.0}}
+        # At +30% peak, the 8% band is active (stop=119.6), not the 3.5% base.
+        self.assertIsNone(
+            exit_policy.evaluate_exit(position, 122.0, now=1100, policy=policy)
+        )
+        self.assertEqual(
+            exit_policy.evaluate_exit(position, 119.0, now=1100, policy=policy),
+            "TRAILING PROFIT EXIT",
+        )
+
+    def test_time_loss_exit_requires_duration_and_loss_threshold(self):
+        policy = {
+            **self.policy,
+            "stop_loss_pct": 20.0,
+            "time_loss_seconds": 500,
+            "time_loss_threshold_pct": -5.0,
+            "max_hold_seconds": 0,
+        }
+        self.assertEqual(
+            exit_policy.evaluate_exit(self.position, 94.0, now=1600, policy=policy),
+            "TIME LOSS EXIT",
+        )
+        self.assertIsNone(
+            exit_policy.evaluate_exit(self.position, 97.0, now=1600, policy=policy)
+        )
+
+    def test_trailing_band_environment_requires_ordered_tightening_bands(self):
+        from unittest.mock import patch
+        import json
+        raw = json.dumps([
+            {"activation_pct": 10, "distance_pct": 5},
+            {"activation_pct": 20, "distance_pct": 3},
+        ])
+        with patch.dict("os.environ", {"TROJAN_TRAILING_BANDS_JSON": raw}):
+            policy = exit_policy.get_exit_policy()
+        self.assertEqual(policy["trailing_bands"][1]["distance_pct"], 3.0)
+
+    def test_trailing_band_environment_rejects_loose_higher_profit_band(self):
+        from unittest.mock import patch
+        import json
+        raw = json.dumps([
+            {"activation_pct": 10, "distance_pct": 3},
+            {"activation_pct": 20, "distance_pct": 5},
+        ])
+        with patch.dict("os.environ", {"TROJAN_TRAILING_BANDS_JSON": raw}):
+            with self.assertRaises(ValueError):
+                exit_policy.get_exit_policy()
+
+
+
 if __name__ == "__main__":
     unittest.main()

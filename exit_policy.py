@@ -5,6 +5,7 @@ freshly supplied marks against persisted position state and returns a reason;
 the caller remains responsible for recording the close atomically.
 """
 import math
+import json
 import os
 import time
 from datetime import datetime
@@ -24,6 +25,45 @@ def _setting(name, default, minimum=0.0, maximum=None):
     return value
 
 
+def _trailing_bands():
+    """Return ordered peak-profit thresholds with progressively tighter trails."""
+    raw = os.getenv("TROJAN_TRAILING_BANDS_JSON", "").strip()
+    if not raw:
+        return []
+    try:
+        rows = json.loads(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError("TROJAN_TRAILING_BANDS_JSON must contain valid JSON") from error
+    if not isinstance(rows, list) or len(rows) > 10:
+        raise ValueError("TROJAN_TRAILING_BANDS_JSON must be a list of at most 10 bands")
+    result = []
+    previous_activation = -1.0
+    previous_distance = 95.0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Trailing band must be an object")
+        activation = _setting_value(row.get("activation_pct"), "trailing activation", 0.0, 10000.0)
+        distance = _setting_value(row.get("distance_pct"), "trailing distance", 0.1, 95.0)
+        if activation <= previous_activation:
+            raise ValueError("Trailing band activations must be strictly increasing")
+        if distance > previous_distance:
+            raise ValueError("Trailing distance must stay equal or tighten at higher profit bands")
+        result.append({"activation_pct": activation, "distance_pct": distance})
+        previous_activation = activation
+        previous_distance = distance
+    return result
+
+
+def _setting_value(value, label, minimum, maximum):
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(label + " must be numeric") from error
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        raise ValueError(label + " is outside the allowed range")
+    return number
+
+
 def get_exit_policy():
     """Read bounded exit settings; defaults preserve Trojan's existing behavior."""
     return {
@@ -31,6 +71,9 @@ def get_exit_policy():
         "take_profit_pct": _setting("TROJAN_TAKE_PROFIT_PCT", 10.0, 0.1, 10000.0),
         "trailing_activation_pct": _setting("TROJAN_TRAILING_ACTIVATION_PCT", 4.0, 0.0, 10000.0),
         "trailing_distance_pct": _setting("TROJAN_TRAILING_DISTANCE_PCT", 3.5, 0.1, 95.0),
+        "trailing_bands": _trailing_bands(),
+        "time_loss_seconds": int(_setting("TROJAN_TIME_LOSS_EXIT_SECONDS", 0, 0, 31_536_000)),
+        "time_loss_threshold_pct": _setting("TROJAN_TIME_LOSS_THRESHOLD_PCT", -10.0, -95.0, 0.0),
         "max_hold_seconds": int(_setting("TROJAN_MAX_HOLD_SECONDS", 900, 0, 31_536_000)),
         "stagnation_seconds": int(_setting("TROJAN_STAGNATION_SECONDS", 0, 0, 31_536_000)),
         "stagnation_band_pct": _setting("TROJAN_STAGNATION_BAND_PCT", 1.5, 0.0, 100.0),
@@ -81,8 +124,15 @@ def evaluate_exit(position, current_price, now=None, policy=None):
         peak = entry
     peak_gain = peak / entry - 1.0
     activation = float(cfg["trailing_activation_pct"]) / 100.0
-    distance = float(cfg["trailing_distance_pct"]) / 100.0
-    if peak_gain >= activation and price <= peak * (1.0 - distance):
+    distance_pct = float(cfg["trailing_distance_pct"])
+    for band in cfg.get("trailing_bands", []) or []:
+        band_activation = float(band["activation_pct"])
+        if peak_gain * 100.0 >= band_activation:
+            distance_pct = float(band["distance_pct"])
+    distance = distance_pct / 100.0
+    # A trailing stop protects already-earned profit; it must not convert a
+    # retracement below entry into a trailing-profit exit.
+    if peak_gain >= activation and change > 0 and price <= peak * (1.0 - distance):
         return "TRAILING PROFIT EXIT"
 
     be_activation = float(cfg.get("break_even_activation_pct", 0.0)) / 100.0
@@ -99,6 +149,10 @@ def evaluate_exit(position, current_price, now=None, policy=None):
         held = max(0.0, clock - opened)
         stagnation_seconds = int(cfg.get("stagnation_seconds", 0))
         band = float(cfg.get("stagnation_band_pct", 1.5)) / 100.0
+        time_loss_seconds = int(cfg.get("time_loss_seconds", 0))
+        time_loss_threshold = float(cfg.get("time_loss_threshold_pct", -10.0)) / 100.0
+        if time_loss_seconds > 0 and held >= time_loss_seconds and change <= time_loss_threshold:
+            return "TIME LOSS EXIT"
         if stagnation_seconds > 0 and held >= stagnation_seconds and abs(change) <= band:
             return "STAGNATION EXIT"
         max_hold = int(cfg["max_hold_seconds"])
