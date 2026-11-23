@@ -339,3 +339,10 @@ The current adapter deliberately uses the highest total fee found across the on-
 ## RugCheck request resilience
 
 RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used cache, and measures cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 60 seconds, accepted range 0–3,600; set 0 to disable caching). Failed, rate-limited and invalid responses are never cached, and stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
+
+
+## Pump.fun legacy bonding-curve direct quote
+
+The direct quote router also supports legacy SOL-paired Pump.fun bonding curves. It reads the curve, Pump Global configuration, Pump Fees FeeConfig and token mint at one confirmed RPC slot. It selects the on-chain market-cap fee tier using the curve's virtual reserves and token supply, applies protocol/creator fee rounding, prices buys and sells against virtual reserves, and checks real token/SOL reserves before returning a quote.
+
+This adapter intentionally refuses completed curves, trades that would cross into synthetic migration, Token-2022 mints, mayhem/cashback/holder-reward modes, custom quote mints and custom creator-fee curves. Those require separate settlement or extension logic. It is read-only and never creates, signs or broadcasts a swap.
