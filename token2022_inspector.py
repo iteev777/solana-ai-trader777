@@ -72,6 +72,8 @@ class Token2022LayoutError(ValueError):
 
 def parse_tlv_extensions(raw, expected_account_type):
     """Parse Token-2022 TLV records with strict bounds/type/duplicate checks."""
+    if expected_account_type not in (MINT_ACCOUNT_TYPE, TOKEN_ACCOUNT_TYPE):
+        raise Token2022LayoutError("Expected Token-2022 account type is invalid")
     if not isinstance(raw, (bytes, bytearray)):
         raise Token2022LayoutError("Token-2022 account data must be bytes")
     if len(raw) < TLV_START:
@@ -168,12 +170,12 @@ def select_transfer_fee_schedule(config, epoch):
     """Select the active Token-2022 transfer fee schedule for a chain epoch."""
     if not isinstance(config, dict) or not isinstance(config.get("older"), dict) or not isinstance(config.get("newer"), dict):
         raise ValueError("A decoded older/newer transfer-fee configuration is required")
-    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
-        raise ValueError("Current epoch must be a non-negative integer")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or not 0 <= epoch <= 2**64 - 1:
+        raise ValueError("Current epoch must be a valid u64 integer")
     older = config["older"]
     newer = config["newer"]
     activation_epoch = newer.get("epoch")
-    if isinstance(activation_epoch, bool) or not isinstance(activation_epoch, int) or activation_epoch < 0:
+    if isinstance(activation_epoch, bool) or not isinstance(activation_epoch, int) or not 0 <= activation_epoch <= 2**64 - 1:
         raise ValueError("Newer transfer-fee activation epoch is invalid")
     return dict(newer if epoch >= activation_epoch else older)
 
@@ -204,12 +206,20 @@ def _read_account(address):
     ])
     value = (result or {}).get("value")
     if value is None:
-        raise ValueError("Mint account does not exist")
+        raise ValueError("Token-2022 account does not exist")
+    if not isinstance(value, dict):
+        raise Token2022LayoutError("RPC returned a malformed Token-2022 account object")
+    data = value.get("data")
+    if not isinstance(data, (list, tuple)) or len(data) != 2 or data[1] != "base64":
+        raise Token2022LayoutError("RPC returned an unsupported Token-2022 account encoding")
+    owner = value.get("owner")
+    if not isinstance(owner, str) or not owner:
+        raise Token2022LayoutError("RPC returned a Token-2022 account without an owner")
     try:
-        raw = base64.b64decode(value["data"][0], validate=True)
+        raw = base64.b64decode(data[0], validate=True)
     except Exception:
-        raise Token2022LayoutError("RPC returned malformed mint account data")
-    return {"owner": value.get("owner"), "data": raw, "lamports": value.get("lamports")}
+        raise Token2022LayoutError("RPC returned malformed Token-2022 account data")
+    return {"owner": owner, "data": raw, "lamports": value.get("lamports")}
 
 
 
@@ -329,8 +339,8 @@ def validate_token2022_account_data(account, mint, authority, label="Token-2022 
                     label + " has an invalid " + extension["name"] + " extension length"
                 )
     balance = int.from_bytes(raw[64:72], "little")
-    if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
-        raise ValueError("Minimum token balance must be a non-negative integer")
+    if isinstance(min_balance, bool) or not isinstance(min_balance, int) or not 0 <= min_balance <= 2**64 - 1:
+        raise ValueError("Minimum token balance must be a valid u64 integer")
     if balance < min_balance:
         raise Token2022LayoutError(label + " has insufficient spendable token balance")
     return balance
