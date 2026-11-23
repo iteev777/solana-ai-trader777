@@ -60,6 +60,19 @@ class RaydiumClmmMathTests(unittest.TestCase):
                 False, 10**12, 3000, 60,
             )
 
+    def test_loaded_tick_boundary_and_integer_fee_are_enforced(self):
+        for fee, ticks, message in (
+            (3000, [(65, 1)], "coverage"),
+            (3000, [(20, 1), (20, 2)], "duplicate"),
+            (0.5, [], "fee"),
+        ):
+            with self.subTest(fee=fee, ticks=ticks):
+                with self.assertRaisesRegex(ValueError, message):
+                    mathx.quote_exact_input(
+                        mathx.sqrt_price_at_tick(10), 1_000_000_000, 10,
+                        ticks, False, 1_000_000, fee, 60,
+                    )
+
     def test_zero_active_liquidity_after_tick_crossing_is_refused(self):
         start = mathx.sqrt_price_at_tick(10)
         target = mathx.sqrt_price_at_tick(20)
