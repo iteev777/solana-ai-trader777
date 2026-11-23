@@ -51,7 +51,7 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         self.assertEqual(aggregator._provider_family("pumpfun_curve"), "pumpfun")
 
     def test_later_sources_fill_missing_and_zero_market_data_without_erasing_good_values(self):
-        mint = "So11111111111111111111111111111111111111112"
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         first = {
             "tokenAddress": mint, "chainId": "solana",
             "name": "Unknown", "symbol": "TEST",
