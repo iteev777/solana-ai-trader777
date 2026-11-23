@@ -78,6 +78,52 @@ def _decode_transaction(value, name):
     return raw
 
 
+def _simulate_transaction(transaction):
+    """Simulate the unsigned order through Solana RPC; never broadcasts it."""
+    try:
+        import solana_onchain
+        if not solana_onchain.RPC_URL:
+            return {"status": "SKIPPED", "reason": "SOLANA_RPC_NOT_CONFIGURED"}
+        result = solana_onchain._rpc("simulateTransaction", [
+            transaction,
+            {
+                "encoding": "base64",
+                "commitment": "confirmed",
+                "sigVerify": False,
+                "replaceRecentBlockhash": True,
+                "innerInstructions": False,
+            },
+        ])
+        value = (result or {}).get("value") or {}
+        logs = value.get("logs") or []
+        return {
+            "status": "PASS" if value.get("err") is None else "FAIL",
+            "error": value.get("err"),
+            "units_consumed": value.get("unitsConsumed"),
+            "context_slot": (result or {}).get("context", {}).get("slot"),
+            "log_tail": [str(line)[:240] for line in logs[-8:]],
+            "signed": False,
+            "broadcast": False,
+        }
+    except Exception as error:
+        return {"status": "FAIL", "reason": str(error)[:180], "signed": False, "broadcast": False}
+
+
+def _remember_simulated_order(request_id, details):
+    now = time.time()
+    with _order_lock:
+        expired = [
+            key for key, item in _simulated_orders.items()
+            if now - item.get("created_at", 0) > ORDER_TTL_SECONDS
+        ]
+        for key in expired:
+            _simulated_orders.pop(key, None)
+        if len(_simulated_orders) >= 256:
+            oldest = min(_simulated_orders, key=lambda key: _simulated_orders[key].get("created_at", 0))
+            _simulated_orders.pop(oldest, None)
+        _simulated_orders[request_id] = {**details, "created_at": now}
+
+
 def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simulate=False):
     """Request a Jupiter V2 best-route order and unsigned wallet transaction."""
     input_mint = _base58_pubkey(input_mint, "input_mint")
