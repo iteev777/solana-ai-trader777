@@ -82,6 +82,9 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("Fresh CLMM minimum output must be a positive u64")
     if minimum_out > fresh.get("out_amount", 0):
         raise ValueError("Fresh CLMM minimum output exceeds quoted output")
+    for field in ("token_program_input", "token_program_output"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("CLMM token program state changed since the supplied quote")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh CLMM quote is older than the supplied quote")
@@ -159,6 +162,9 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM mint account layout is invalid")
     token_program_input = token_program_0 if input_mint == current["mint_0"] else token_program_1
     token_program_output = token_program_1 if input_mint == current["mint_0"] else token_program_0
+    if (fresh.get("token_program_input") != token_program_input
+            or fresh.get("token_program_output") != token_program_output):
+        raise ValueError("CLMM token program state changed during transaction preparation")
     # Raydium CLMM vault authority is the pool address itself.
     authority = pool
     _token_account(vault0_acc, token_program_0, authority, current["mint_0"], "CLMM vault 0", 1)
