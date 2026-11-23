@@ -218,5 +218,18 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
 
 
 
+    def test_compounding_mode_charges_output_token_for_reverse_swap(self):
+        state = bytearray(self.state)
+        state[484] = 2
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        result = self.quote(input_mint=self.mint_b, output_mint=self.mint_a, accounts=accounts)
+        self.assertFalse(result["fee_on_input"])
+        self.assertEqual(result["fee_mint"], self.mint_a)
+        self.assertGreater(result["fee_amount"], 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
