@@ -1,4 +1,6 @@
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import token_security
@@ -150,6 +152,70 @@ class ProtocolValidationTests(unittest.TestCase):
     def test_alias_normalization_is_applied(self):
         with patch("solana_onchain.normalize_protocol", return_value="pumpswap"):
             self.assertEqual(protocol_validation._normalize("pumpfun-amm"), "pumpswap")
+
+
+class TokenSecurityCacheTests(unittest.TestCase):
+    MINT = "11111111111111111111111111111111"
+
+    def setUp(self):
+        token_security.clear_cache()
+
+    def tearDown(self):
+        token_security.clear_cache()
+
+    def test_successful_report_is_cached_and_returned_as_a_copy(self):
+        report = {"source": "solana_rpc", "warnings": ["A"]}
+        with patch("solana_onchain._b58decode", return_value=bytes(32)), \
+             patch.object(token_security, "_fetch_token_security_report", return_value=report) as fetch:
+            first = token_security.get_token_security_report(self.MINT)
+            first["warnings"].append("caller mutation")
+            second = token_security.get_token_security_report(self.MINT)
+        fetch.assert_called_once_with(self.MINT, 20)
+        self.assertEqual(second["warnings"], ["A"])
+        self.assertEqual(token_security.get_cache_metrics()["entries"], 1)
+
+    def test_largest_account_limit_is_part_of_cache_key(self):
+        report = {"source": "solana_rpc"}
+        with patch("solana_onchain._b58decode", return_value=bytes(32)), \
+             patch.object(token_security, "_fetch_token_security_report", return_value=report) as fetch:
+            token_security.get_token_security_report(self.MINT, 10)
+            token_security.get_token_security_report(self.MINT, 20)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_failed_report_is_not_cached(self):
+        report = {"source": "solana_rpc"}
+        with patch("solana_onchain._b58decode", return_value=bytes(32)), \
+             patch.object(
+                 token_security, "_fetch_token_security_report",
+                 side_effect=[RuntimeError("RPC offline"), report],
+             ) as fetch:
+            with self.assertRaisesRegex(RuntimeError, "RPC offline"):
+                token_security.get_token_security_report(self.MINT)
+            self.assertEqual(token_security.get_token_security_report(self.MINT), report)
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_concurrent_requests_share_one_inflight_rpc_lookup(self):
+        started = threading.Event()
+        release = threading.Event()
+        report = {"source": "solana_rpc"}
+
+        def slow_fetch(mint, limit):
+            started.set()
+            self.assertTrue(release.wait(2))
+            return report
+
+        with patch("solana_onchain._b58decode", return_value=bytes(32)), \
+             patch.object(token_security, "_fetch_token_security_report", side_effect=slow_fetch) as fetch:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                first = pool.submit(token_security.get_token_security_report, self.MINT)
+                self.assertTrue(started.wait(1))
+                second = pool.submit(token_security.get_token_security_report, self.MINT)
+                release.set()
+                self.assertEqual(first.result(timeout=3), report)
+                self.assertEqual(second.result(timeout=3), report)
+        fetch.assert_called_once_with(self.MINT, 20)
+
+
 
 
 if __name__ == "__main__":
