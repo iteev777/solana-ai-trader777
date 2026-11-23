@@ -256,6 +256,10 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["available"])
         self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["rpc_simulation_required"])
         self.assertFalse(status["native_transaction_builders"]["pumpswap_v2"]["live_execution"])
+        self.assertTrue(status["native_transaction_builders"]["orca_whirlpool"]["available"])
+        self.assertTrue(status["native_transaction_builders"]["orca_whirlpool"]["rpc_simulation_required"])
+        self.assertTrue(status["native_transaction_builders"]["orca_whirlpool"]["rpc_simulation_available"])
+        self.assertFalse(status["native_transaction_builders"]["orca_whirlpool"]["live_execution"])
         self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
     def test_dashboard_does_not_claim_simulation_available_without_entrypoint(self):
