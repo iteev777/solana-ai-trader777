@@ -34,6 +34,13 @@ class NativeExecutionTests(unittest.TestCase):
         self.signed = base64.b64encode(bytes(signed)).decode("ascii")
         self.expected_signature = chain._b58encode(self.signature)
 
+    def test_cannot_register_approval_without_unsigned_simulation_pass(self):
+        with self.assertRaisesRegex(ValueError, "successful unsigned RPC simulation"):
+            native.register_native_approval(
+                self.unsigned, "raydium_cpmm", 200,
+                {"status": "REJECT", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+
     def test_broadcast_requires_environment_gate(self):
         approval = native.register_native_approval(
             self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
