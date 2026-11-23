@@ -4,6 +4,7 @@ This module never signs or broadcasts. Jupiter's /order endpoint is requested
 without taker for quotes; unsigned simulation uses a configured public taker
 address and Solana simulateTransaction with sigVerify=false.
 """
+import base64
 import math
 import os
 import threading
@@ -258,9 +259,26 @@ def simulate_unsigned_swap(input_mint, output_mint, amount, slippage_bps=None, t
         "inputMint": input_mint, "outputMint": output_mint,
         "amount": raw_amount, "slippageBps": slip, "taker": taker,
     })
+    if order.get("inputMint") != input_mint or order.get("outputMint") != output_mint:
+        raise ValueError("Jupiter order mint pair does not match the simulation request")
+    in_amount = _amount(order.get("inAmount"), "Jupiter inAmount")
+    out_amount = _amount(order.get("outAmount"), "Jupiter outAmount")
+    if in_amount != raw_amount:
+        raise ValueError("Jupiter order input amount does not match the simulation request")
+    minimum_out = _amount(order.get("otherAmountThreshold"), "Jupiter minimum output")
+    if minimum_out > out_amount:
+        raise ValueError("Jupiter minimum output exceeds its quoted output")
+
     transaction = order.get("transaction")
-    if not isinstance(transaction, str) or len(transaction) < 80:
+    if not isinstance(transaction, str) or not transaction:
         raise ValueError("Jupiter did not return an unsigned transaction for simulation")
+    try:
+        transaction_bytes = base64.b64decode(transaction, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("Jupiter returned an invalid base64 transaction")
+    if len(transaction_bytes) < 65 or len(transaction_bytes) > 1232:
+        raise ValueError("Jupiter unsigned transaction exceeds Solana packet limits")
+
     # This is strictly simulateTransaction. No sendTransaction/execute endpoint exists here.
     result = chain._rpc("simulateTransaction", [
         transaction,
@@ -270,20 +288,39 @@ def simulate_unsigned_swap(input_mint, output_mint, amount, slippage_bps=None, t
             "innerInstructions": False,
         }
     ])
-    value = (result or {}).get("value") or {}
     elapsed_ms = (time.perf_counter() - started) * 1000
-    logs = value.get("logs") or []
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
+        return {
+            "status": "FAIL", "reason": "RPC_SIMULATION_RESPONSE_INVALID",
+            "simulated": True, "signed": False, "broadcast": False,
+            "latency_ms": round(elapsed_ms, 2), "taker": taker,
+            "simulated_at": time.time(),
+        }
+    value = result["value"]
+    if "err" not in value:
+        return {
+            "status": "FAIL", "reason": "RPC_SIMULATION_ERROR_FIELD_MISSING",
+            "simulated": True, "signed": False, "broadcast": False,
+            "latency_ms": round(elapsed_ms, 2), "taker": taker,
+            "simulated_at": time.time(),
+        }
+    logs = value.get("logs")
+    if logs is not None and not isinstance(logs, list):
+        logs = []
+    context = result.get("context")
+    context_slot = context.get("slot") if isinstance(context, dict) else None
     return {
-        "status": "PASS" if value.get("err") is None else "FAIL",
+        "status": "PASS" if value["err"] is None else "FAIL",
         "simulated": True, "signed": False, "broadcast": False,
         "error": value.get("err"),
         "units_consumed": value.get("unitsConsumed"),
-        "context_slot": (result or {}).get("context", {}).get("slot"),
-        "log_tail": [str(line)[:240] for line in logs[-8:]],
+        "context_slot": context_slot,
+        "log_tail": [str(line)[:240] for line in (logs or [])[-8:]],
         "latency_ms": round(elapsed_ms, 2),
         "router": order.get("router"),
-        "input_amount": order.get("inAmount"),
-        "output_amount": order.get("outAmount"),
+        "input_amount": in_amount,
+        "output_amount": out_amount,
+        "minimum_output_amount": minimum_out,
         "taker": taker,
         "simulated_at": time.time(),
     }
