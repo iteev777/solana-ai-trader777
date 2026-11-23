@@ -118,13 +118,13 @@ class DcaPolicyTests(unittest.TestCase):
     def test_cooldown_is_enforced_and_expires_at_boundary(self):
         position = self.position(metadata={
             "dca_count": 1, "first_entry_price": 1.0,
-            "first_investment": 10.0, "last_dca_at": 970.0,
+            "first_investment": 10.0, "last_dca_at": 99970.0,
         })
-        blocked = self.evaluate(position=position)
+        blocked = self.evaluate(position=position, price_timestamp=100000.0, now=100000.0)
         self.assertFalse(blocked["allowed"])
         self.assertIn("cooldown", blocked["reason"])
-        position["metadata"]["last_dca_at"] = 940.0
-        passed = self.evaluate(position=position)
+        position["metadata"]["last_dca_at"] = 96400.0
+        passed = self.evaluate(position=position, price_timestamp=100000.0, now=100000.0)
         self.assertTrue(passed["allowed"], passed)
 
     def test_first_entry_basis_and_first_buy_multiple_are_used(self):
