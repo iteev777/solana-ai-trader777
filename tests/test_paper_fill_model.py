@@ -109,6 +109,7 @@ class PaperFillIntegrationTests(unittest.TestCase):
                 "measure_from": "average", "cooldown_minutes": 0,
                 "min_hold_minutes": 0, "price_max_age_seconds": 30,
             }),
+            patch.object(paper_trading, "get_dca_steps", return_value=[{"drop_pct": 5, "add_usd": 2.5}]),
             patch.object(paper_trading.exit_policy, "get_exit_policy", return_value={"stop_loss_pct": 9}),
             patch.object(paper_trading, "get_exit_steps", return_value=[]),
             patch.object(paper_trading.database, "add_position_investment_atomic", return_value={"result": "DCA ADDED"}) as add,
