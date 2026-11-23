@@ -1,9 +1,9 @@
 """Read-only multi-router quote comparison for Trojan V2.
 
-Jupiter and Solana Tracker Raptor are queried independently. A quote is only
-informational: this module never builds, signs, or broadcasts a transaction.
-Native direct-pool quoting is reported as unavailable until a protocol-specific
-math/account decoder is implemented and tested for that exact pool.
+Jupiter and Solana Tracker Raptor are queried independently. When a pool address
+is supplied, the protocol-specific direct quote registry may add a confirmed
+on-chain pool quote for supported adapters. This module never builds, signs,
+or broadcasts a transaction; unsupported pool protocols fail closed.
 """
 import concurrent.futures
 import math
