@@ -37,16 +37,22 @@ NATIVE_BUILDERS = {
 
 
 def _capability(module_name, function_name):
+    error_type = None
     try:
         module = importlib.import_module(module_name)
         present = callable(getattr(module, function_name, None))
-    except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
+    except Exception as error:
+        # Capability reporting must fail closed even when a module import
+        # fails for an unexpected dependency/runtime reason. Do not let a
+        # dashboard status request crash the entire capability inventory.
         present = False
+        error_type = type(error).__name__
     return {
         "available": present,
         "module": module_name,
         "entrypoint": function_name,
         "status": "ENTRYPOINT_AVAILABLE" if present else "UNAVAILABLE_ENTRYPOINT_MISSING",
+        "error_type": error_type,
     }
 
 
