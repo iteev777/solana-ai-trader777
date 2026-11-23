@@ -21,8 +21,8 @@ DEVNET_URL = os.getenv("SOLANA_DEVNET_RPC_URL", "https://api.devnet.solana.com")
 DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 LAMPORTS_PER_SOL = 1_000_000_000
 # Rent-exempt funding for a newly-created zero-data System account.
-TEST_TRANSFER_LAMPORTS = 1_000_000
-MIN_PAYER_BALANCE_LAMPORTS = TEST_TRANSFER_LAMPORTS + 100_000
+TEST_TRANSFER_LAMPORTS = 0
+MIN_PAYER_BALANCE_LAMPORTS = 0
 REQUEST_TIMEOUT = 20
 FINALITY_TIMEOUT = 60
 
@@ -115,6 +115,15 @@ def main():
     if os.getenv("TROJAN_DEVNET_E2E_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
         raise RuntimeError("Set TROJAN_DEVNET_E2E_ENABLED=true to run the devnet-only harness")
     require_devnet_endpoint()
+
+    # Query the cluster's current rent-exemption requirement instead of relying
+    # on a fixed amount that can become stale across runtime changes.
+    rent_minimum = rpc("getMinimumBalanceForRentExemption", [0])
+    if not isinstance(rent_minimum, int) or rent_minimum <= 0:
+        raise RuntimeError("Devnet returned an invalid rent-exemption minimum")
+    global TEST_TRANSFER_LAMPORTS, MIN_PAYER_BALANCE_LAMPORTS
+    TEST_TRANSFER_LAMPORTS = rent_minimum + 100_000
+    MIN_PAYER_BALANCE_LAMPORTS = TEST_TRANSFER_LAMPORTS + 100_000
 
     # Ensure the shared chain module can only use this exact devnet endpoint.
     os.environ["SOLANA_RPC_URL"] = DEVNET_URL
