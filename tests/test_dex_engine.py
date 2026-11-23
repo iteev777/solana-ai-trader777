@@ -129,6 +129,15 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(status["broadcast_available"])
         self.assertFalse(status["live_trading_ready"])
 
+    @patch("dex_engine.build_routes")
+    def test_dashboard_compatibility_accepts_comma_separated_pool_list(self, build):
+        build.return_value = {"execution": "LOCKED"}
+        result = dex_engine.build_route(
+            self.input_mint, self.output_mint, "100", 75, "pool-a,pool-b"
+        )
+        self.assertEqual(result["execution"], "LOCKED")
+        self.assertEqual(build.call_args.kwargs["pool_addresses"], ["pool-a", "pool-b"])
+
 
 if __name__ == "__main__":
     unittest.main()
