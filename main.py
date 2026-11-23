@@ -132,6 +132,62 @@ def get_token_address(token):
     return address if address else None
 
 
+
+def merge_candidate_metadata(market_data, candidate):
+    """Preserve discovery metadata when market providers omit token metadata."""
+    merged = dict(market_data) if isinstance(market_data, dict) else {}
+    candidate = candidate if isinstance(candidate, dict) else {}
+    candidate_meta = candidate.get("tokenMeta") if isinstance(candidate.get("tokenMeta"), dict) else {}
+
+    def useful(value):
+        return (
+            isinstance(value, str)
+            and value.strip()
+            and value.strip().lower() not in {"unknown", "n/a", "none", "null"}
+        )
+
+    for key in ("name", "symbol"):
+        incoming = candidate.get(key)
+        current = merged.get(key)
+        if useful(incoming) and not useful(current):
+            merged[key] = incoming.strip()
+
+    image = next((
+        value for value in (
+            candidate.get("icon"), candidate.get("logoURI"),
+            candidate.get("logo_uri"), candidate.get("imageUrl"),
+            candidate_meta.get("image"),
+        ) if useful(value) and value.strip().startswith(("https://", "http://"))
+    ), None)
+    info = merged.get("info") if isinstance(merged.get("info"), dict) else {}
+    if image and not useful(info.get("imageUrl")) and not useful(merged.get("logoURI")):
+        merged["logoURI"] = image
+
+    candidate_websites = candidate.get("websites")
+    if isinstance(candidate_websites, list) and candidate_websites:
+        existing_info = dict(info)
+        existing_websites = existing_info.get("websites")
+        if not isinstance(existing_websites, list) or not existing_websites:
+            existing_info["websites"] = candidate_websites
+            merged["info"] = existing_info
+            merged["websites"] = candidate_websites
+    direct_website = candidate.get("website") or candidate.get("website_url")
+    if useful(direct_website) and not useful(merged.get("website")):
+        merged["website"] = direct_website.strip()
+
+    for key in (
+        "mintAuthority", "mint_authority", "freezeAuthority", "freeze_authority",
+        "updateAuthority", "update_authority", "creator", "creatorAddress",
+        "creator_address", "mutable", "isMutable", "is_mutable",
+    ):
+        if candidate.get(key) is not None and merged.get(key) is None:
+            merged[key] = candidate[key]
+    if candidate_meta.get("updateAuthority") is not None and merged.get("updateAuthority") is None:
+        merged["updateAuthority"] = candidate_meta["updateAuthority"]
+
+    return merged
+
+
 def get_liquidity(pair):
 
     if not isinstance(pair, dict):
@@ -663,20 +719,7 @@ def analyze_token_task(address, strategy_name, token):
             }
         )
 
-        token_data = dict(pair)
-        # Preserve authority/creator metadata supplied by discovery feeds; the
-        # market-data provider response alone does not reliably contain it.
-        token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
-        for metadata_key in (
-            "mintAuthority", "mint_authority", "freezeAuthority", "freeze_authority",
-            "updateAuthority", "update_authority", "creator", "creatorAddress",
-            "creator_address", "mutable", "isMutable", "is_mutable",
-        ):
-            value = token.get(metadata_key)
-            if value is not None and metadata_key not in token_data:
-                token_data[metadata_key] = value
-        if token_meta.get("updateAuthority") is not None and "updateAuthority" not in token_data:
-            token_data["updateAuthority"] = token_meta["updateAuthority"]
+        token_data = merge_candidate_metadata(pair, token)
         token_data["address"] = address
         token_data["indicators"] = indicators
         token_data["onchain_verified"] = bool(
