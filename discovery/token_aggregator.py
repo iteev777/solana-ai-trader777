@@ -13,7 +13,8 @@ from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, sca
 from discovery.screenerbot_sources import (
     scan_rugcheck_new, scan_rugcheck_recent, scan_rugcheck_trending,
     scan_rugcheck_verified, scan_jupiter, scan_coingecko, scan_defillama,
-)import database
+)
+import database
 
 def _env_enabled(name, default=True):
     raw = os.getenv(name)
