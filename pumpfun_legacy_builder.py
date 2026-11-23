@@ -255,6 +255,9 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
         raise ValueError("Fresh Pump.fun quote is stale relative to transaction snapshot")
     if mint_acc.get("owner") != TOKEN_PROGRAM_ID:
         raise ValueError("Pump.fun native builder supports legacy SPL Token mints only")
+    mint_raw = mint_acc.get("data", b"")
+    if not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
+        raise ValueError("Pump.fun mint is not an initialized legacy SPL Token mint")
     if chain._mint_decimals(mint_acc) != fresh.get("token_decimals"):
         raise ValueError("Pump.fun mint decimals changed since the fresh quote")
     global_raw = global_acc.get("data", b"")
