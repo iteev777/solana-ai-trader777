@@ -146,8 +146,11 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
     if config_acc.get("owner") != PROGRAM_ID or len(config_acc.get("data", b"")) < 57:
         raise ValueError("CLMM AmmConfig owner or layout is invalid")
     fee_rate = int.from_bytes(config_acc["data"][47:51], "little")
+    config_spacing = int.from_bytes(config_acc["data"][51:53], "little")
     if fee_rate != fresh.get("fee_rate"):
         raise ValueError("CLMM fee rate changed since fresh quote")
+    if config_spacing != current["tick_spacing"]:
+        raise ValueError("CLMM AmmConfig tick spacing changed during transaction preparation")
     if any(item.get("owner") != TOKEN_PROGRAM_ID for item in (mint0_acc, mint1_acc)):
         raise ValueError("Native CLMM builder currently requires legacy SPL Token mints")
     if any(item.get("owner") != TOKEN_PROGRAM_ID for item in (vault0_acc, vault1_acc)):
@@ -160,8 +163,8 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM mint account layout is invalid")
     # Raydium CLMM vault authority is the pool address itself.
     authority = pool
-    _token_account(vault0_acc, authority, current["mint_0"], "CLMM vault 0")
-    _token_account(vault1_acc, authority, current["mint_1"], "CLMM vault 1")
+    _token_account(vault0_acc, authority, current["mint_0"], "CLMM vault 0", 1)
+    _token_account(vault1_acc, authority, current["mint_1"], "CLMM vault 1", 1)
     if (chain._key(vault0_acc["data"], 32) != authority
             or chain._key(vault1_acc["data"], 32) != authority):
         raise ValueError("CLMM vault authority does not match canonical PDA")
