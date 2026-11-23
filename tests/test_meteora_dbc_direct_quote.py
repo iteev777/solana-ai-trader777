@@ -22,8 +22,8 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         pool[168:200] = chain._b58decode(self.base_vault)
         pool[200:232] = chain._b58decode(self.quote_vault)
         pool[232:240] = (500_000_000).to_bytes(8, "little")
-        pool[240:248] = (700_000_000).to_bytes(8, "little")
-        pool[248:256] = (100).to_bytes(8, "little")
+        pool[240:248] = (10**12).to_bytes(8, "little")
+        pool[248:256] = (10**12).to_bytes(8, "little")
         pool[256:264] = (200).to_bytes(8, "little")
         pool[264:272] = (300).to_bytes(8, "little")
         pool[272:280] = (400).to_bytes(8, "little")
@@ -86,6 +86,22 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
                 output_mint=output_mint or self.quote_mint,
             )
 
+    def _replace_pool_state(self, raw):
+        self.pool_data = bytes(raw)
+        self.pool_account = {"owner": chain.PROGRAMS["meteora_dbc"], "data": self.pool_data}
+        self.accounts[0] = self.pool_account
+
+    def test_fixture_fee_and_vault_accounting_offsets(self):
+        state = dbc._decode_virtual_pool(self.pool_data, chain)
+        self.assertEqual(state["protocol_base_fee"], 100)
+        self.assertEqual(state["protocol_quote_fee"], 200)
+        self.assertEqual(state["partner_base_fee"], 300)
+        self.assertEqual(state["partner_quote_fee"], 400)
+        self.assertEqual(state["creator_base_fee"], 0)
+        self.assertEqual(state["creator_quote_fee"], 0)
+        self.assertEqual(chain._token_amount(self.accounts[4], self.base_mint), 10**12)
+        self.assertEqual(chain._token_amount(self.accounts[5], self.quote_mint), 10**12)
+
     def test_confirmed_snapshot_quotes_base_and_quote_directions(self):
         base_sell = self.quote()
         quote_buy = self.quote(input_mint=self.quote_mint, output_mint=self.base_mint)
@@ -99,6 +115,61 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         self.assertEqual(quote_buy["output_mint"], self.base_mint)
         self.assertGreater(quote_buy["out_amount"], 0)
         self.assertEqual(quote_buy["fee_mint"], self.quote_mint)
+
+    def test_future_slot_activation_is_rejected(self):
+        pool = bytearray(self.pool_data)
+        pool[296:304] = (654322).to_bytes(8, "little")
+        self._replace_pool_state(pool)
+        with self.assertRaisesRegex(ValueError, "not active at the confirmed snapshot point"):
+            self.quote()
+
+    def test_future_timestamp_activation_is_rejected(self):
+        pool = bytearray(self.pool_data)
+        pool[296:304] = (1_900_000_000).to_bytes(8, "little")
+        self._replace_pool_state(pool)
+        config = bytearray(self.config_data)
+        config[234] = 1
+        with patch.object(chain, "_rpc", return_value=1_800_000_000):
+            with self.assertRaisesRegex(ValueError, "not active at the confirmed snapshot point"):
+                self.quote(config_data=bytes(config))
+
+    def test_past_timestamp_activation_is_verified_before_quote(self):
+        pool = bytearray(self.pool_data)
+        pool[296:304] = (1_700_000_000).to_bytes(8, "little")
+        self._replace_pool_state(pool)
+        config = bytearray(self.config_data)
+        config[234] = 1
+        with patch.object(chain, "_rpc", return_value=1_800_000_000) as block_time:
+            result = self.quote(config_data=bytes(config))
+        self.assertGreater(result["out_amount"], 0)
+        block_time.assert_called_once_with("getBlockTime", [654321])
+
+    def test_unknown_activation_type_is_rejected(self):
+        config = bytearray(self.config_data)
+        config[234] = 2
+        with self.assertRaisesRegex(ValueError, "activation type"):
+            self.quote(config_data=bytes(config))
+
+    def test_non_spl_config_token_type_is_rejected(self):
+        config = bytearray(self.config_data)
+        config[236] = 1
+        with self.assertRaisesRegex(ValueError, "Token-2022 pool type"):
+            self.quote(config_data=bytes(config))
+
+    def test_accrued_protocol_partner_and_creator_fees_reduce_spendable_reserves(self):
+        pool = bytearray(self.pool_data)
+        pool[256:264] = (10**12 + 1).to_bytes(8, "little")
+        pool[360:368] = (1).to_bytes(8, "little")
+        self._replace_pool_state(pool)
+        with self.assertRaisesRegex(ValueError, "spendable vault reserves"):
+            self.quote()
+
+    def test_curve_reserve_cannot_exceed_spendable_vault_balance(self):
+        pool = bytearray(self.pool_data)
+        pool[240:248] = (10**12 + 1).to_bytes(8, "little")
+        self._replace_pool_state(pool)
+        with self.assertRaisesRegex(ValueError, "curve reserves exceed spendable"):
+            self.quote()
 
     def test_quote_token_mode_charges_quote_input_for_buy(self):
         result = self.quote(input_mint=self.quote_mint, output_mint=self.base_mint)
@@ -116,6 +187,9 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         self.assertEqual(result["fee_mint"], self.base_mint)
 
     def test_curve_walk_crosses_into_next_liquidity_segment(self):
+        pool = bytearray(self.pool_data)
+        pool[232:240] = (999_999_999_000).to_bytes(8, "little")
+        self._replace_pool_state(pool)
         config = dbc._decode_pool_config(self.config_data, chain)
         state = dbc._decode_virtual_pool(self.pool_data, chain)
         target = config["points"][0][0]

@@ -441,3 +441,6 @@ Orca Whirlpool direct quotes now require a full pool account snapshot, a classic
 ## Meteora DBC direct quote adapter
 
 The read-only Dynamic Bonding Curve adapter decodes the VirtualPool and PoolConfig, validates the quote mint and the full ascending piecewise-liquidity curve, and walks each segment with integer Q128-scaled liquidity math. It applies the flat cliff fee once per swap using the configured QuoteToken or OutputToken collection mode. Migrated pools, transfer-hook pools, active base-fee schedulers, dynamic-volatility fees, malformed curve points and Token-2022 mints are refused. Quotes cannot walk beyond the configured curve endpoints and are capped by the output vault balance. No instruction is constructed or signed.
+
+
+Meteora DBC direct quotes verify the configured activation type against the confirmed slot or that slot's block time. The quote subtracts accrued protocol, partner and creator fees from vault balances and also caps output by the VirtualPool's recorded base/quote reserves. Unsupported activation types, Token-2022 pool configs, migrated curves and reserve-accounting inconsistencies fail closed.
