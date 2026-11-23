@@ -20,7 +20,8 @@ API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 REQUEST_TIMEOUT = 15
 CACHE_SECONDS = 1800
 MAX_CACHE_ENTRIES = 2000
-MAX_SAFE_SCORE = 40
+MAX_SAFE_SCORE = 40  # Normalized RugCheck risk score (0-100), retained for compatibility.
+MAX_SAFE_RAW_SCORE = 10_000  # ScreenerBot's default raw-score ceiling.
 
 _cache = OrderedDict()
 _cache_lock = threading.RLock()
@@ -149,7 +150,7 @@ def _lp_lock_percentage(risks):
 def analyze_rugcheck_report(data):
     """Normalize RugCheck risk signals into one auditable, fail-closed decision."""
     empty = {
-        "status": "UNKNOWN", "safe": False, "score": None,
+        "status": "UNKNOWN", "safe": False, "score": None, "raw_score": None,
         "risk_count": 0, "high_risks": 0, "medium_risks": 0,
         "low_risks": 0, "unknown_risks": 0,
         "mint_authority": "UNKNOWN", "freeze_authority": "UNKNOWN",
@@ -161,10 +162,25 @@ def analyze_rugcheck_report(data):
 
     reasons = []
     high_risks = medium_risks = low_risks = unknown_risks = 0
-    raw_score = get_number(data.get("score_normalised"))
-    if raw_score is not None and not 0.0 <= raw_score <= 100.0:
-        reasons.append("Normalized risk score is outside the valid 0-100 range")
+    normalized_score = get_number(data.get("score_normalised"))
+    if normalized_score is not None and (
+        not normalized_score.is_integer() or not 0.0 <= normalized_score <= 100.0
+    ):
+        reasons.append("Normalized risk score is outside the valid integer 0-100 range")
+        normalized_score = None
+
+    raw_score = get_number(data.get("score"))
+    if raw_score is not None and (
+        not raw_score.is_integer() or raw_score < 0 or raw_score > 2_147_483_647
+    ):
+        reasons.append("Raw risk score is outside the valid non-negative i32 range")
         raw_score = None
+    maximum_raw_score = _risk_threshold(
+        "TROJAN_RUGCHECK_MAX_RAW_SCORE", float(MAX_SAFE_RAW_SCORE), 0.0, 2_147_483_647.0
+    )
+    maximum_normalized_score = _risk_threshold(
+        "TROJAN_RUGCHECK_MAX_NORMALIZED_SCORE", float(MAX_SAFE_SCORE), 0.0, 100.0
+    )
     risks = data.get("risks")
     risks_valid = isinstance(risks, list)
     if not risks_valid:
@@ -503,23 +519,30 @@ def analyze_rugcheck_report(data):
         high_risks += 1
         reasons.append("RugCheck reports no market liquidity")
 
-    if raw_score is None:
-        reasons.append("Normalized risk score unavailable")
+    if raw_score is None and normalized_score is None:
+        reasons.append("RugCheck risk score unavailable")
     if not risks_valid:
         reasons.append("Risk information incomplete")
     if not holders_valid:
         reasons.append("Holder information incomplete")
 
     if (
-        raw_score is None or not risks_valid or not holders_valid
+        (raw_score is None and normalized_score is None)
+        or not risks_valid or not holders_valid
         or mint_authority == "UNKNOWN" or freeze_authority == "UNKNOWN"
         or unknown_risks > 0
     ):
         status = "UNKNOWN"
-    elif rugged or raw_score >= MAX_SAFE_SCORE or high_risks > 0:
+    elif rugged or (
+        raw_score is not None and raw_score > maximum_raw_score
+    ) or (
+        normalized_score is not None and normalized_score >= maximum_normalized_score
+    ) or high_risks > 0:
         status = "REJECT"
-        if raw_score >= MAX_SAFE_SCORE:
-            reasons.append("RugCheck risk score too high")
+        if raw_score is not None and raw_score > maximum_raw_score:
+            reasons.append("RugCheck raw risk score too high")
+        if normalized_score is not None and normalized_score >= maximum_normalized_score:
+            reasons.append("RugCheck normalized risk score too high")
         if high_risks > 0:
             reasons.append("High severity security risks detected")
     elif medium_risks >= _risk_threshold("TROJAN_RUGCHECK_MAX_MEDIUM_RISKS", 3.0, 1.0, 1000.0):
@@ -532,7 +555,8 @@ def analyze_rugcheck_report(data):
     return {
         "status": status,
         "safe": status == "PASS",
-        "score": raw_score,
+        "score": normalized_score,
+        "raw_score": raw_score,
         "risk_count": len(risks),
         "high_risks": high_risks,
         "medium_risks": medium_risks,
