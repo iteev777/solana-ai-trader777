@@ -141,5 +141,83 @@ class DexEngineTests(unittest.TestCase):
         self.assertIn("PumpSwap", result["direct_pool"]["quote_adapters"])
 
 
+    def _aggregator_response(self):
+        now = time.time()
+        return self._comparison({
+            "jupiter": self._quote("jupiter", 900, quoted_at=now),
+            "raptor": self._quote("raptor", 880, quoted_at=now),
+        })
+
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_compares_multiple_direct_pools_with_aggregators(self, direct, compare):
+        compare.return_value = self._aggregator_response()
+        direct.side_effect = [
+            {
+                "provider": "raydium_cpmm", "protocol": "raydium_cpmm",
+                "output_mint": "output", "out_amount": 1000,
+                "minimum_out_amount": 990, "price_impact_percent": 0.4,
+                "snapshot_age_seconds": 0.2, "pool_id": "pool-a", "slot": 123,
+            },
+            {
+                "provider": "pumpswap", "protocol": "pumpswap",
+                "output_mint": "output", "out_amount": 1100,
+                "minimum_out_amount": 1090, "price_impact_percent": 0.5,
+                "snapshot_age_seconds": 0.2, "pool_id": "pool-b", "slot": 124,
+            },
+        ]
+        result = dex_engine.build_routes(
+            "input", "output", 1000, pool_addresses=["pool-a", "pool-b"]
+        )
+        self.assertEqual(compare.call_count, 1)
+        self.assertEqual(direct.call_count, 2)
+        self.assertEqual(result["best_pool"], "pool-b")
+        self.assertEqual(result["selected_route"]["net_minimum_output"], 1090)
+        self.assertEqual(sum(x["selected"] for x in result["routes_eligible"]), 1)
+        self.assertEqual(result["execution"], "LOCKED")
+
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_rejects_stale_direct_pool_quote(self, direct, compare):
+        compare.return_value = self._aggregator_response()
+        direct.return_value = {
+            "provider": "raydium_cpmm", "protocol": "raydium_cpmm",
+            "output_mint": "output", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.4,
+            "snapshot_age_seconds": 30, "pool_id": "pool-a", "slot": 123,
+        }
+        result = dex_engine.build_routes(
+            "input", "output", 1000, pool_addresses=["pool-a"]
+        )
+        self.assertEqual(result["routes_rejected"]["direct:pool-a"], "QUOTE_STALE")
+
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_deducts_only_explicit_output_mint_network_fee(self, direct, compare):
+        compare.return_value = self._aggregator_response()
+        direct.return_value = {
+            "provider": "raydium_cpmm", "protocol": "raydium_cpmm",
+            "output_mint": "output", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.4,
+            "snapshot_age_seconds": 0.2, "pool_id": "pool-a", "slot": 123,
+        }
+        result = dex_engine.build_routes(
+            "input", "output", 1000, pool_addresses=["pool-a"],
+            network_fee_output_amounts={
+                "direct:pool-a": 50, "jupiter": 0, "raptor": 0
+            }
+        )
+        route = next(x for x in result["routes_eligible"] if x["pool_id"] == "pool-a")
+        self.assertEqual(route["net_minimum_output"], 940)
+        self.assertFalse(result["unpriced_network_costs_may_change_ranking"])
+
+    @patch("dex_engine.build_routes")
+    def test_dashboard_entrypoint_accepts_comma_separated_pool_addresses(self, build):
+        build.return_value = {"execution": "LOCKED"}
+        result = dex_engine.build_route("input", "output", "1000", 100, "pool-a,pool-b")
+        self.assertEqual(result["execution"], "LOCKED")
+        self.assertEqual(build.call_args.kwargs["pool_addresses"], ["pool-a", "pool-b"])
+
+
 if __name__ == "__main__":
     unittest.main()
