@@ -254,7 +254,7 @@ Named conditions can be nested in the existing `all`, `any`, and `not` groups. P
 
 ## Native direct quote adapters
 
-The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is currently implemented for Raydium CPMM and Raydium AMM v4. Raydium AMM v4 quotes read the on-chain fee numerator/denominator and subtract accrued `need_take_pnl` from vault balances before applying constant-product math. Token-2022 transfer-fee mints are refused until a dedicated adapter is implemented. Other decoded DEX protocols remain explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
+The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
 
 
 ## Configurable paper exit policy
@@ -384,3 +384,8 @@ The read-only direct quote path supports legacy SOL-paired Pump.fun curves using
 ## Pool-count and reserve filtering
 
 The candidate filter can optionally enforce the number of distinct pools known to the multi-source pool registry with `TROJAN_FILTER_MIN_POOL_COUNT` and `TROJAN_FILTER_MAX_POOL_COUNT`. A stale or empty registry is treated as unknown, not as zero. GeckoTerminal normalized market snapshots preserve `reserve_in_usd`; an optional `TROJAN_FILTER_MIN_POOL_RESERVE_USD` floor returns WAIT if that measurement is unavailable and rejects a measured reserve below the floor. All three controls are disabled by default.
+
+
+## Raydium CLMM direct quote adapter
+
+The read-only Raydium CLMM adapter reads the pool state, AmmConfig, vaults, legacy SPL mints and initialized tick arrays in one confirmed RPC context. It walks the concentrated-liquidity curve with integer Q64.64 price math, charges the configured input fee per step, updates active liquidity at crossed initialized ticks and caps output at the actual vault balance. It refuses unsupported dynamic-fee and fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and amounts that exceed the fetched tick-array coverage. It does not build or sign swap instructions.
