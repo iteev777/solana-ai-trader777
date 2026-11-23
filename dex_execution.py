@@ -94,10 +94,14 @@ def _simulate_transaction(transaction):
                 "innerInstructions": False,
             },
         ])
-        value = (result or {}).get("value") or {}
+        if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
+            return {"status": "FAIL", "reason": "RPC_SIMULATION_RESPONSE_INVALID", "signed": False, "broadcast": False}
+        value = result["value"]
+        if "err" not in value:
+            return {"status": "FAIL", "reason": "RPC_SIMULATION_ERROR_FIELD_MISSING", "signed": False, "broadcast": False}
         logs = value.get("logs") or []
         return {
-            "status": "PASS" if value.get("err") is None else "FAIL",
+            "status": "PASS" if value["err"] is None else "FAIL",
             "error": value.get("err"),
             "units_consumed": value.get("unitsConsumed"),
             "context_slot": (result or {}).get("context", {}).get("slot"),
