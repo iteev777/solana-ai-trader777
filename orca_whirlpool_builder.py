@@ -10,6 +10,7 @@ import struct
 import time
 
 import solana_onchain as chain
+from raydium_cpmm_builder import _compile_legacy_message
 from orca_whirlpool_quote import (
     _decode_whirlpool, _tick_array_starts, _decode_fixed_tick_array,
     _derive_address, quote_orca_whirlpool_pool, TICK_ARRAY_SIZE,
@@ -50,42 +51,10 @@ def _shortvec(value):
 
 
 def _compile_message(wallet, blockhash, metas, data):
-    _pubkey(wallet, "wallet")
-    _pubkey(blockhash, "recent blockhash")
-    merged = {}
-
-    def add(key, signer=False, writable=False):
-        _pubkey(key, "instruction account")
-        flags = merged.setdefault(key, {"signer": False, "writable": False})
-        flags["signer"] = flags["signer"] or bool(signer)
-        flags["writable"] = flags["writable"] or bool(writable)
-
-    add(wallet, True, True)
-    for meta in metas:
-        add(meta["pubkey"], meta["is_signer"], meta["is_writable"])
-    add(ORCA_PROGRAM_ID)
-    ordered = [wallet]
-    ordered += [k for k, v in merged.items() if k != wallet and v["signer"] and v["writable"]]
-    ordered += [k for k, v in merged.items() if k != wallet and v["signer"] and not v["writable"]]
-    ordered += [k for k, v in merged.items() if k != wallet and not v["signer"] and v["writable"]]
-    ordered += [k for k, v in merged.items() if k != wallet and not v["signer"] and not v["writable"]]
-    if len(ordered) > 256:
-        raise ValueError("legacy transaction account key limit exceeded")
-    if sum(1 for v in merged.values() if v["signer"]) != 1:
-        raise ValueError("Orca swap must require exactly one external wallet signer")
-    index = {key: i for i, key in enumerate(ordered)}
-    readonly_unsigned = sum(1 for v in merged.values() if not v["signer"] and not v["writable"])
-    compiled_accounts = bytes(index[m["pubkey"]] for m in metas)
-    instruction = (
-        bytes([index[ORCA_PROGRAM_ID]]) + _shortvec(len(compiled_accounts))
-        + compiled_accounts + _shortvec(len(data)) + data
+    """Use the shared compiler with compute-unit limit and priority fee."""
+    return _compile_legacy_message(
+        wallet, blockhash, ORCA_PROGRAM_ID, metas, data
     )
-    message = (
-        bytes([1, 0, readonly_unsigned]) + _shortvec(len(ordered))
-        + b"".join(_pubkey(k, "account key") for k in ordered)
-        + _pubkey(blockhash, "recent blockhash") + _shortvec(1) + instruction
-    )
-    return _shortvec(1) + bytes(64) + message, ordered
 
 
 def _decode_user_token(account, wallet, mint, label):
