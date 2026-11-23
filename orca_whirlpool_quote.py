@@ -31,6 +31,8 @@ def _decode_whirlpool(raw, chain):
         "liquidity": chain._u128(raw, 49),
         "sqrt_price_x64": chain._u128(raw, 65),
         "tick_current": chain._i32(raw, 81),
+        "protocol_fee_owed_a": chain._u64(raw, 85),
+        "protocol_fee_owed_b": chain._u64(raw, 93),
         "mint_a": chain._key(raw, 101),
         "vault_a": chain._key(raw, 133),
         "mint_b": chain._key(raw, 181),
@@ -154,7 +156,6 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         pool_address, vault_a, vault_b, first["mint_a"], first["mint_b"],
         oracle_address,
     ] + tick_addresses
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Orca Whirlpool confirmed snapshot has an incomplete account list")
@@ -163,8 +164,9 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         raise ValueError("Orca Whirlpool pool account is unavailable or has an invalid owner")
     state = _decode_whirlpool(pool_acc.get("data"), chain)
     for field in ("tick_spacing", "fee_tier_index", "fee_rate", "protocol_fee_rate",
-                  "liquidity", "sqrt_price_x64", "tick_current", "mint_a",
-                  "mint_b", "vault_a", "vault_b"):
+                  "liquidity", "sqrt_price_x64", "tick_current",
+                  "protocol_fee_owed_a", "protocol_fee_owed_b",
+                  "mint_a", "mint_b", "vault_a", "vault_b"):
         if state[field] != first[field]:
             raise ValueError("Orca Whirlpool state changed between discovery and confirmed snapshot")
 
@@ -177,14 +179,26 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         raise ValueError("Orca Whirlpool vaults must use the legacy SPL Token program")
     reserve_a = chain._token_amount(vault_a_acc, state["mint_a"])
     reserve_b = chain._token_amount(vault_b_acc, state["mint_b"])
-    if reserve_a <= 0 or reserve_b <= 0:
-        raise ValueError("Orca Whirlpool vault reserves are empty")
+    spendable_reserve_a = reserve_a - state["protocol_fee_owed_a"]
+    spendable_reserve_b = reserve_b - state["protocol_fee_owed_b"]
+    if spendable_reserve_a <= 0 or spendable_reserve_b <= 0:
+        raise ValueError("Orca Whirlpool spendable vault reserves are empty after protocol fees")
 
     oracle_acc = accounts[5]
     if oracle_acc is not None:
-        # Orca creates the Oracle PDA for adaptive-fee pools. Static fee-tier
-        # pools do not need it; refuse any present oracle instead of guessing
-        # the adaptive-fee accumulator layout or quoting a stale base fee.
+        if oracle_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
+            raise ValueError("Orca Whirlpool oracle owner is invalid")
+        oracle_data = oracle_acc.get("data", b"")
+        if (
+            not isinstance(oracle_data, (bytes, bytearray))
+            or len(oracle_data) < 58
+            or oracle_data[:8] != chain._discriminator("Oracle")
+        ):
+            raise ValueError("Orca Whirlpool oracle layout is unknown; adaptive fees cannot be verified")
+        if chain._key(oracle_data, 8) != pool_address:
+            raise ValueError("Orca Whirlpool oracle belongs to a different pool")
+        # Static fee-tier pools do not require an Oracle PDA. Any valid Oracle
+        # account is therefore an adaptive-fee pool and is refused.
         raise ValueError("Orca Whirlpool adaptive-fee oracle is present; adaptive fees are unsupported")
 
     loaded_starts = []
@@ -212,7 +226,7 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         sorted(set(decoded_ticks)), zero_for_one, amount_in, state["fee_rate"],
         coverage_tick,
     )
-    output_reserve = reserve_b if zero_for_one else reserve_a
+    output_reserve = spendable_reserve_b if zero_for_one else spendable_reserve_a
     if quote["out_amount"] > output_reserve:
         raise ValueError("Orca Whirlpool quote exceeds the output vault reserve")
 
@@ -224,7 +238,10 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Orca Whirlpool price impact is invalid")
-    age = time.time() - snapshot_started
+    block_time = chain._rpc("getBlockTime", [slot])
+    if isinstance(block_time, bool) or not isinstance(block_time, (int, float)) or not math.isfinite(float(block_time)):
+        raise ValueError("Orca Whirlpool confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Orca Whirlpool confirmed snapshot is stale")
 
