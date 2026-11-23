@@ -102,19 +102,25 @@ When the wallet does not yet have its canonical legacy SPL token account, call
 and JSON containing `wallet` and `mint` (both public keys). The endpoint
 checks that the payer exists as a standard system-owned wallet account
 (with no account data), validates the mint owner/layout, derives the canonical
-ATA, checks wallet SOL, fetches the exact 165-byte token-account rent exemption
-and message fee, builds an Associated Token Program `CreateIdempotent`
-instruction, and simulates the unsigned transaction. The response contains the unsigned base64 transaction,
-ATA address, rent/fee/reserve breakdown, and simulation result. The connected
+ATA using the mint's actual token-program ID, checks wallet SOL, fetches the
+rent exemption for the required account size, obtains the message fee, builds
+an Associated Token Program `CreateIdempotent` instruction, and simulates the
+unsigned transaction. Legacy SPL accounts use 165 bytes. Supported Token-2022
+mints use the extension-aware account size returned by the shared inspector
+(170 bytes for ImmutableOwner, or 182 bytes when TransferFeeAmount is also
+required). Unsupported or unknown mint/account extensions fail closed. The
+response contains the unsigned base64 transaction, ATA address, token program,
+account size, rent/fee/reserve breakdown, and simulation result. The connected
 wallet must review and sign it locally; this endpoint never signs or broadcasts.
 
 If the ATA already exists and validates, the endpoint reports
-`ATA_ALREADY_EXISTS` and returns no transaction. Token-2022 mints are rejected.
-The order is a separate user-approved transaction; after it confirms, rerun
-wallet preflight and create the swap order. Rent and fees are estimates from
-confirmed RPC state and can change before signing; the wallet must review the
-transaction and current balance. This is not evidence of mainnet end-to-end
-execution.
+`ATA_ALREADY_EXISTS` and returns no transaction. Existing Token-2022 ATAs are
+validated against the expected token-program owner, mint, wallet authority,
+initialized state, and extension-aware layout. The order is a separate
+user-approved transaction; after it confirms, rerun wallet preflight and create
+the swap order. Rent and fees are estimates from confirmed RPC state and can
+change before signing; the wallet must review the transaction and current
+balance. This is not evidence of mainnet end-to-end execution.
 
 ## Read-only wallet preflight
 
