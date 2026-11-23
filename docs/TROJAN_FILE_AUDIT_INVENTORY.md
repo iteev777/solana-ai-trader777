@@ -50,7 +50,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `dexscreener_api.py` | `src/apis/dexscreener/` endpoint behavior | TESTED | New independent validated wrappers for token pools, token batches, pair lookup, search, token orders and supported chains; batch capped at 30 and path segments validated. Tests `test_dexscreener_api.py`; full validation `45254436959`.  |
-| `discovery/__init__.py` | Python package marker | NO-CHANGE | 19-rivinen? Ei: 19 tavun package marker luettu; ei sisällä logiikkaa eikä vaadi vastaavaa Rust-lähdetiedostoa. |
+| `discovery/__init__.py` | Python package marker | NO-CHANGE | 19 tavun pakettikuvaus luettu; ei sisällä suoritettavaa logiikkaa eikä vaadi vastaavaa Rust-lähdetiedostoa. |
 | `discovery/birdeye_scanner.py` | Birdeye source behavior; ScreenerBot discovery source set | PARTIAL | Koko tiedosto luettu: V3 token-list, 400/404/422 trending fallback, 1h quota cooldown, response-shape/duplicate checks ja virheen propagointi. Birdeye on Trojanin lisälähde eikä ScreenerBotin yksi-yhteen discovery-vastine. Provider-family konsensus pidetään Birdeye-yhtenä. |
 | `discovery/dexscreener_scanner.py` | `src/tokens/discovery_sources.rs` DexScreener profile/latest/top boost feeds | PARTIAL | Kolme feediä erillisinä tehtävinä ja endpoint-kohtaisina lähteinä; chain filtering, dedupe ja virheiden propagointi aggregaattorin health telemetryyn. Täysi payload- ja rate-limit-rajatapausvertailu vielä kesken. |
 | `discovery/gecko_scanner.py` | `src/tokens/discovery_sources.rs` Gecko new/trending/recently-updated | PARTIAL | Koko tiedosto luettu: base+quote-token pool candidates, Gecko pool normalization, base-only market-data attribution, recently-updated Solana network filter ja metadata. Reference's deferred rate-limit response (skip current tick/retry next tick) vs Trojan's source failure semantics needs full review. |
@@ -119,7 +119,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `strategy_rules.py` | `src/strategies/engine.rs`, `src/strategies/conditions/` | TESTED | Added bounded concurrent rule evaluation, deadline includes semaphore wait; saturation fails closed. Tests `test_strategy_rules.py`; full validation `45254436959`.  |
 | `swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
 | `telegram_alerts.py` | Ei vielä kartoitettu | PENDING |  |
-| `test_discovery.py` | Ei vielä kartoitettu | PENDING |  |
+| `test_discovery.py` | Trojanin discovery manual smoke script | NO-CHANGE | 478 tavun manuaalinen `collect_tokens()`-smoke script luettu; ei sisällä automaattisia assertioita eikä ScreenerBotissa ole vastaavaa Python CLI -tiedostoa. Varsinainen regressiotestaus on `tests/test_*discovery*.py`-tiedostoissa. |
 | `tests/test_advanced_security_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_api_client_stats.py` | `src/apis/` client tests | TESTED | Covers per-host/per-endpoint request, cache, latency and failure telemetry; full validation `45254436959`. |
 | `tests/test_ata_manager.py` | `src/chains/solana/assets/ata/helpers.rs`, `close.rs`, `wsol_sweep.rs` | PARTIAL | Testit kattavat legacy SPL + Token-2022 ATA:n luonnin, immutable owner -tilin, transfer-fee-koon/rentin, transfer hook -eston, olemassa olevan ATA:n, riittämättömät varat ja virhetilanteita. Referenssin sulkemisen kilpailutilanteet, zero-balance retry ja WSOL sweep -idle-guard puuttuvat. |
@@ -143,13 +143,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dexscreener_api.py` | DexScreener API behavior tests | TESTED | Covers token pools, batch lookup, pair lookup, search, token orders and supported chains; full validation `45254436959`. |
-| `tests/test_dexscreener_discovery.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_dexscreener_discovery_config.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_dexscreener_discovery.py` | `src/tokens/discovery_sources.rs` DexScreener feed behavior | PARTIAL | Testaa profiles/latest/top boosts erikseen, Solana chain filterin, dedupen, virheiden näkyvyyden, fallback wrapperin, provider-resulttien katkaisun sekä aggregator task registrationin. 1 022-testin aiempi run ja uudempi discovery-test run `45257922212` hyväksytty; koko tiedoston rivikohtainen auditointi avoin. |
+| `tests/test_dexscreener_discovery_config.py` | `src/tokens/discovery.rs` per-feed config | PARTIAL | Testaa provider-level ja endpoint-level DexScreener enable/disable -kytkimet. Runtime config reload -pariteetti vielä avoin. |
 | `tests/test_dexscreener_rate_buckets.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_discovery_mint_normalization.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_discovery_provenance.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_discovery_source_failures.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_discovery_source_health.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_discovery_mint_normalization.py` | `src/tokens/discovery.rs::normalize_mint` | PARTIAL | Testaa oikean Solana Pubkeyn pituuden, chainin, malformed base58in ja native/quote asset exclusionin. Reference käyttää chain adapter -validointia; Trojanin normalize_token käyttää Solana-spesifistä Pubkey-validointia. |
+| `tests/test_discovery_provenance.py` | `src/tokens/discovery.rs` CandidateAggregate | PARTIAL | Testaa saman providerin useiden feedien laskemisen yhdeksi riippumattomaksi lähteeksi, eri providerien konsensuksen ja virheelliset market metrics -arvot. Birdeye meme listing -provider attribution korjattu. |
+| `tests/test_discovery_source_failures.py` | `src/tokens/discovery.rs` per-source errors | PARTIAL | Testaa Gecko/Birdeye/meme-listing transport errors ja puuttuvat API-avaimet; virheet eivät saa muuttua onnistuneiksi tyhjiksi tuloksiksi. |
+| `tests/test_discovery_source_health.py` | `src/tokens/discovery.rs` DiscoveryStats | PARTIAL | Testaa lähteen latency/success/failure history ja independent-provider ranking. Trojan persistoi health-statistiikan SQLiteen; reference käyttää per-run statsia ja typed deferred rate-limit skip -tilaa. |
 | `tests/test_entry_intelligence.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_exit_policy.py` | `src/trader/evaluators/exit_rules.rs` and individual exit rule tests | PARTIAL | Testit luettu; stop-loss-prioriteetti, peak-based trailing, break-even, take-profit, stagnation, max-hold, invalid price/config ja trailing bands. Verrattava vielä koko referenssin edge-case testimatriisiin. |
 | `tests/test_expanded_rugcheck_risk.py` | Ei vielä kartoitettu | PENDING |  |
@@ -215,7 +215,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_rugcheck_holder_lp_controls.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_report_propagation.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_safety_and_market_data.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_screenerbot_discovery_sources.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_screenerbot_discovery_sources.py` | `src/tokens/discovery_sources.rs` | PARTIAL | Testaa RugCheck/Jupiter feed mergeä, erillisiä Jupiter endpointteja, invalid payload errors sekä CoinGecko/DeFiLlama Solana contract filters. Full parameter/rate-limit parity review avoin. |
 | `tests/test_screenerbot_parity_foundation.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_screenerbot_rugcheck_defaults.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_standard_indicator_math.py` | Ei vielä kartoitettu | PENDING |  |
@@ -225,7 +225,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token2022_inspector.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token2022_inspector_api.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_token_aggregator.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_token_aggregator.py` | `src/tokens/discovery.rs` | PARTIAL | Testaa source health persistence, per-feed enablement, concurrent merge, source provenance, data enrichment without overwriting good values and provider-family consensus. Birdeye meme feed now counts under Birdeye, not as a second provider. Unit test run `45257922212` passed. |
 | `tests/test_trading_control.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_wallet_balances.py` | `src/chains/solana/accounts/balances.rs` tests | TESTED | Uudet testit tyhjälle syötteelle, järjestykselle, invalid-keylle, 50-koon erärajalle, tuntemattomalle saldolle, virheelliselle vastaukselle ja eräkohtaiselle RPC-virheelle. Commit `f71e667`; 1 022 unit testiä hyväksytty ajossa `45256897201`; täysi validointi `45256883273` hyväksytty. |
 | `tests/test_wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs` | PARTIAL | Wallet preflight -testit luettu; testaa legacy-token-tilien omistajuuden, mintin, määrän, reserve-vaatimuksen ja yhden confirmed-snapshotin. Batch SOL-balance -ominaisuus katetaan erillisessä uudessa moduulissa. |
