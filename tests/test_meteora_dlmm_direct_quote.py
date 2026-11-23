@@ -169,6 +169,18 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         self.assertGreaterEqual(result["bins_crossed"], 1)
         self.assertGreater(result["max_fee_rate"], 400_004)
 
+    def test_bin_array_traversal_is_bounded_to_eight_consecutive_arrays(self):
+        self.assertEqual(
+            dlmm._array_indices(100, True, -1000, 1000),
+            [1, 0, -1, -2, -3, -4, -5, -6],
+        )
+        self.assertEqual(
+            dlmm._array_indices(100, False, -1000, 1000),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        )
+        with self.assertRaisesRegex(ValueError, "traversal limit"):
+            dlmm._array_indices(100, True, -1000, 1000, max_arrays=9)
+
     def test_quote_refuses_when_amount_exceeds_loaded_bin_arrays(self):
         with self.assertRaisesRegex(ValueError, "coverage"):
             self.quote(amount=10**12)
