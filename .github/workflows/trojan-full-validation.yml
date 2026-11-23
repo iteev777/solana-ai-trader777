@@ -1,13 +1,6 @@
 name: Trojan V2 full validation
 
 on:
-  branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - ".github/workflows/trojan-full-validation.yml"
-      - "**.py"
-      - "tests/**"
-      - "requirements.txt"
   workflow_dispatch:
 
 permissions:
