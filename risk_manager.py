@@ -1,5 +1,6 @@
 import math
 import os
+from datetime import datetime, timezone
 
 
 # ==========================================
@@ -42,6 +43,28 @@ MAX_DAILY_LOSS = _env_number(
     "TROJAN_MAX_DAILY_LOSS_USD",
     50.00,
     0.01
+)
+
+PERIOD_LOSS_WINDOW_HOURS = _env_number(
+    "TROJAN_PERIOD_LOSS_WINDOW_HOURS", 24.0, 1.0
+)
+MAX_PERIOD_LOSS = _env_number(
+    "TROJAN_MAX_PERIOD_LOSS_USD", MAX_DAILY_LOSS, 0.01
+)
+
+
+def _env_nonnegative_count(name, default):
+    try:
+        value = int(os.getenv(name, str(default)))
+        if value >= 0:
+            return value
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return int(default)
+
+
+REENTRY_COOLDOWN_MINUTES = _env_nonnegative_count(
+    "TROJAN_REENTRY_COOLDOWN_MINUTES", 15
 )
 MAX_TRADE_BALANCE_FRACTION = min(
     1.0,
@@ -98,6 +121,47 @@ def get_position_limit(strategy):
 # TRADE APPROVAL WITH REASON
 # ==========================================
 
+def _check_history_guards(token_address, mode):
+    """Fail closed on rolling realized-loss and per-token re-entry guards."""
+    if token_address is None:
+        return True, None
+    if not isinstance(token_address, str) or not token_address.strip():
+        return False, "INVALID TOKEN ADDRESS FOR HISTORY GUARDS"
+    if mode not in ("paper", "live"):
+        return False, "INVALID TRADING MODE FOR HISTORY GUARDS"
+    try:
+        import database
+        period_loss = database.get_period_realized_loss(
+            mode, PERIOD_LOSS_WINDOW_HOURS
+        )
+    except Exception:
+        return False, "PERIOD LOSS HISTORY UNAVAILABLE"
+    if not valid_number(period_loss) or float(period_loss) < 0:
+        return False, "PERIOD LOSS HISTORY INVALID"
+    if float(period_loss) >= MAX_PERIOD_LOSS:
+        return False, "ROLLING PERIOD LOSS LIMIT REACHED"
+
+    if REENTRY_COOLDOWN_MINUTES > 0:
+        try:
+            last_exit = database.get_last_exit_timestamp(token_address, mode)
+        except Exception:
+            return False, "RE-ENTRY COOLDOWN HISTORY UNAVAILABLE"
+        if last_exit:
+            try:
+                exited_at = datetime.fromisoformat(last_exit)
+                if exited_at.tzinfo is None:
+                    exited_at = exited_at.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - exited_at.astimezone(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return False, "RE-ENTRY COOLDOWN TIMESTAMP INVALID"
+            if elapsed < 0:
+                return False, "RE-ENTRY COOLDOWN TIMESTAMP IS IN THE FUTURE"
+            if elapsed < REENTRY_COOLDOWN_MINUTES * 60:
+                return False, "RE-ENTRY COOLDOWN ACTIVE"
+
+    return True, None
+
+
 def check_trade_risk(
     balance,
     open_positions,
@@ -105,7 +169,9 @@ def check_trade_risk(
     trade_size,
     strategy="main",
     main_positions=None,
-    sniper_positions=None
+    sniper_positions=None,
+    token_address=None,
+    mode="paper"
 ):
 
     if strategy not in VALID_STRATEGIES:
@@ -159,6 +225,10 @@ def check_trade_risk(
     if daily_loss >= MAX_DAILY_LOSS:
         return False, "DAILY LOSS LIMIT REACHED"
 
+    history_allowed, history_reason = _check_history_guards(token_address, mode)
+    if not history_allowed:
+        return False, history_reason
+
     if open_positions >= MAX_TOTAL_POSITIONS:
         return False, "TOTAL POSITION LIMIT REACHED"
 
@@ -201,7 +271,9 @@ def can_open_trade(
     trade_size,
     strategy="main",
     main_positions=None,
-    sniper_positions=None
+    sniper_positions=None,
+    token_address=None,
+    mode="paper"
 ):
 
     approved, _ = check_trade_risk(
@@ -211,7 +283,9 @@ def can_open_trade(
         trade_size=trade_size,
         strategy=strategy,
         main_positions=main_positions,
-        sniper_positions=sniper_positions
+        sniper_positions=sniper_positions,
+        token_address=token_address,
+        mode=mode
     )
 
     return approved
@@ -284,6 +358,9 @@ def get_risk_summary():
         "max_sniper_positions": MAX_SNIPER_POSITIONS,
         "max_total_positions": MAX_TOTAL_POSITIONS,
         "max_daily_loss": MAX_DAILY_LOSS,
+        "period_loss_window_hours": PERIOD_LOSS_WINDOW_HOURS,
+        "max_period_loss": MAX_PERIOD_LOSS,
+        "reentry_cooldown_minutes": REENTRY_COOLDOWN_MINUTES,
         "max_trade_balance_fraction": MAX_TRADE_BALANCE_FRACTION,
         "stop_loss_percent": STOP_LOSS_PERCENT,
         "take_profit_percent": TAKE_PROFIT_PERCENT
