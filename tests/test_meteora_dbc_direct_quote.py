@@ -72,10 +72,13 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         config_account = self.config_account if config_data is None else {
             "owner": chain.PROGRAMS["meteora_dbc"], "data": config_data
         }
+        snapshot_accounts = list(self.accounts if accounts is None else accounts)
+        if config_data is not None:
+            snapshot_accounts[1] = config_account
         with (
             patch.object(chain, "_account", side_effect=[self.pool_account, config_account]),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(
-                self.accounts if accounts is None else accounts, 654321
+                snapshot_accounts, 654321
             )),
         ):
             return quote_meteora_dbc_pool(
