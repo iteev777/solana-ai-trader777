@@ -169,6 +169,10 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(status["live_trading_ready"])
         self.assertTrue(status["pool_discovery"]["automatic_pair_matching"])
         self.assertEqual(status["pool_discovery"]["max_candidates_per_pair"], 20)
+        self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["available"])
+        self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_required"])
+        self.assertFalse(status["native_transaction_builders"]["raydium_cpmm"]["live_execution"])
+        self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
     @patch("dex_engine.build_routes")
     def test_dashboard_compatibility_accepts_comma_separated_pool_list(self, build):
