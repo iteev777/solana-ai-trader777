@@ -317,6 +317,20 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         ),
         reverse=True
     )
+    # A route cannot be called definitively best when some eligible routes
+    # lack comparable network-fee estimates in the output mint. Keep the
+    # provisional selection visible, but label its confidence explicitly.
+    unpriced_eligible_routes = [
+        item["provider_key"] for item in candidates
+        if not item["network_fee_priced"]
+    ]
+    ranking_confidence = (
+        "COST_ADJUSTED"
+        if candidates and not unpriced_eligible_routes
+        else "PROVISIONAL_UNPRICED_NETWORK_COSTS"
+        if candidates
+        else "NO_ELIGIBLE_ROUTES"
+    )
     if candidates:
         candidates[0]["selected"] = True
     selected = candidates[0] if candidates else None
@@ -336,10 +350,19 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         "best_provider": selected["provider"] if selected else None,
         "best_pool": selected["pool_id"] if selected else None,
         "comparison_basis": "net_minimum_output_same_output_mint_raw_units",
+        "ranking_confidence": ranking_confidence,
+        "ranking_is_provisional": bool(unpriced_eligible_routes),
+        "unpriced_eligible_route_count": len(unpriced_eligible_routes),
+        "unpriced_eligible_route_keys": unpriced_eligible_routes,
+        "ranking_note": (
+            "Selected route is provisional; missing network fees may change route order"
+            if unpriced_eligible_routes else
+            "All eligible routes include comparable output-mint network fee estimates"
+            if candidates else
+            "No route passed eligibility checks"
+        ),
         "network_costs": "only explicit output-mint-denominated estimates are deducted",
-        "unpriced_network_costs_may_change_ranking": any(
-            key not in fee_estimates for key in ["jupiter", "raptor"]
-        ) or any("direct:" + address not in fee_estimates for address in pools),
+        "unpriced_network_costs_may_change_ranking": bool(unpriced_eligible_routes),
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
         "execution": "LOCKED",
         "signing": "DISABLED",
