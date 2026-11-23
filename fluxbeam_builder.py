@@ -75,6 +75,12 @@ def _token_account_amount(account, expected_program, expected_mint, expected_own
         unsupported = {item["type"] for item in extensions} - SUPPORTED_TOKEN_ACCOUNT_EXTENSIONS
         if unsupported:
             raise ValueError(label + " has unsupported Token-2022 account extensions")
+        expected_lengths = {2: 8, 7: 0}
+        for extension in extensions:
+            if extension["length"] != expected_lengths[extension["type"]]:
+                raise ValueError(
+                    label + " has an invalid " + extension["name"] + " extension length"
+                )
     return int.from_bytes(raw[64:72], "little")
 
 
@@ -116,7 +122,10 @@ def build_fluxbeam_swap(quote, wallet, user_input_token_account,
         or fresh.get("input_amount") != amount
     ):
         raise ValueError("Fresh FluxBeam quote does not validate pool, pair and amount")
+    fresh_out = _u64(fresh.get("out_amount"), "fresh quote output")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
+    if minimum_out > fresh_out:
+        raise ValueError("Fresh FluxBeam minimum output exceeds its quoted output")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh FluxBeam quote is older than the supplied quote")
