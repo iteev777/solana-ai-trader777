@@ -578,7 +578,7 @@ def api_blacklist():
             "entries": blacklist.get_entries(
                 entry_type=entry_type,
                 include_inactive=include_inactive,
-                limit=request.args.get("limit", 500, type=int),
+                limit=request.args.get("limit", default=500, type=int) or 500,
             ),
             "types": list(blacklist.ENTRY_TYPES),
         })
