@@ -263,7 +263,11 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.assertEqual(result["execution"], "LOCKED")
 
     def test_native_builder_binds_token_programs_to_each_token2022_mint(self):
-        quote = self.quote()
+        quote = dict(
+            self.quote(),
+            token_program_input=chain.TOKEN_2022_PROGRAM,
+            token_program_output=chain.TOKEN_PROGRAM,
+        )
         wallet = chain._b58encode(bytes([31]) * 32)
         user_in = chain._b58encode(bytes([32]) * 32)
         user_out = chain._b58encode(bytes([33]) * 32)
