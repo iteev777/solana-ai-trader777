@@ -6,7 +6,7 @@ import solana_onchain as chain
 
 class PumpSwapDirectQuoteTests(unittest.TestCase):
     def setUp(self):
-        self.pool = "pump-pool"
+        self.pool = chain._b58encode(bytes([7]) * 32)
         self.base_mint = chain._b58encode(bytes([1]) * 32)
         self.quote_mint = chain._b58encode(bytes([2]) * 32)
         self.base_vault = chain._b58encode(bytes([3]) * 32)
@@ -68,15 +68,33 @@ class PumpSwapDirectQuoteTests(unittest.TestCase):
             cursor += 8
         self.fee_data = bytes(fee)
 
-        def token_account(mint, amount):
-            data = bytearray(165)
+        def token_account(mint, amount, owner=chain.TOKEN_PROGRAM, transfer_fee=False):
+            data = bytearray(178 if transfer_fee else 165)
             data[:32] = chain._b58decode(mint)
+            data[32:64] = chain._b58decode(self.pool)
             data[64:72] = amount.to_bytes(8, "little")
-            return {"owner": chain.TOKEN_PROGRAM, "data": bytes(data)}
+            data[108] = 1
+            if transfer_fee:
+                data[165] = 2
+                data[166:168] = (2).to_bytes(2, "little")
+                data[168:170] = (8).to_bytes(2, "little")
+            return {"owner": owner, "data": bytes(data)}
 
-        def mint_account(decimals=6, owner=None):
-            data = bytearray(82)
+        def mint_account(decimals=6, owner=None, transfer_fee=False):
+            if transfer_fee:
+                from token2022_inspector import MINT_ACCOUNT_TYPE
+                data = bytearray(166)
+                data[165] = MINT_ACCOUNT_TYPE
+                config = bytearray(108)
+                config[80:88] = (10_000).to_bytes(8, "little")
+                config[88:90] = (100).to_bytes(2, "little")
+                config[98:106] = (10_000).to_bytes(8, "little")
+                config[106:108] = (100).to_bytes(2, "little")
+                data.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+            else:
+                data = bytearray(82)
             data[44] = decimals
+            data[45] = 1
             return {"owner": owner or chain.TOKEN_PROGRAM, "data": bytes(data)}
 
         self.accounts = [
@@ -88,6 +106,31 @@ class PumpSwapDirectQuoteTests(unittest.TestCase):
             mint_account(6),
             mint_account(9),
         ]
+
+    def _token2022_mint(self, decimals):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        data = bytearray(166)
+        data[44] = decimals
+        data[45] = 1
+        data[165] = MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        data.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(data)}
+
+    def _token2022_account(self, mint, amount):
+        raw = bytearray(178)
+        raw[:32] = chain._b58decode(mint)
+        raw[32:64] = chain._b58decode(self.pool)
+        raw[64:72] = amount.to_bytes(8, "little")
+        raw[108] = 1
+        raw[165] = 2
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (8).to_bytes(2, "little")
+        return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
 
     def quote(self, input_mint=None, amount=10_000, **kwargs):
         with patch.object(chain, "_account", return_value={
@@ -119,6 +162,36 @@ class PumpSwapDirectQuoteTests(unittest.TestCase):
         self.assertEqual(result["total_fee_amount"], 249)
         self.assertEqual(result["out_amount"], 19_551)
         self.assertEqual(result["minimum_out_amount"], 19_355)
+
+    def test_token2022_base_transfer_fee_is_applied_to_buy_output_and_sell_input(self):
+        accounts = list(self.accounts)
+        accounts[3] = token_base = self._token2022_account(self.base_mint, 1_000_000)
+        accounts[5] = self._token2022_mint(6)
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": self.pool_data
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
+            buy = chain.quote_pumpswap_pool(self.pool, self.quote_mint, 10_000)
+            sell = chain.quote_pumpswap_pool(self.pool, self.base_mint, 10_000)
+        self.assertTrue(buy["token2022_output_transfer_fee"])
+        self.assertLess(buy["out_amount"], buy["output_amount_gross"])
+        self.assertTrue(sell["token2022_input_transfer_fee"])
+        self.assertEqual(sell["token2022_input_received_by_pool"], 9_900)
+        self.assertEqual(buy["token_program_base"], chain.TOKEN_2022_PROGRAM)
+
+    def test_token2022_quote_transfer_fee_is_applied_to_buy_input_and_sell_output(self):
+        accounts = list(self.accounts)
+        accounts[4] = self._token2022_account(self.quote_mint, 2_000_000)
+        accounts[6] = self._token2022_mint(9)
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": self.pool_data
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
+            buy = chain.quote_pumpswap_pool(self.pool, self.quote_mint, 10_000)
+            sell = chain.quote_pumpswap_pool(self.pool, self.base_mint, 10_000)
+        self.assertTrue(buy["token2022_input_transfer_fee"])
+        self.assertEqual(buy["token2022_input_received_by_pool"], 9_900)
+        self.assertTrue(sell["token2022_output_transfer_fee"])
+        self.assertLess(sell["out_amount"], sell["output_amount_gross"])
+        self.assertEqual(sell["token_program_quote"], chain.TOKEN_2022_PROGRAM)
 
     def test_decoder_reads_signed_virtual_reserves_and_appended_pool_flags(self):
         decoded = chain._decode_pool("pumpswap", self.pool_data)
