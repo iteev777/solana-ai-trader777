@@ -331,6 +331,8 @@ def get_engine_status():
     import pool_registry
     routers = route_comparison.get_router_status()
     chain = solana_onchain.get_onchain_status()
+    from native_execution import get_native_execution_status
+    native_execution_status = get_native_execution_status()
     try:
         registry_status = pool_registry.get_pool_registry_status()
     except Exception as error:
@@ -381,6 +383,7 @@ def get_engine_status():
                 "reason": "Protocol-specific account layouts and instruction builders are not yet validated",
             },
         },
+        "native_execution": native_execution_status,
         "execution_locked": True,
         "signing_available": False,
         "broadcast_available": False,
