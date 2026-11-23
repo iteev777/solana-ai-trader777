@@ -137,6 +137,50 @@ def get_native_execution_status():
     }
 
 
+def get_native_transaction_status(signature):
+    """Read-only confirmation lookup for a previously submitted signature."""
+    if not isinstance(signature, str) or not signature or len(signature) > 100:
+        raise NativeExecutionRejected("A valid Solana transaction signature is required")
+    try:
+        decoded = chain._b58decode(signature)
+    except Exception:
+        raise NativeExecutionRejected("Transaction signature is not valid base58")
+    if len(decoded) != 64:
+        raise NativeExecutionRejected("Transaction signature must decode to 64 bytes")
+    result = chain._rpc("getSignatureStatuses", [
+        [signature],
+        {"searchTransactionHistory": True},
+    ])
+    if not isinstance(result, dict) or not isinstance(result.get("value"), list) or len(result["value"]) != 1:
+        raise NativeExecutionRejected("RPC returned a malformed signature status")
+    status = result["value"][0]
+    if status is None:
+        return {"signature": signature, "status": "NOT_FOUND", "confirmed": False, "err": None}
+    if not isinstance(status, dict):
+        raise NativeExecutionRejected("RPC returned a malformed transaction status entry")
+    error = status.get("err")
+    confirmation = status.get("confirmationStatus")
+    if error is not None:
+        state = "FAILED"
+    elif confirmation == "finalized":
+        state = "FINALIZED"
+    elif confirmation == "confirmed":
+        state = "CONFIRMED"
+    elif confirmation == "processed":
+        state = "PROCESSED"
+    else:
+        state = "PENDING"
+    return {
+        "signature": signature,
+        "status": state,
+        "confirmed": state in ("CONFIRMED", "FINALIZED"),
+        "finalized": state == "FINALIZED",
+        "slot": status.get("slot"),
+        "confirmations": status.get("confirmations"),
+        "err": error,
+    }
+
+
 def execute_native_signed_transaction(signed_transaction, request_id, confirmed=False):
     """Verify exact message and external signature, then broadcast once if gated."""
     if not _enabled():
