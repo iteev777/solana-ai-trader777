@@ -252,8 +252,13 @@ def inspect_token2022_account(address):
         "broadcast": "NOT_PERFORMED",
     }
 
-def validate_zero_fee_mint_data(raw):
-    """Allow only Token-2022 mints whose current and future transfer fees are zero."""
+def validate_swap_compatible_mint_data(raw):
+    """Validate mint extensions supported by the native swap builders.
+
+    TransferFeeConfig is allowed and returned for conservative quote math.
+    Transfer hooks, confidential transfers, pausable/non-transferable behavior,
+    and all other unimplemented mint extensions remain hard blockers.
+    """
     if not isinstance(raw, (bytes, bytearray)) or len(raw) < 82 or raw[45] != 1:
         raise Token2022LayoutError("Token-2022 mint base state is invalid or uninitialized")
     if len(raw) == 82:
@@ -263,6 +268,13 @@ def validate_zero_fee_mint_data(raw):
     if any(extension["type"] not in allowed for extension in extensions):
         raise Token2022LayoutError("Token-2022 mint has an extension unsupported by native swap builders")
     transfer_config = decode_transfer_fee_config(raw)
+    return {"extensions": extensions, "transfer_fee_config": transfer_config}
+
+
+def validate_zero_fee_mint_data(raw):
+    """Retain the strict zero-fee gate for protocol paths not yet fee-aware."""
+    result = validate_swap_compatible_mint_data(raw)
+    transfer_config = result["transfer_fee_config"]
     if transfer_config is not None:
         for schedule_name in ("older", "newer"):
             schedule = transfer_config[schedule_name]
@@ -284,7 +296,7 @@ def validate_zero_fee_mint_data(raw):
                     raise Token2022LayoutError("Token-2022 transfer fee authority must be permanently disabled")
                 break
             offset = value_end
-    return {"extensions": extensions, "transfer_fee_config": transfer_config}
+    return result
 
 
 def validate_token2022_account_data(account, mint, authority, label="Token-2022 account",
