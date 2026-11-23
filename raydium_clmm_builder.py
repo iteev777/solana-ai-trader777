@@ -159,8 +159,9 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
             token2022.validate_swap_compatible_mint_data(mint_raw)
         elif not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
             raise ValueError("CLMM mint is not an initialized legacy SPL Token mint")
-    if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
-        raise ValueError("CLMM mint account layout is invalid")
+    if (chain._mint_decimals(mint0_acc) != current["decimals_0"]
+            or chain._mint_decimals(mint1_acc) != current["decimals_1"]):
+        raise ValueError("CLMM pool decimals do not match the confirmed mint account layouts")
     token_program_input = token_program_0 if input_mint == current["mint_0"] else token_program_1
     token_program_output = token_program_1 if input_mint == current["mint_0"] else token_program_0
     if (fresh.get("token_program_input") != token_program_input
