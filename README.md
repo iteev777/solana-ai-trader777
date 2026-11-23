@@ -112,6 +112,7 @@ The dashboard exposes `/api/dex-status` and `/api/dex-route`. The route engine f
 
 Optional limits: `TROJAN_DEX_MAX_QUOTE_AGE_SECONDS=8`, `TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT=3`, and `TROJAN_DEX_MAX_HOPS=4`. Unknown quote freshness and unknown price impact fail closed. This is route selection only: transaction signing, broadcast and live trading remain disabled.
 
+
 ## Health and readiness
 
 The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, and `/api/performance`. The strategy-performance view counts closed SELL trades only and reports realized P/L and win rate separately for MAIN and SNIPER. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
