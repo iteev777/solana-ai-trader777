@@ -878,7 +878,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/access/own_rpc.rs` | PENDING |  |
 | `src/chains/solana/access/service.rs` | PENDING |  |
 | `src/chains/solana/access/wire.rs` | PENDING |  |
-| `src/chains/solana/accounts/balances.rs` | PENDING |  |
+| `src/chains/solana/accounts/balances.rs` | IMPLEMENTED | `wallet_balances.py`, `tests/test_wallet_balances.py` | Independent batch SOL balance reader added: 50-account chunks, input-order preservation, invalid-address isolation, missing-account zero vs RPC-unknown distinction and per-batch failure isolation. Commits `b58a806`, `f71e667`; validation pending. Remaining broader ATA token-holdings functionality is separately mapped to `ata_manager.py`/`wallet_preflight.py` and remains open. |
 | `src/chains/solana/accounts/keypair.rs` | PENDING |  |
 | `src/chains/solana/accounts/mod.rs` | PENDING |  |
 | `src/chains/solana/accounts/signing.rs` | PENDING |  |
