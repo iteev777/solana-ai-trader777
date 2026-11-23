@@ -89,9 +89,10 @@ def wait_finalized(signature, last_valid_height):
         height = rpc("getBlockHeight", [{"commitment": "confirmed"}])
         if isinstance(height, bool) or not isinstance(height, int):
             raise RuntimeError("Devnet returned an invalid block height while waiting for finality")
-        if height > last_valid_height:
+        if height > last_valid_height and status is None:
             raise RuntimeError(
-                "Transaction blockhash expired before finality; signature outcome must be checked manually"
+                "Transaction blockhash expired and signature is not yet visible; outcome is unknown. "
+                "Do not resubmit. Signature: " + signature
             )
         time.sleep(2)
     # One final status lookup avoids treating a slow status index as proof of failure.
