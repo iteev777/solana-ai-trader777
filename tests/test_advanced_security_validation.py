@@ -38,10 +38,35 @@ class TokenSecurityTests(unittest.TestCase):
         self.assertEqual(report["mint_authority"], "DISABLED")
         self.assertEqual(report["freeze_authority"], "DISABLED")
         self.assertEqual(report["top10_token_account_pct"], 30.0)
+        self.assertEqual(report["largest_token_account_details"][0]["address"], "11111111111111111111111111111111")
+        self.assertEqual(report["largest_token_account_details"][0]["authority"], "11111111111111111111111111111111")
+        self.assertEqual(report["top_owner_account_authorities"], ["11111111111111111111111111111111"])
         self.assertTrue(token_security.evaluate_token_security(report)["allowed"])
 
     def test_missing_report_fails_closed(self):
         self.assertFalse(token_security.evaluate_token_security(None)["allowed"])
+
+
+    @patch("solana_onchain._rpc")
+    def test_owner_lookup_failure_keeps_account_addresses_and_returns_report(self, rpc):
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": "100000000", "decimals": 6}},
+            {"value": [
+                {"address": "11111111111111111111111111111111", "amount": "30000000"}
+            ]},
+            RuntimeError("optional owner RPC unavailable"),
+        ]
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            report = token_security.get_token_security_report("MintAddress")
+        self.assertEqual(len(report["largest_token_account_details"]), 1)
+        self.assertIsNone(report["largest_token_account_details"][0]["authority"])
+        self.assertEqual(report["top_owner_account_authorities"], [])
+
 
 
 class ProtocolValidationTests(unittest.TestCase):
