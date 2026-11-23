@@ -163,8 +163,8 @@ def _decode_user_token_account(account, expected_owner, expected_mint, label):
     if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM_ID:
         raise ValueError(label + " must be owned by the legacy SPL Token program")
     raw = account.get("data", b"")
-    if len(raw) < 165:
-        raise ValueError(label + " is missing or has an invalid SPL token account layout")
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
+        raise ValueError(label + " must use the exact 165-byte legacy SPL token account layout")
     if chain._key(raw, 0) != expected_mint:
         raise ValueError(label + " mint does not match the requested swap mint")
     if chain._key(raw, 32) != expected_owner:
