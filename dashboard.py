@@ -724,6 +724,67 @@ def api_dex_route():
         return jsonify({"error": "DEX route selection failed", "detail": str(error)[:180]}), 502
 
 
+@app.get("/api/raydium-cpmm-quote")
+def api_raydium_cpmm_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from solana_onchain import quote_raydium_cpmm_pool
+        quote = quote_raydium_cpmm_pool(
+            pool_address, input_mint, int(amount_raw), slippage
+        )
+        quote["slippage_bps"] = slippage
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Raydium CPMM quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/raydium-cpmm-order")
+def api_raydium_cpmm_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from raydium_cpmm_builder import (
+            build_raydium_cpmm_swap,
+            simulate_raydium_cpmm_transaction,
+        )
+        order = build_raydium_cpmm_swap(
+            payload.get("quote"),
+            payload.get("wallet"),
+            payload.get("user_input_token_account"),
+            payload.get("user_output_token_account"),
+        )
+        simulation = simulate_raydium_cpmm_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            # Do not return a transaction that failed simulation.
+            return jsonify({
+                "created": False,
+                "simulation": simulation,
+                "execution": "LOCKED",
+                "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Raydium CPMM native order failed", "detail": str(error)[:180]}), 502
+
+
 @app.get("/api/strategy-catalog")
 def api_strategy_catalog():
     from strategy_catalog import get_strategy_catalog
