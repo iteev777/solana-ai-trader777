@@ -10,6 +10,25 @@ def key(byte):
     return chain._b58encode(bytes([byte]) * 32)
 
 
+def token2022_mint_data(with_transfer_fee=False):
+    if not with_transfer_fee:
+        raw = bytearray(82)
+        raw[44] = 6
+        raw[45] = 1
+        return bytes(raw)
+    raw = bytearray(166)
+    raw[44] = 6
+    raw[45] = 1
+    raw[165] = 1  # Mint account type
+    config = bytearray(108)
+    config[80:88] = (10_000).to_bytes(8, "little")
+    config[88:90] = (100).to_bytes(2, "little")
+    config[98:106] = (10_000).to_bytes(8, "little")
+    config[106:108] = (100).to_bytes(2, "little")
+    raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+    return bytes(raw)
+
+
 class AtaManagerTests(unittest.TestCase):
     def setUp(self):
         self.wallet = key(1)
@@ -63,10 +82,87 @@ class AtaManagerTests(unittest.TestCase):
         # One compiled instruction; the final instruction data byte is CreateIdempotent.
         self.assertEqual(message[-1], 1)
 
+    @patch("ata_manager.chain._rpc")
     @patch("ata_manager._rpc_account")
-    def test_rejects_token_2022_mint(self, account):
-        account.side_effect = [self.wallet_account, {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(82)}]
-        with self.assertRaisesRegex(ValueError, "Token-2022"):
+    def test_builds_token2022_ata_with_immutable_owner_account_size(self, account, rpc):
+        mint_data = token2022_mint_data()
+        ata = chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint)], ata_manager.ASSOCIATED_TOKEN_PROGRAM_ID,
+        )[0]
+        account.side_effect = [
+            self.wallet_account,
+            {"owner": chain.TOKEN_2022_PROGRAM, "data": mint_data},
+            None,
+        ]
+        rpc.side_effect = [
+            {"value": 100_000_000},
+            1_513_840,
+            {"value": {"blockhash": key(3), "lastValidBlockHeight": 999}},
+            {"value": 5_000},
+            {"value": {"err": None, "unitsConsumed": 22_000, "logs": []}},
+        ]
+        result = ata_manager.create_ata_order(self.wallet, self.mint, 1_000_000)
+        self.assertEqual(result["ata"], ata)
+        self.assertEqual(result["token_program"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_account_size"], 170)
+        self.assertEqual(rpc.call_args_list[1].args[0], "getMinimumBalanceForRentExemption")
+        self.assertEqual(rpc.call_args_list[1].args[1][0], 170)
+
+    @patch("ata_manager.chain._rpc")
+    @patch("ata_manager._rpc_account")
+    def test_transfer_fee_mint_uses_larger_ata_size_and_rent(self, account, rpc):
+        mint_data = token2022_mint_data(with_transfer_fee=True)
+        account.side_effect = [
+            self.wallet_account,
+            {"owner": chain.TOKEN_2022_PROGRAM, "data": mint_data},
+            None,
+        ]
+        rpc.side_effect = [
+            {"value": 100_000_000},
+            1_574_800,
+            {"value": {"blockhash": key(3), "lastValidBlockHeight": 999}},
+            {"value": 5_000},
+            {"value": {"err": None, "unitsConsumed": 22_000, "logs": []}},
+        ]
+        result = ata_manager.create_ata_order(self.wallet, self.mint, 1_000_000)
+        self.assertEqual(result["token_account_size"], 182)
+        self.assertEqual(result["rent_lamports"], 1_574_800)
+        self.assertEqual(rpc.call_args_list[1].args[1][0], 182)
+
+    @patch("ata_manager._rpc_account")
+    def test_token2022_existing_ata_with_immutable_owner_is_recognized(self, account):
+        raw = bytearray(170)
+        raw[:32] = chain._b58decode(self.mint)
+        raw[32:64] = chain._b58decode(self.wallet)
+        raw[108] = 1
+        raw[165] = 2  # Token account type
+        raw[166:168] = (7).to_bytes(2, "little")  # ImmutableOwner
+        raw[168:170] = (0).to_bytes(2, "little")
+        account.side_effect = [
+            self.wallet_account,
+            {"owner": chain.TOKEN_2022_PROGRAM, "data": token2022_mint_data()},
+            {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)},
+        ]
+        result = ata_manager.create_ata_order(self.wallet, self.mint)
+        self.assertEqual(result["status"], "ATA_ALREADY_EXISTS")
+        self.assertEqual(result["ata"], chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint)], ata_manager.ASSOCIATED_TOKEN_PROGRAM_ID,
+        )[0])
+
+    @patch("ata_manager._rpc_account")
+    def test_rejects_token2022_transfer_hook_mint_for_ata_order(self, account):
+        raw = bytearray(166)
+        raw[44] = 6
+        raw[45] = 1
+        raw[165] = 1
+        raw.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
+        account.side_effect = [
+            self.wallet_account,
+            {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)},
+        ]
+        with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
             ata_manager.create_ata_order(self.wallet, self.mint)
 
     @patch("ata_manager._rpc_account")
