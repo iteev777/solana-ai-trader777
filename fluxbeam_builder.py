@@ -72,7 +72,7 @@ def _token_account_amount(account, expected_program, expected_mint, expected_own
         raise ValueError(label + " token account layout is invalid")
     if chain._key(raw, 0) != expected_mint:
         raise ValueError(label + " token account mint does not match")
-    if chain._key(raw, 32) != expected_owner:
+    if expected_owner is not None and chain._key(raw, 32) != expected_owner:
         raise ValueError(label + " token account authority does not match")
     if raw[108] != 1:
         raise ValueError(label + " token account is not initialized or is frozen")
@@ -165,15 +165,18 @@ def build_fluxbeam_swap(quote, wallet, user_input_token_account,
     program_base = _mint_program_and_validate(mint_base, "FluxBeam base")
     program_quote = _mint_program_and_validate(mint_quote, "FluxBeam quote")
     program_pool = _mint_program_and_validate(pool_mint, "FluxBeam LP")
-    if chain._mint_decimals(mint_base) is None or chain._mint_decimals(mint_quote) is None:
-        raise ValueError("FluxBeam mint decimals are invalid")
+    expected_base_decimals = fresh.get("base_decimals")
+    expected_quote_decimals = fresh.get("quote_decimals")
+    if (chain._mint_decimals(mint_base) != expected_base_decimals
+            or chain._mint_decimals(mint_quote) != expected_quote_decimals):
+        raise ValueError("FluxBeam mint decimals changed since the fresh quote")
     if vault_base.get("owner") != program_base or vault_quote.get("owner") != program_quote:
         raise ValueError("FluxBeam vault token program does not match its mint")
     if chain._key(vault_base.get("data", b""), 32) != authority or chain._key(vault_quote.get("data", b""), 32) != authority:
         raise ValueError("FluxBeam vault authority does not match the canonical pool PDA")
     _token_account_amount(vault_base, program_base, current["base_mint"], authority, "Base vault")
     _token_account_amount(vault_quote, program_quote, current["quote_mint"], authority, "Quote vault")
-    _token_account_amount(fee_account, program_pool, current["pool_mint"], authority, "LP fee account")
+    _token_account_amount(fee_account, program_pool, current["pool_mint"], None, "LP fee account")
     input_program = program_base if input_mint == current["base_mint"] else program_quote
     output_program = program_quote if input_mint == current["base_mint"] else program_base
     input_balance = _token_account_amount(
