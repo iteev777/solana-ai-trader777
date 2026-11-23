@@ -239,6 +239,11 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("Raydium CPMM vaults must be owned by the legacy SPL Token program")
     chain._token_amount(vault_base_acc, current["base_mint"])
     chain._token_amount(vault_quote_acc, current["quote_mint"])
+    if (chain._key(vault_base_acc["data"], 32) != authority
+            or chain._key(vault_quote_acc["data"], 32) != authority):
+        raise ValueError("Raydium CPMM vault token authority does not match the canonical pool authority PDA")
+    if vault_base_acc["data"][108] != 1 or vault_quote_acc["data"][108] != 1:
+        raise ValueError("Raydium CPMM vault token account is not initialized or is frozen")
 
     input_balance = _decode_user_token_account(user_input_acc, wallet, input_mint, "Input token account")
     _decode_user_token_account(user_output_acc, wallet, output_mint, "Output token account")
