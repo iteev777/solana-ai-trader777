@@ -9,9 +9,8 @@ or loading a private key on the server.
    user's public wallet address. Trojan requests Jupiter `GET /order` and
    returns the unsigned base64 transaction plus its `request_id`.
 2. The user's connected wallet signs the returned transaction locally.
-3. Only after the user explicitly approves the swap, POST the signed base64
-   transaction and `request_id` to `/api/dex-execute`. Jupiter `POST /execute`
-   handles landing and confirmation.
+3. Trojan simulates the unsigned transaction through Solana RPC (`sigVerify=false`). A PASS is required before the order is marked execution-eligible.
+4. Only after the user explicitly approves the swap, POST the signed base64 transaction and `request_id` to `/api/dex-execute`. Jupiter `POST /execute` handles landing and confirmation.
 
 ## API
 
@@ -29,7 +28,8 @@ X-Trojan-Action: 1
   "output_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
   "amount": "100000000",
   "taker": "<PUBLIC_WALLET_ADDRESS>",
-  "slippage_bps": 100
+  "slippage_bps": 100,
+  "simulate": true
 }
 ```
 
@@ -59,8 +59,8 @@ X-Trojan-Confirm-Live: 1
 - The execute request additionally requires
   `X-Trojan-Confirm-Live: 1`.
 - The API does not accept, store, or request a wallet private key.
-- Only a transaction returned by Jupiter `/order` can be executed with its
-  cached `request_id`; do not modify the transaction message after order creation.
+- A recent successful unsigned RPC simulation is required. The in-memory request cache expires after 120 seconds; request a new order if it expires.
+- Only a transaction returned by Jupiter `/order` can be executed with its cached `request_id`; do not modify the transaction message after order creation.
 - The dashboard exposes `GET /api/dex-execution-status` for gate visibility.
 - This adapter uses Jupiter's meta-aggregator order path. Native direct-pool
   transaction builders for every decoded DEX protocol remain a separate task.
