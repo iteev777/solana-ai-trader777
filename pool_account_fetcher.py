@@ -191,6 +191,19 @@ def refresh_pools(pool_keys, prune_unwatched=False):
         return dict(_status)
 
 
+def prune_pool_account_cache(active_pool_keys):
+    """Remove cached account relationships only for pools outside the complete watch set."""
+    active = set(key for key in (_normalize_pool_key(item) for item in (active_pool_keys or [])) if key)
+    removed = 0
+    with _lock:
+        for key in list(_pool_account_sets):
+            if key not in active:
+                _pool_account_sets.pop(key, None)
+                _pool_account_set_times.pop(key, None)
+                removed += 1
+    return removed
+
+
 def get_fetcher_status():
     with _lock:
         return dict(_status)
