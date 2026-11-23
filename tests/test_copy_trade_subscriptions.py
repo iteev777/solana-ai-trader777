@@ -214,5 +214,51 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
         self.assertEqual(writes, [])
         self.assertTrue(copy_trade._poll_catchup["wallet-A"]["complete"])
 
+
+    def test_catchup_at_memory_cap_skips_to_known_head_instead_of_sticking(self):
+        page = [
+            {"signature": "head-newest", "err": None},
+            {"signature": "head-older", "err": None},
+        ]
+        writes = []
+        processed = []
+        before_skips = copy_trade._status.get("catchup_skips", 0)
+        before_count = copy_trade._status.get("skipped_signatures", 0)
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "2"}), \\
+             patch.object(copy_trade, "_COPY_MAX_PAGES_PER_POLL", 1), \\
+             patch.object(copy_trade, "_COPY_MAX_CATCHUP_SIGNATURES", 2), \\
+             patch.object(copy_trade.database, "get_copy_watch_cursor", return_value="old-cursor"), \\
+             patch.object(copy_trade.database, "set_copy_watch_cursor", side_effect=lambda wallet, sig: writes.append((wallet, sig))), \\
+             patch.object(copy_trade, "_fetch_wallet_signatures", return_value=page), \\
+             patch.object(copy_trade, "_process_wallet_signature", side_effect=lambda wallet, sig: processed.append(sig) or True):
+            result = copy_trade._poll_wallet_activity(["wallet-A"])
+        self.assertEqual(result, {"processed": 0, "wallets": 1, "errors": 0})
+        self.assertEqual(writes, [("wallet-A", "head-newest")])
+        self.assertEqual(processed, [])
+        self.assertNotIn("wallet-A", copy_trade._poll_catchup)
+        self.assertEqual(copy_trade._status["catchup_skips"], before_skips + 1)
+        self.assertEqual(copy_trade._status["skipped_signatures"], before_count + 2)
+
+    def test_catchup_skips_after_bounded_number_of_full_page_polls(self):
+        pages = [
+            [{"signature": "head-newest", "err": None}, {"signature": "page1-old", "err": None}],
+            [{"signature": "page2-new", "err": None}, {"signature": "page2-old", "err": None}],
+        ]
+        writes = []
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "2"}), \\
+             patch.object(copy_trade, "_COPY_MAX_PAGES_PER_POLL", 1), \\
+             patch.object(copy_trade, "_COPY_MAX_CATCHUP_SIGNATURES", 10), \\
+             patch.object(copy_trade, "_COPY_MAX_CATCHUP_POLLS", 2), \\
+             patch.object(copy_trade.database, "get_copy_watch_cursor", return_value="old-cursor"), \\
+             patch.object(copy_trade.database, "set_copy_watch_cursor", side_effect=lambda wallet, sig: writes.append((wallet, sig))), \\
+             patch.object(copy_trade, "_fetch_wallet_signatures", side_effect=pages):
+            first = copy_trade._poll_wallet_activity(["wallet-A"])
+            self.assertEqual(first["errors"], 0)
+            self.assertIn("wallet-A", copy_trade._poll_catchup)
+            second = copy_trade._poll_wallet_activity(["wallet-A"])
+        self.assertEqual(second["errors"], 0)
+        self.assertEqual(writes, [("wallet-A", "head-newest")])
+        self.assertNotIn("wallet-A", copy_trade._poll_catchup)
+
 if __name__ == "__main__":
     unittest.main()
