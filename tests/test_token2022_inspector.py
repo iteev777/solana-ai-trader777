@@ -32,6 +32,13 @@ class Token2022InspectorTests(unittest.TestCase):
         self.assertIsNotNone(found[0]["risk"])
         self.assertIsNotNone(found[1]["risk"])
 
+    def test_recognizes_confidential_mint_burn_and_permissioned_burn(self):
+        raw = mint_data(tlv(24, bytes(64)) + tlv(28, bytes(32)))
+        found = inspector.parse_tlv_extensions(raw, inspector.MINT_ACCOUNT_TYPE)
+        self.assertEqual([item["name"] for item in found],
+                         ["CONFIDENTIAL_MINT_BURN", "PERMISSIONED_BURN"])
+        self.assertTrue(all(item["risk"] for item in found))
+
     def test_accepts_base_token2022_mint_without_extensions(self):
         raw = bytearray(82)
         raw[44] = 9
