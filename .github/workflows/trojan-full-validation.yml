@@ -62,10 +62,16 @@ jobs:
 
           assert assigned_value("live_trading.py", "LIVE_TRADING_ENABLED") is False
           assert assigned_value("live_execution.py", "LIVE_EXECUTION_LOCKED") is True
-          execution_source = Path("live_execution.py").read_text(encoding="utf-8")
-          assert "sendTransaction" not in execution_source
-          assert "signTransaction" not in execution_source
-          print("PASS: live trading disabled; execution locked; no signing/broadcast RPC in Jupiter adapter")
+          execution_tree = ast.parse(Path("live_execution.py").read_text(encoding="utf-8"))
+          called_methods = {
+              node.func.attr
+              for node in ast.walk(execution_tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+          }
+          assert "simulateTransaction" in called_methods
+          assert "sendTransaction" not in called_methods
+          assert "signTransaction" not in called_methods
+          print("PASS: live trading disabled; execution locked; only unsigned simulation RPC is called")
           PY
 
       - name: Dashboard authentication and route smoke test
