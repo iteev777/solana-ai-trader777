@@ -19,16 +19,21 @@ if not os.getenv("SOLANA_RPC_URL", "").strip():
 os.environ.setdefault("SOLANA_RPC_MIN_INTERVAL", "0.0")
 os.environ.setdefault("SOLANA_RPC_TIMEOUT", "12")
 
-POOLS = [
-    ("Poo1Ad9mHfdX3T9jqoqhX3Mmw57uRT17qDPdqqsTq1ww", "raydium_cpmm", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"),
-    ("Poo1AdZMBduhhH7dVD3hjsPMhy3yB5d7PwZq7PDjP9us", "raydium_cpmm", "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL"),
-    ("Poo1AdKK7PsFmd7RPfB53RmFDjbHhP3fF5sjfuZDRwoK", "raydium_cpmm", "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"),
-    ("Poo1Ad9jHDXDysTXX1bHDhjjowsfVKVtDBVTf1fZqoVq", "raydium_cpmm", "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"),
-    ("Poo1AdyBTPZDmRMKKP9Hyj3hXBb1TVMwdV7bhMhDhq1T", "raydium_cpmm", "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr"),
-    ("Poo1AdfZbMym9u1FR1RBqT9smomosVumZy1u7PsZVbRP", "raydium_cpmm", "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3"),
-    ("Poo1AdDyoZ1y5F9VsXZTh5BBs9PTMsbfRBjTjwPdoyoX", "raydium_cpmm", "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"),
-    ("Poo1AdV1mmdM5RqMfK1FVmdwDDHd7DsFqof7X7Z5KZm5", "raydium_cpmm", "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"),
-]
+DEX_PROTOCOLS = {
+    "raydium": "raydium_auto",
+    "raydium-cpmm": "raydium_cpmm",
+    "raydium-clmm": "raydium_clmm",
+    "orca": "orca_whirlpool",
+    "meteora": "meteora_dlmm",
+    "meteora-dlmm": "meteora_dlmm",
+    "meteora-damm": "meteora_damm_v2",
+    "meteora-dbc": "meteora_dbc",
+    "pumpswap": "pumpswap",
+    "pumpfun": "pumpfun_legacy",
+    "moonit": "moonit_amm",
+    "fluxbeam": "fluxbeam_amm",
+}
+SOL_SYMBOLS = {"SOL", "WSOL"}
 ROUNDS = 12
 INTERVAL_SECONDS = 0.5
 
@@ -53,19 +58,58 @@ def stats(values):
 
 
 def main():
+    import requests
     from solana_onchain import get_pool_snapshot_accounts, fetch_pool_account_batch
     import pool_account_fetcher
+
+    # Use live DexScreener discovery rather than synthetic fixture addresses.
+    discovery = requests.get(
+        "https://api.dexscreener.com/latest/dex/search",
+        params={"q": "SOL"},
+        timeout=15,
+    )
+    discovery.raise_for_status()
+    pairs = discovery.json().get("pairs") or []
+    candidates = []
+    for pair in pairs:
+        if pair.get("chainId") != "solana":
+            continue
+        protocol = DEX_PROTOCOLS.get((pair.get("dexId") or "").lower())
+        if not protocol:
+            continue
+        base = pair.get("baseToken") or {}
+        quote = pair.get("quoteToken") or {}
+        base_symbol = (base.get("symbol") or "").upper()
+        quote_symbol = (quote.get("symbol") or "").upper()
+        if quote_symbol in SOL_SYMBOLS:
+            mint = base.get("address")
+        elif base_symbol in SOL_SYMBOLS:
+            mint = quote.get("address")
+        else:
+            continue
+        pool_address = pair.get("pairAddress")
+        liquidity = (pair.get("liquidity") or {}).get("usd") or 0
+        if pool_address and mint and mint != "So11111111111111111111111111111111111111112":
+            candidates.append((float(liquidity), (pool_address, protocol, mint)))
+    candidates.sort(key=lambda item: item[0], reverse=True)
 
     active_pools = []
     account_keys = []
     errors = []
-    for pool in POOLS:
+    seen = set()
+    for liquidity, pool in candidates:
+        if pool[0] in seen:
+            continue
+        seen.add(pool[0])
         try:
             keys = get_pool_snapshot_accounts(*pool)
             active_pools.append(pool)
             account_keys.extend(keys)
         except Exception as exc:
-            errors.append({"pool": pool[0], "error": type(exc).__name__ + ": " + str(exc)[:160]})
+            errors.append({"pool": pool[0], "protocol": pool[1],
+                           "error": type(exc).__name__ + ": " + str(exc)[:160]})
+        if len(active_pools) >= 8:
+            break
 
     account_keys = list(dict.fromkeys(account_keys))
     # Keep the common workload within ScreenerBot's documented 50-account batch.
@@ -76,7 +120,10 @@ def main():
             account_keys.extend(get_pool_snapshot_accounts(*pool))
         account_keys = list(dict.fromkeys(account_keys))
     if not active_pools or not account_keys:
-        raise RuntimeError("No valid benchmark pools were discovered from mainnet RPC")
+        print(json.dumps({"benchmark": "pool-discovery-failed",
+                          "dexscreener_candidates": len(candidates),
+                          "pool_discovery_errors": errors[:12]}, indent=2))
+        raise RuntimeError("No valid live benchmark pools were discovered from mainnet RPC")
     if len(account_keys) > 50:
         raise RuntimeError("Common workload exceeds the 50-account comparison batch")
 
@@ -121,8 +168,9 @@ def main():
         "benchmark": "trojan-vs-screenerbot-rpc-pool-parity",
         "rpc_host": __import__("urllib.parse", fromlist=["urlparse"]).urlparse(os.environ["SOLANA_RPC_URL"]).hostname,
         "commit": os.getenv("GITHUB_SHA"),
-        "pool_protocol_scope": "Raydium CPMM",
+        "pool_protocol_scope": "live SOL-quoted pools from supported DEXes",
         "pool_count": len(active_pools),
+        "protocols": sorted({pool[1] for pool in active_pools}),
         "account_count": len(account_keys),
         "batch_limit_accounts": 50,
         "rounds": ROUNDS,
