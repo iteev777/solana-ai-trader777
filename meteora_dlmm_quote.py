@@ -126,6 +126,41 @@ def _fee_rate(state, active_bin_id):
     return min(base + variable, MAX_FEE_RATE), volatility
 
 
+def _bin_price(bin_id, bin_step):
+    """Derive Q64.64 DLMM price from bin id, not the lazily stored bin price."""
+    if abs(bin_id) >= 0x80000 or not 0 < bin_step <= 65535:
+        raise ValueError("Meteora DLMM bin price exponent is unsupported")
+    one = 1 << 64
+    if bin_id == 0:
+        return one
+    max_u128 = (1 << 128) - 1
+    base = one + ((bin_step << 64) // BASIS_POINT_MAX)
+    invert = bin_id < 0
+    exp = abs(bin_id)
+    squared = base
+    result = one
+    if squared >= one:
+        squared = max_u128 // squared
+        invert = not invert
+    bit = 1
+    remaining = exp
+    while remaining:
+        if exp & bit:
+            product = result * squared
+            if product > max_u128:
+                raise ValueError("Meteora DLMM bin price overflow")
+            result = product >> 64
+        product = squared * squared
+        if product > max_u128:
+            raise ValueError("Meteora DLMM bin price overflow")
+        squared = product >> 64
+        remaining &= ~bit
+        bit <<= 1
+    if result <= 0:
+        raise ValueError("Meteora DLMM bin price underflow")
+    return max_u128 // result if invert else result
+
+
 def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id):
     active_index = active_id // BINS_PER_ARRAY
     direction = -1 if zero_for_one else 1
@@ -162,8 +197,10 @@ def _decode_bin_array(account, pool_address, expected_index, state, chain):
         amount_x = chain._u64(raw, offset)
         amount_y = chain._u64(raw, offset + 8)
         price = chain._u128(raw, offset + 16)
-        if (amount_x or amount_y) and price <= 0:
-            raise ValueError("Meteora DLMM non-empty bin has an invalid price")
+        # The on-chain price field is lazy and may legitimately be zero.
+        # Recompute it from the bin id, matching the reference venue.
+        if amount_x or amount_y:
+            price = _bin_price(bin_id, state["bin_step"])
         bins.append((bin_id, amount_x, amount_y, price))
     return bins
 
@@ -339,7 +376,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["reserve_x"], first["reserve_y"],
         first["mint_x"], first["mint_y"], CLOCK_SYSVAR, bitmap_address,
     ] + array_addresses
-    snapshot_started = time.time()
+    snapshot_started = time.monotonic()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Meteora DLMM confirmed snapshot has an incomplete account list")
@@ -347,6 +384,11 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if pool_acc is None or pool_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Meteora DLMM pool account is unavailable or has invalid owner")
     state = _decode_pair(pool_acc.get("data"), chain)
+    account_keys = (pool_address, state["mint_x"], state["mint_y"], state["reserve_x"], state["reserve_y"])
+    if len(set(account_keys)) != len(account_keys):
+        raise ValueError("Meteora DLMM pool, mints and reserves must have distinct addresses")
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Meteora DLMM confirmed snapshot slot is invalid")
     for field in (
         "base_factor", "filter_period", "decay_period", "reduction_factor",
         "variable_fee_control", "max_volatility_accumulator", "min_bin_id",
@@ -373,7 +415,9 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Meteora DLMM reserve vaults are empty")
 
     clock_data = clock_acc.get("data", b"")
-    if len(clock_data) < 40:
+    if clock_acc.get("owner") != "Sysvar1111111111111111111111111111111111":
+        raise ValueError("Meteora DLMM Clock sysvar owner is invalid")
+    if not isinstance(clock_data, (bytes, bytearray)) or len(clock_data) < 40:
         raise ValueError("Meteora DLMM Clock sysvar is truncated")
     now = _i64(clock_data, 32)
     _update_references(state, now)
@@ -387,6 +431,10 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         decoded = _decode_bin_array(account, pool_address, array_index, state, chain)
         bins.extend(decoded)
         loaded_indices.append(array_index)
+    # Never bridge an absent array: the real programme uses bitmap traversal,
+    # which this bounded read-only adapter deliberately does not implement.
+    if len(loaded_indices) != len(set(loaded_indices)):
+        raise ValueError("Meteora DLMM duplicate bin-array index")
     if not loaded_indices or loaded_indices[0] != array_indices[0]:
         raise ValueError("Meteora DLMM active bin array is not initialized")
 
@@ -405,7 +453,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Meteora DLMM price impact is invalid")
-    age = time.time() - snapshot_started
+    age = time.monotonic() - snapshot_started
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DLMM confirmed snapshot is stale")
 

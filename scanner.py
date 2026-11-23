@@ -4,24 +4,17 @@
 
 import time
 import threading
-import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from api_client import get_json
+from discovery.dexscreener_scanner import ENDPOINTS
+from discovery.token_aggregator import normalize_token
 
 
 SOURCES = {
-    "LATEST PROFILES":
-        "https://api.dexscreener.com/token-profiles/latest/v1",
-
-    "LATEST BOOSTS":
-        "https://api.dexscreener.com/token-boosts/latest/v1",
-
-    "TOP BOOSTS":
-        "https://api.dexscreener.com/token-boosts/top/v1",
-
-    "COMMUNITY TAKEOVERS":
-        "https://api.dexscreener.com/community-takeovers/latest/v1"
+    **dict(ENDPOINTS),
+    "dexscreener_community_takeovers":
+        "https://api.dexscreener.com/community-takeovers/latest/v1",
 }
 
 REQUEST_TIMEOUT = 15
@@ -57,43 +50,9 @@ def fetch_source(name, url):
 
         return data
 
-    except requests.RequestException as error:
-        print(
-            "SOURCE REQUEST ERROR:",
-            name,
-            repr(error)
-        )
-        return []
-
     except Exception as error:
-        print(
-            "SOURCE ERROR:",
-            name,
-            repr(error)
-        )
+        print("SOURCE ERROR:", name, type(error).__name__)
         return []
-
-
-def normalize_token(token):
-    if not isinstance(token, dict):
-        return None
-
-    chain = str(token.get("chainId", "")).lower()
-
-    if chain != "solana":
-        return None
-
-    address = token.get("tokenAddress")
-
-    if not isinstance(address, str):
-        return None
-
-    address = address.strip()
-
-    if not address:
-        return None
-
-    return address
 
 
 def scan_tokens():
@@ -105,13 +64,13 @@ def scan_tokens():
         return []
 
     try:
-        current_time = time.time()
-
-        if current_time - _last_scan_time < SCAN_COOLDOWN:
+        started = time.monotonic()
+        if _last_scan_time and started - _last_scan_time < SCAN_COOLDOWN:
             print("SCANNER COOLDOWN ACTIVE")
             return []
 
-        _last_scan_time = current_time
+        _last_scan_time = started
+        current_time = time.time()
 
         discovered = {}
         source_stats = {}
@@ -129,7 +88,7 @@ def scan_tokens():
                 try:
                     source_results[source_name] = future.result()
                 except Exception as error:
-                    print("SOURCE WORKER ERROR:", source_name, repr(error))
+                    print("SOURCE WORKER ERROR:", source_name, type(error).__name__)
                     source_results[source_name] = []
 
         # Merge deterministically after all source requests complete.
@@ -155,7 +114,7 @@ def scan_tokens():
                     candidate["discovery_sources"].append(source_name)
 
                 for key, value in token.items():
-                    if key not in candidate:
+                    if candidate.get(key) in (None, "", [], {}) and value is not None:
                         candidate[key] = value
 
         results = list(discovered.values())

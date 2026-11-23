@@ -68,7 +68,8 @@ def score_candidate(token):
     price = _metric(market, token, "priceUsd", "price_usd")
 
     created = _metric(market, token, "pairCreatedAt", "created_at_ms")
-    age_min = max(0.0, (time.time() * 1000 - created) / 60000) if created else None
+    now_ms = time.time() * 1000
+    age_min = (now_ms - created) / 60000 if created is not None and 0 < created <= now_ms else None
     sources = token.get("discovery_sources")
     sources = list(dict.fromkeys(s.strip().lower() for s in sources if isinstance(s, str) and s.strip())) if isinstance(sources, list) else []
     reasons, hard_flags = [], []
@@ -195,8 +196,10 @@ def rank_candidates(tokens, market_data_by_mint=None):
             continue
         item = dict(token)
         address = item.get("tokenAddress") or item.get("address") or item.get("mint")
-        if not isinstance(item.get("market_data"), dict) and isinstance(market_data_by_mint.get(address), dict):
-            item["market_data"] = market_data_by_mint[address]
+        if isinstance(address, str) and not isinstance(item.get("market_data"), dict):
+            enrichment = market_data_by_mint.get(address)
+            if isinstance(enrichment, dict):
+                item["market_data"] = enrichment
         report = score_candidate(item)
         item["candidate_quality"] = report
         ranked.append(item)
@@ -204,7 +207,7 @@ def rank_candidates(tokens, market_data_by_mint=None):
     ranked.sort(key=lambda item: (
         tier_order.get(item["candidate_quality"]["tier"], 4),
         -item["candidate_quality"]["score"],
-        -len(item.get("discovery_sources", [])) if isinstance(item.get("discovery_sources"), list) else 0,
+        -item["candidate_quality"]["inputs"]["source_count"],
         str(item.get("tokenAddress", "")),
     ))
     _last_quality_status = get_quality_status(ranked)
@@ -213,10 +216,10 @@ def rank_candidates(tokens, market_data_by_mint=None):
 
 def get_quality_status(tokens=None):
     if tokens is None:
-        return dict(_last_quality_status)
+        return {**_last_quality_status, "tiers": dict(_last_quality_status["tiers"])}
     counts = {"strong": 0, "watch": 0, "weak": 0, "reject": 0}
     for token in tokens if isinstance(tokens, (list, tuple)) else []:
         tier = _nested(token, "candidate_quality", "tier")
-        if tier in counts:
+        if isinstance(tier, str) and tier in counts:
             counts[tier] += 1
     return {"candidate_count": sum(counts.values()), "tiers": counts, "gating_enabled": False}

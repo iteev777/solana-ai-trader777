@@ -29,6 +29,23 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             {"rugcheck_new", "rugcheck_recent", "rugcheck_trending", "rugcheck_verified"},
         )
 
+    def test_rugcheck_null_is_empty_but_transport_failure_is_unavailable(self):
+        with patch.object(sources, "get_json", return_value=None):
+            self.assertEqual(sources.scan_rugcheck(), [])
+        with patch.object(sources, "get_json", side_effect=TimeoutError("fixture")):
+            with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                sources.scan_rugcheck()
+
+    def test_rugcheck_recent_metadata_completes_token_without_losing_decimals(self):
+        with patch.object(sources, "_safe_fetch", side_effect=[
+            [{"mint": VALID_MINT, "decimals": 0}],
+            [{"mint": VALID_MINT, "metadata": {"name": "Recent", "symbol": "RC"}}],
+            [{"mint": "z" * 44}],
+            None,
+        ]):
+            token, = sources.scan_rugcheck()
+        self.assertEqual((token["name"], token["symbol"], token["decimals"]), ("Recent", "RC", 0))
+
     def test_jupiter_merges_recent_organic_traded_and_trending(self):
         responses = [
             [{"id": VALID_MINT, "name": "Jupiter Token", "symbol": "JUPX"}],

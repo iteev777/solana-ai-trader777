@@ -57,6 +57,26 @@ class FilterPipelineTests(unittest.TestCase):
         result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["reason"], "BASE_MINT_MISMATCH")
 
+    def test_market_identity_uses_requested_mint_even_without_address_field(self):
+        token = dict(self.token, baseToken={"address": "OtherMint"})
+        token.pop("address")
+        self.assertEqual(filter_pipeline.evaluate_token(token, "Mint111")["reason"],
+                         "BASE_MINT_MISMATCH")
+
+    def test_earlier_rejection_skips_later_checks(self):
+        with patch.object(filter_pipeline, "_market_stage") as market:
+            result = filter_pipeline.evaluate_token(dict(self.token, symbol="12345"), "Mint111")
+        self.assertEqual(result["reason"], "NUMERIC_SYMBOL")
+        market.assert_not_called()
+
+    def test_configured_age_floor_waits_for_valid_timestamp(self):
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_POOL_AGE_MINUTES": "2"}):
+            with patch.object(filter_pipeline.time, "time", return_value=1_800_000_000):
+                for timestamp in (None, 0, -1, 1_800_000_001):
+                    token = dict(self.token, pairCreatedAt=timestamp)
+                    self.assertEqual(filter_pipeline.evaluate_token(token, "Mint111")["reason"],
+                                     "POOL_AGE_UNKNOWN")
+
     def test_optional_volume_threshold_waits_on_missing_data(self):
         token = dict(self.token)
         token.pop("volume")

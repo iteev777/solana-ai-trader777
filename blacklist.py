@@ -14,9 +14,11 @@ def _validate_public_key(value, field="address"):
     if not isinstance(value, str) or not value.strip():
         raise ValueError(field + " is required")
     value = value.strip()
+    if len(value) > 44:
+        raise ValueError(field + " must decode to a 32-byte Solana public key")
     try:
         decoded = _b58decode(value)
-    except Exception as error:
+    except ValueError as error:
         raise ValueError(field + " is not a valid base58 Solana public key") from error
     if len(decoded) != 32:
         raise ValueError(field + " must decode to a 32-byte Solana public key")
@@ -48,15 +50,18 @@ def get_entries(entry_type=None, include_inactive=False, limit=500):
 
 def match_entries(entries):
     """Return active blacklist rows matching a list of typed public keys."""
-    normalized = []
-    for entry_type, address in entries or []:
+    normalized = {}
+    for entry in entries or []:
+        if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+            continue
+        entry_type, address = entry
         if entry_type not in ENTRY_TYPES:
             continue
         try:
-            normalized.append((entry_type, _validate_public_key(address)))
+            normalized[(entry_type, _validate_public_key(address))] = None
         except ValueError:
             continue
-    return database.match_blacklist_entries(normalized)
+    return database.match_blacklist_entries(list(normalized))
 
 
 def match_token_security_accounts(report):

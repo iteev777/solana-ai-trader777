@@ -90,7 +90,7 @@ def refresh_pools(pool_keys, prune_unwatched=False):
         key for key in (_normalize_pool_key(item) for item in (pool_keys or []))
         if key is not None
     ))
-    now = time.time()
+    now = time.monotonic()
     with _lock:
         active = set(all_keys)
         if prune_unwatched:
@@ -111,12 +111,17 @@ def refresh_pools(pool_keys, prune_unwatched=False):
             account_sets[key] = list(cached)
             continue
         try:
-            accounts = get_pool_snapshot_accounts(key[0], key[1], key[2])
+            accounts = list(dict.fromkeys(
+                account.strip() for account in (get_pool_snapshot_accounts(*key) or [])
+                if isinstance(account, str) and account.strip()
+            ))
+            if len(accounts) > MAX_ACCOUNTS_PER_BATCH:
+                raise ValueError("one pool requires more accounts than a single RPC batch")
             if not accounts:
                 raise ValueError("pool returned no snapshot accounts")
             with _lock:
                 _pool_account_sets[key] = list(accounts)
-                _pool_account_set_times[key] = now
+                _pool_account_set_times[key] = time.monotonic()
             account_sets[key] = list(accounts)
         except Exception as error:
             if pool_analysis.classify_pool_error(error) == "transient":

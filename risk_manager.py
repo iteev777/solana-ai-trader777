@@ -9,10 +9,10 @@ import os
 STARTING_BALANCE = 100.00
 
 
-def _env_number(name, default, minimum=0.0):
+def _env_number(name, default, minimum=0.0, maximum=math.inf):
     try:
         value = float(os.getenv(name, str(default)))
-        if math.isfinite(value) and value >= minimum:
+        if math.isfinite(value) and minimum <= value <= maximum:
             return value
     except (TypeError, ValueError, OverflowError):
         pass
@@ -48,7 +48,7 @@ MAX_TRADE_BALANCE_FRACTION = min(
     _env_number("TROJAN_MAX_TRADE_BALANCE_FRACTION", 0.10, 0.01)
 )
 
-STOP_LOSS_PERCENT = _env_number("TROJAN_STOP_LOSS_PERCENT", 20.0, 0.1)
+STOP_LOSS_PERCENT = _env_number("TROJAN_STOP_LOSS_PERCENT", 20.0, 0.1, 100.0)
 TAKE_PROFIT_PERCENT = _env_number("TROJAN_TAKE_PROFIT_PERCENT", 30.0, 0.1)
 
 VALID_STRATEGIES = ("main", "sniper")
@@ -132,7 +132,11 @@ def check_trade_risk(
     balance = float(balance)
     daily_loss = float(daily_loss)
     trade_size = float(trade_size)
-    open_positions = int(open_positions)
+    open_positions = int(float(open_positions))
+
+    if sum(int(float(count)) for count in (main_positions, sniper_positions)
+           if count is not None) > open_positions:
+        return False, "INCONSISTENT POSITION COUNTS"
 
     if balance < 0:
         return False, "INVALID BALANCE"
@@ -173,13 +177,13 @@ def check_trade_risk(
         if main_positions is None:
             return False, "MAIN POSITION COUNT MISSING"
 
-        strategy_positions = int(main_positions)
+        strategy_positions = int(float(main_positions))
 
     else:
         if sniper_positions is None:
             return False, "SNIPER POSITION COUNT MISSING"
 
-        strategy_positions = int(sniper_positions)
+        strategy_positions = int(float(sniper_positions))
 
     if strategy_positions >= get_position_limit(strategy):
         if strategy == "main":
@@ -246,9 +250,8 @@ def calculate_take_profit(entry_price):
     if entry_price <= 0:
         return None
 
-    return entry_price * (
-        1 + TAKE_PROFIT_PERCENT / 100
-    )
+    target = entry_price * (1 + TAKE_PROFIT_PERCENT / 100)
+    return target if math.isfinite(target) else None
 
 
 def calculate_position_change(entry_price, current_price):
@@ -265,10 +268,8 @@ def calculate_position_change(entry_price, current_price):
     if entry_price <= 0 or current_price <= 0:
         return None
 
-    return round(
-        ((current_price / entry_price) - 1) * 100,
-        2
-    )
+    change = ((current_price / entry_price) - 1) * 100
+    return round(change, 2) if math.isfinite(change) else None
 
 
 # ==========================================

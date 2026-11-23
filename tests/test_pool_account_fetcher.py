@@ -105,12 +105,12 @@ class BatchedPoolRefreshTests(unittest.TestCase):
         self.assertEqual(batch_fetch.call_count, 3)
         self.assertEqual(pool_analysis.get_pool_analysis_status()["transient_backoff_pools"], 1)
 
-    def test_failed_pool_discovery_does_not_prevent_other_pools_refreshing(self):
+    def check_failed_pool_does_not_prevent_other_pools_refreshing(self, bad_accounts):
         good = ("pool-good", "pumpswap", "mint-good")
         bad = ("pool-bad", "pumpswap", "mint-bad")
         with patch("solana_onchain.get_pool_snapshot_accounts",
                    side_effect=lambda p, proto, m: ["pool-good", "vault", "mint"]
-                   if p == "pool-good" else (_ for _ in ()).throw(ValueError("bad pool"))), \
+                   if p == "pool-good" else bad_accounts), \
              patch("solana_onchain.fetch_pool_account_batch",
                    return_value=({"pool-good": {}, "vault": {}, "mint": {}}, 123, 1234.0)), \
              patch("solana_onchain.decode_pool_snapshot",
@@ -119,6 +119,14 @@ class BatchedPoolRefreshTests(unittest.TestCase):
             result = fetcher.refresh_pools([good, bad])
         self.assertEqual(result["last_priced_pools"], 1)
         self.assertEqual(result["last_failed_pools"], 1)
+
+    def test_empty_pool_does_not_prevent_other_pools_refreshing(self):
+        self.check_failed_pool_does_not_prevent_other_pools_refreshing([])
+
+    def test_oversized_pool_does_not_prevent_other_pools_refreshing(self):
+        self.check_failed_pool_does_not_prevent_other_pools_refreshing(
+            [str(n) for n in range(fetcher.MAX_ACCOUNTS_PER_BATCH + 1)]
+        )
 
 
 if __name__ == "__main__":

@@ -85,7 +85,7 @@ def merge_pool_candidates(mint, pairs, source):
     with _lock:
         rows = _candidates.get(mint, OrderedDict())
         for pair in pairs:
-            if not isinstance(pair, dict):
+            if not isinstance(pair, dict) or pair.get("chainId", "solana") != "solana":
                 continue
             address = _pool_address(pair)
             base = pair.get("baseToken")
@@ -112,6 +112,9 @@ def merge_pool_candidates(mint, pairs, source):
                 existing["poolSourceData"] = source_data
                 rows.move_to_end(address)
             merged_count += 1
+
+        if not merged_count:
+            return 0
 
         ordered = sorted(
             rows.items(),
@@ -152,7 +155,6 @@ def get_pool_candidates(mint):
     normalized = mint.strip()
     with _lock:
         rows = _candidates.get(normalized)
-        updated_at = _candidate_updated_at.get(normalized, 0.0)
     if rows is None:
         try:
             import database
@@ -161,10 +163,10 @@ def get_pool_candidates(mint):
             stored = None
         if stored:
             stored_at = float(stored.get("updated_at") or 0)
-            if stored_at > 0 and time.time() - stored_at <= POOL_STALE_TTL_SECONDS:
+            if stored_at > 0 and 0 <= time.time() - stored_at <= POOL_STALE_TTL_SECONDS:
                 restored = OrderedDict()
                 for pair in stored.get("pools", []):
-                    if not isinstance(pair, dict):
+                    if not isinstance(pair, dict) or pair.get("chainId", "solana") != "solana":
                         continue
                     address = _pool_address(pair)
                     base = pair.get("baseToken")
@@ -175,29 +177,15 @@ def get_pool_candidates(mint):
                         _candidates[normalized] = restored
                         _candidate_updated_at[normalized] = stored_at
                         _persisted_at[normalized] = stored_at
-                    rows = _candidates.get(normalized)
-                    updated_at = _candidate_updated_at.get(normalized, stored_at)
-            else:
-                try:
-                    database.delete_pool_registry(normalized)
-                except Exception:
-                    pass
-        if rows is None:
-            with _lock:
-                rows = _candidates.get(normalized)
-                updated_at = _candidate_updated_at.get(normalized, 0.0)
-    if updated_at and time.time() - updated_at > POOL_STALE_TTL_SECONDS:
-        with _lock:
+    with _lock:
+        rows = _candidates.get(normalized)
+        updated_at = _candidate_updated_at.get(normalized, 0.0)
+        if updated_at and not 0 <= time.time() - updated_at <= POOL_STALE_TTL_SECONDS:
             _candidates.pop(normalized, None)
             _candidate_updated_at.pop(normalized, None)
             _persisted_at.pop(normalized, None)
-        try:
-            import database
-            database.delete_pool_registry(normalized)
-        except Exception:
-            pass
-        return []
-    return [copy.deepcopy(value) for value in rows.values()] if rows else []
+            return []
+        return [copy.deepcopy(value) for value in rows.values()] if rows else []
 
 
 def is_dexscreener_list_incomplete(pairs):

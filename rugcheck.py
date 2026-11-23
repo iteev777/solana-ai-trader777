@@ -10,6 +10,8 @@ import re
 import os
 from collections import OrderedDict
 
+from rugcheck_risk_band import normalize_risk_score, risk_band
+
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
@@ -60,6 +62,16 @@ def get_authority_status(data, authority_name):
     if isinstance(value, str):
         return "ACTIVE"
 
+    return "UNKNOWN"
+
+
+def _resolve_authority(report, token, field):
+    top_level = get_authority_status(report, field)
+    nested = get_authority_status(token, field)
+    if "ACTIVE" in (top_level, nested):
+        return "ACTIVE"
+    if "DISABLED" in (top_level, nested):
+        return "DISABLED"
     return "UNKNOWN"
 
 
@@ -146,7 +158,7 @@ def _lp_lock_percentage(risks):
 def analyze_rugcheck_report(data):
     """Normalize RugCheck risk signals into one auditable, fail-closed decision."""
     empty = {
-        "status": "UNKNOWN", "safe": False, "score": None,
+        "status": "UNKNOWN", "safe": False, "score": None, "risk_band": None,
         "risk_count": 0, "high_risks": 0, "medium_risks": 0,
         "low_risks": 0, "unknown_risks": 0,
         "mint_authority": "UNKNOWN", "freeze_authority": "UNKNOWN",
@@ -158,7 +170,7 @@ def analyze_rugcheck_report(data):
 
     reasons = []
     high_risks = medium_risks = low_risks = unknown_risks = 0
-    raw_score = get_number(data.get("score_normalised"))
+    raw_score = normalize_risk_score(data.get("score_normalised"))
     risks = data.get("risks")
     risks_valid = isinstance(risks, list)
     if not risks_valid:
@@ -186,10 +198,8 @@ def analyze_rugcheck_report(data):
 
     token = data.get("token") if isinstance(data.get("token"), dict) else {}
     token_meta = data.get("tokenMeta") if isinstance(data.get("tokenMeta"), dict) else {}
-    mint_data = dict(data)
-    mint_data.update(token)
-    mint_authority = get_authority_status(mint_data, "mintAuthority")
-    freeze_authority = get_authority_status(mint_data, "freezeAuthority")
+    mint_authority = _resolve_authority(data, token, "mintAuthority")
+    freeze_authority = _resolve_authority(data, token, "freezeAuthority")
     update_authority = get_authority_status({
         "updateAuthority": _first_present(
             data.get("tokenUpdateAuthority"), data.get("updateAuthority"),
@@ -258,7 +268,7 @@ def analyze_rugcheck_report(data):
                 address = holder.get("address")
                 if (isinstance(owner, str) and owner.lower() == "creator") or (
                     isinstance(creator, str) and isinstance(address, str)
-                    and creator.lower() == address.lower()
+                    and creator == address
                 ):
                     creator_pct = pct
         if not holder_percentages:
@@ -482,6 +492,7 @@ def analyze_rugcheck_report(data):
         "status": status,
         "safe": status == "PASS",
         "score": raw_score,
+        "risk_band": risk_band(raw_score),
         "risk_count": len(risks),
         "high_risks": high_risks,
         "medium_risks": medium_risks,

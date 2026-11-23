@@ -100,6 +100,15 @@ class CanonicalPoolSelectionTests(unittest.TestCase):
         selected = pool_selection.select_best_pairs([blocked, healthy], [TOKEN])[TOKEN]
         self.assertEqual(selected["pairAddress"], "healthy")
 
+    def test_malformed_rows_and_other_chains_cannot_distort_solana_ranking(self):
+        valid = pair("solana", WSOL, 100_000)
+        foreign = dict(pair("foreign", WSOL, 900_000, native_reserve=9999), chainId="ethereum")
+        overflow = dict(pair("overflow", WSOL, 10), priceUsd="1e300", priceNative="1e-300")
+        selected = pool_selection.select_best_pairs([None, foreign, overflow, valid], [TOKEN])[TOKEN]
+        self.assertEqual(selected["pairAddress"], "solana")
+        self.assertEqual(selected["poolSelection"]["candidateCount"], 2)
+        self.assertEqual(selected["poolSelection"]["metric"], 500)
+
     def test_invalid_or_quote_side_prices_are_not_misattributed(self):
         quote_side = {
             "pairAddress": "quote-side",

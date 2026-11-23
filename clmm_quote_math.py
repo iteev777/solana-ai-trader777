@@ -88,10 +88,16 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
                         (amount_in, "input amount")):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(name + " must be a positive integer")
-    if not 0 <= fee_rate < FEE_DENOMINATOR:
+    if type(fee_rate) is not int or not 0 <= fee_rate < FEE_DENOMINATOR:
         raise ValueError("CLMM trade fee rate is invalid")
-    if isinstance(tick_current, bool) or not isinstance(tick_current, int):
+    if type(tick_current) is not int or not MIN_TICK <= tick_current <= MAX_TICK:
         raise ValueError("current tick is invalid")
+
+    coverage_sqrt = sqrt_price_at_tick(coverage_tick)
+    if (zero_for_one and coverage_tick > tick_current) or (
+        not zero_for_one and coverage_tick <= tick_current
+    ):
+        raise ValueError("tick-array coverage is in the wrong direction")
 
     ordered = sorted(
         (item if isinstance(item, Tick) else Tick(int(item[0]), int(item[1]))
@@ -101,9 +107,15 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
     )
     relevant = [item for item in ordered
                 if (item.index <= tick_current if zero_for_one else item.index > tick_current)]
+    indices = {item.index for item in relevant}
+    if len(indices) != len(relevant):
+        raise ValueError("duplicate initialized tick")
+    if any(index < coverage_tick if zero_for_one else index > coverage_tick
+           for index in indices):
+        raise ValueError("initialized tick exceeds verified tick-array coverage")
     steps = [(item.index, item.liquidity_net, sqrt_price_at_tick(item.index), True)
              for item in relevant]
-    steps.append((coverage_tick, 0, sqrt_price_at_tick(coverage_tick), False))
+    steps.append((coverage_tick, 0, coverage_sqrt, False))
 
     current_sqrt = sqrt_price_x64
     current_liquidity = liquidity

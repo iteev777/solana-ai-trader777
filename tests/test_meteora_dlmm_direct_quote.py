@@ -106,14 +106,14 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         return values
 
     def quote(self, input_mint=None, output_mint=None, amount=1_000_000,
-              overrides=None, pair_data=None):
+              overrides=None, pair_data=None, slot=123987):
         pool_account = self.pool_account if pair_data is None else {
             "owner": chain.PROGRAMS["meteora_dlmm"], "data": pair_data
         }
         def snapshot(keys):
             values = self._accounts_for(keys, overrides)
             values[0] = pool_account
-            return values, 123987
+            return values, slot
         with (
             patch.object(chain, "_account", return_value=pool_account),
             patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
@@ -123,6 +123,56 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
                 self.pool, input_mint or self.mint_x, amount,
                 output_mint=output_mint or self.mint_y,
             )
+
+    def test_input_fee_inverse_rounding_covers_net_amount(self):
+        for rate in (1, 400_000, 10_000_000, dlmm.MAX_FEE_RATE):
+            for net in (1, 2, 3, 999, 1_000_000):
+                with self.subTest(rate=rate, net=net):
+                    gross = dlmm._input_fee_gross_for_net(net, rate)
+                    received = gross - dlmm._ceil_div(
+                        gross * rate, dlmm.FEE_PRECISION
+                    )
+                    self.assertGreaterEqual(received, net)
+                    if gross > 0:
+                        previous = gross - 1
+                        self.assertLess(
+                            previous - dlmm._ceil_div(
+                                previous * rate, dlmm.FEE_PRECISION
+                            ),
+                            net,
+                        )
+
+    def test_output_fee_never_exceeds_gross_output(self):
+        pair = bytearray(self.pair_data)
+        pair[36] = 1
+        result = self.quote(pair_data=bytes(pair))
+        self.assertFalse(result["fee_on_input"])
+        self.assertGreater(result["fee_amount"], 0)
+        self.assertLess(result["fee_amount"], result["out_amount"] + result["fee_amount"])
+
+    def test_bin_price_is_derived_from_id_not_lazy_stored_field(self):
+        self.assertEqual(dlmm._bin_price(0, 4), 1 << 64)
+        self.assertGreater(dlmm._bin_price(100, 4), 1 << 64)
+        self.assertLess(dlmm._bin_price(-100, 4), 1 << 64)
+        account_key = self.array_addresses[1]
+        raw = bytearray(self.bin_accounts[account_key]["data"])
+        offset = 56 + 30 * 144
+        raw[offset + 16:offset + 32] = bytes(16)
+        self.bin_accounts[account_key] = {
+            "owner": chain.PROGRAMS["meteora_dlmm"], "data": bytes(raw)
+        }
+        result = self.quote()
+        self.assertGreater(result["out_amount"], 0)
+        self.assertGreater(result["price_impact_percent"], 0)
+
+    def test_uninitialized_next_array_never_claims_unloaded_liquidity(self):
+        self.bin_accounts[self.array_addresses[0]] = None
+        with self.assertRaisesRegex(ValueError, "coverage"):
+            self.quote(amount=10**12)
+
+    def test_bin_price_rejects_unsupported_exponents(self):
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            dlmm._bin_price(0x80000, 4)
 
     def test_confirmed_snapshot_quotes_both_directions(self):
         x_to_y = self.quote()
@@ -193,6 +243,49 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         pair = bytearray(self.pair_data)
         pair[36] = 9
         with self.assertRaisesRegex(ValueError, "fee collection mode"):
+            self.quote(pair_data=bytes(pair))
+
+    def test_snapshot_freshness_uses_monotonic_clock(self):
+        with (
+            patch.object(dlmm.time, "monotonic", side_effect=[100.0, 101.0]),
+            patch.object(dlmm.time, "time", side_effect=AssertionError("wall clock must not be used")),
+        ):
+            result = self.quote()
+        self.assertEqual(result["snapshot_age_seconds"], 1.0)
+
+    def test_stale_snapshot_is_rejected_by_monotonic_elapsed_time(self):
+        with patch.object(dlmm.time, "monotonic", side_effect=[100.0, 106.0]):
+            with self.assertRaisesRegex(ValueError, "snapshot is stale"):
+                self.quote()
+
+    def test_invalid_clock_owner_is_rejected(self):
+        original = self.clock_account
+        try:
+            self.clock_account = dict(original, owner=chain.TOKEN_PROGRAM)
+            with self.assertRaisesRegex(ValueError, "Clock sysvar owner"):
+                self.quote()
+        finally:
+            self.clock_account = original
+
+    def test_invalid_clock_data_type_is_rejected(self):
+        original = self.clock_account
+        try:
+            self.clock_account = dict(original, data="not bytes")
+            with self.assertRaisesRegex(ValueError, "Clock sysvar is truncated"):
+                self.quote()
+        finally:
+            self.clock_account = original
+
+    def test_invalid_confirmed_slot_is_rejected(self):
+        for slot in (0, -1, True, "123"):
+            with self.subTest(slot=slot):
+                with self.assertRaisesRegex(ValueError, "snapshot slot is invalid"):
+                    self.quote(slot=slot)
+
+    def test_aliased_reserve_and_mint_are_rejected(self):
+        pair = bytearray(self.pair_data)
+        pair[152:184] = chain._b58decode(self.mint_x)
+        with self.assertRaisesRegex(ValueError, "distinct addresses"):
             self.quote(pair_data=bytes(pair))
 
     def test_wrong_output_mint_is_rejected(self):

@@ -151,10 +151,23 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
     def test_active_adaptive_fee_oracle_is_rejected(self):
         accounts = list(self.accounts)
         oracle = bytearray(64)
+        oracle[:8] = chain._discriminator("Oracle")
+        oracle[8:40] = chain._b58decode(self.pool)
         oracle[54:58] = (1).to_bytes(4, "little")
         accounts[5] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(oracle)}
         with self.assertRaisesRegex(ValueError, "adaptive-fee"):
             self.quote(accounts=accounts)
+
+    def test_inert_oracle_still_requires_matching_account_identity(self):
+        accounts = list(self.accounts)
+        oracle = bytearray(64)
+        oracle[:8] = chain._discriminator("Oracle")
+        accounts[5] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(oracle)}
+        with self.assertRaisesRegex(ValueError, "different pool"):
+            self.quote(accounts=accounts)
+        oracle[8:40] = chain._b58decode(self.pool)
+        accounts[5]["data"] = bytes(oracle)
+        self.assertGreater(self.quote(accounts=accounts)["out_amount"], 0)
 
     def test_unknown_oracle_layout_is_rejected(self):
         accounts = list(self.accounts)

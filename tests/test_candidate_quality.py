@@ -27,6 +27,26 @@ class CandidateQualityTests(unittest.TestCase):
         self.assertIn("LIQUIDITY_UNKNOWN", result["reasons"])
         self.assertIsNone(result["inputs"]["buy_ratio"])
 
+    def test_invalid_timestamp_and_malformed_address_do_not_break_ranking(self):
+        with patch.object(candidate_quality.time, "time", return_value=100):
+            ranked = candidate_quality.rank_candidates([
+                {"tokenAddress": ["invalid"], "pairCreatedAt": 100001},
+                {"tokenAddress": "valid", "pairCreatedAt": -1},
+            ], {"valid": {"liquidity": {"usd": 5000}}})
+        self.assertEqual(ranked[0]["tokenAddress"], "valid")
+        for token in ranked:
+            self.assertIsNone(token["candidate_quality"]["inputs"]["age_minutes"])
+
+    def test_ranking_uses_distinct_sources_and_status_is_isolated(self):
+        with patch.object(candidate_quality, "_last_quality_status"):
+            ranked = candidate_quality.rank_candidates([
+                {"tokenAddress": "b", "discovery_sources": ["dex"] * 3},
+                {"tokenAddress": "a", "discovery_sources": ["dex"]},
+            ])
+            self.assertEqual([item["tokenAddress"] for item in ranked], ["a", "b"])
+            candidate_quality.get_quality_status()["tiers"]["weak"] = 0
+            self.assertEqual(candidate_quality.get_quality_status()["tiers"]["weak"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

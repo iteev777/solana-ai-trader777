@@ -31,8 +31,7 @@ def _fetch_records(url, source_name, *, cache_ttl=CACHE_TTL, params=None):
 
 
 def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
-    found_tokens = []
-    seen = set()
+    found_tokens = {}
     for pool in _fetch_records(url, source_name, cache_ttl=cache_ttl):
         if not isinstance(pool, dict):
             continue
@@ -43,17 +42,23 @@ def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
         base_data = base.get("data") if isinstance(base, dict) else None
         token_address = extract_solana_address(base_data.get("id")) if isinstance(base_data, dict) else None
         pool_address = attributes.get("address")
-        if not token_address or not isinstance(pool_address, str) or not pool_address.strip() or token_address in seen:
+        if not token_address or not isinstance(pool_address, str) or not pool_address.strip():
             continue
-        seen.add(token_address)
+        resource_id = pool.get("id")
+        if resource_id is not None and extract_solana_address(resource_id) != pool_address.strip():
+            continue
+        existing = found_tokens.get(token_address)
+        if existing is not None and "market_data" in existing:
+            continue
         snapshot = normalize_gecko_pool(pool)
         item = {"tokenAddress": token_address, "chainId": "solana", "poolAddress": pool_address.strip(),
                 "poolName": attributes.get("name"), "discovery_sources": [source_name]}
         if snapshot and snapshot.get("baseToken", {}).get("address") == token_address:
             item["market_data"] = snapshot
-        found_tokens.append(item)
+        if existing is None or "market_data" in item:
+            found_tokens[token_address] = item
     print("GECKOTERMINAL", source_name, "TOKENS:", len(found_tokens), flush=True)
-    return found_tokens
+    return list(found_tokens.values())
 
 
 def scan_new_pools():

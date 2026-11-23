@@ -97,6 +97,8 @@ def _decode_tick_array(account, pool_address, expected_start, spacing, chain):
     required_length = TICK_STATE_OFFSET + TICK_ARRAY_SIZE * TICK_STATE_SIZE
     if not isinstance(raw, (bytes, bytearray)) or len(raw) < required_length:
         raise ValueError("Raydium CLMM tick array is truncated")
+    if raw[:8] != chain._discriminator("TickArrayState"):
+        raise ValueError("Raydium CLMM tick array discriminator is invalid")
     if chain._key(raw, 8) != pool_address:
         raise ValueError("Raydium CLMM tick array belongs to a different pool")
     start = chain._i32(raw, 40)
@@ -173,8 +175,10 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if config_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Raydium CLMM AmmConfig owner is invalid")
     config_raw = config_acc.get("data", b"")
-    if len(config_raw) < 57:
+    if not isinstance(config_raw, (bytes, bytearray)) or len(config_raw) < 57:
         raise ValueError("Raydium CLMM AmmConfig is truncated")
+    if config_raw[:8] != chain._discriminator("AmmConfig"):
+        raise ValueError("Raydium CLMM AmmConfig discriminator is invalid")
     fee_rate = int.from_bytes(config_raw[47:51], "little")
     config_spacing = int.from_bytes(config_raw[51:53], "little")
     if config_spacing != state["tick_spacing"]:

@@ -42,6 +42,8 @@ def valid_token(token):
 
 def safe_volume(value):
 
+    if isinstance(value, bool):
+        return None
     try:
         volume = float(value)
 
@@ -52,6 +54,23 @@ def safe_volume(value):
 
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _quota_exhausted(response):
+    text = getattr(response, "text", "") or ""
+    return "compute units usage limit exceeded" in text[:300].lower()
+
+
+def check_quota(source):
+    if time.monotonic() < _quota_disabled_until:
+        raise RuntimeError(f"{source}: quota cooldown active")
+
+
+def pause_if_quota_exhausted(error, source):
+    global _quota_disabled_until
+    if _quota_exhausted(error.response):
+        _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
+        raise RuntimeError(f"{source}: quota exhausted; paused for 1 hour") from None
 
 
 def extract_items(data):
@@ -106,14 +125,11 @@ def normalize_token(token):
 
 def scan_birdeye():
 
-    global _quota_disabled_until
-
     found_tokens = []
 
     if not API_KEY:
         raise RuntimeError("Birdeye: BIRDEYE_API_KEY is missing")
-    if time.monotonic() < _quota_disabled_until:
-        raise RuntimeError("Birdeye: quota cooldown active")
+    check_quota("Birdeye")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -150,7 +166,7 @@ def scan_birdeye():
 
             # A plan/endpoint compatibility issue should not disable
             # the entire Birdeye source: fall back to trending tokens.
-            if status_code not in (400, 404, 422):
+            if status_code not in (400, 404, 422) or _quota_exhausted(response):
                 raise
 
             print(
@@ -206,10 +222,7 @@ def scan_birdeye():
         print("================================", flush=True)
 
     except requests.HTTPError as error:
-        response_text = getattr(error.response, "text", None) or ""
-        if "compute units usage limit exceeded" in response_text[:300].lower():
-            _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
-            raise RuntimeError("Birdeye: quota exhausted; paused for 1 hour") from None
+        pause_if_quota_exhausted(error, "Birdeye")
         raise
 
     return found_tokens

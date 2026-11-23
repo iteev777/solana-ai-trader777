@@ -8,6 +8,8 @@ import threading
 import time
 from collections import OrderedDict
 
+from requests.exceptions import RequestException
+
 TRANSIENT_INITIAL_SECONDS = 60.0
 TRANSIENT_MAX_SECONDS = 600.0
 STRUCTURAL_BLOCK_SECONDS = 3600.0
@@ -56,7 +58,7 @@ _last_error = None
 
 def classify_pool_error(error):
     """Classify an error as transient transport/provider or structural pool data."""
-    if isinstance(error, (TimeoutError, ConnectionError)):
+    if isinstance(error, (TimeoutError, ConnectionError, RequestException)):
         return "transient"
     message = str(error or "").lower()
     if any(marker in message for marker in _TRANSIENT_MARKERS):
@@ -109,8 +111,6 @@ def should_skip_pool(pool_address, now=None):
         structural = _structural.get(key)
         if structural and now < structural["retry_at"]:
             return True
-        if transient and now >= transient["retry_at"]:
-            transient["retry_at"] = now
         if structural and now >= structural["retry_at"]:
             _structural.pop(key, None)
         return False
@@ -123,8 +123,8 @@ def record_transient_failure(pool_address, error=None, now=None):
     now = time.monotonic() if now is None else float(now)
     key = pool_address.strip()
     with _lock:
-        last_success = _last_success_at.get(key, 0.0)
-        if last_success and now - last_success < RECENT_SUCCESS_GRACE_SECONDS:
+        last_success = _last_success_at.get(key)
+        if last_success is not None and 0 <= now - last_success < RECENT_SUCCESS_GRACE_SECONDS:
             return {
                 "retry_at": last_success,
                 "retry_in_seconds": 0.0,
@@ -132,8 +132,10 @@ def record_transient_failure(pool_address, error=None, now=None):
                 "ignored_after_recent_success": True,
             }
         previous = _transient.get(key)
+        if previous and now - previous["retry_at"] >= TRANSIENT_MAX_SECONDS:
+            previous = None
         if previous and now < previous["retry_at"]:
-            previous["last_error"] = str(error)[:180] if error is not None else previous["last_error"]
+            previous["last_error"] = type(error).__name__ if error is not None else previous["last_error"]
             return {
                 "retry_at": previous["retry_at"],
                 "retry_in_seconds": max(0.0, previous["retry_at"] - now),
@@ -148,13 +150,13 @@ def record_transient_failure(pool_address, error=None, now=None):
             "retry_at": retry_at,
             "next_delay": min(TRANSIENT_MAX_SECONDS, delay * 2),
             "failures": (previous["failures"] + 1) if previous else 1,
-            "last_error": str(error)[:180] if error is not None else None,
+            "last_error": type(error).__name__ if error is not None else None,
         }
         _transient.move_to_end(key)
         while len(_transient) > MAX_TRACKED_POOLS:
             _transient.popitem(last=False)
         _total_transient_failures += 1
-        _last_error = str(error)[:180] if error is not None else _last_error
+        _last_error = type(error).__name__ if error is not None else _last_error
         return {"retry_at": retry_at, "retry_in_seconds": delay,
                 "failures": _transient[key]["failures"]}
 
@@ -170,13 +172,13 @@ def record_structural_failure(pool_address, error=None, now=None):
         retry_at = now + STRUCTURAL_BLOCK_SECONDS
         _structural[key] = {
             "retry_at": retry_at,
-            "last_error": str(error)[:180] if error is not None else None,
+            "last_error": type(error).__name__ if error is not None else None,
         }
         _structural.move_to_end(key)
         while len(_structural) > MAX_TRACKED_POOLS:
             _structural.popitem(last=False)
         _total_structural_failures += 1
-        _last_error = str(error)[:180] if error is not None else _last_error
+        _last_error = type(error).__name__ if error is not None else _last_error
         return {"retry_at": retry_at, "retry_in_seconds": STRUCTURAL_BLOCK_SECONDS}
 
 

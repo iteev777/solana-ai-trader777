@@ -4,10 +4,16 @@
 # ==========================================
 
 import os
-import time
 import requests
 
 from api_client import get_json
+from discovery.birdeye_scanner import (
+    _quota_exhausted,
+    check_quota,
+    extract_items,
+    pause_if_quota_exhausted,
+    valid_token,
+)
 
 
 API_KEY = os.getenv("BIRDEYE_API_KEY")
@@ -19,47 +25,6 @@ REQUEST_TIMEOUT = 15
 CACHE_TTL = 30
 MAX_RETRIES = 1
 TOKEN_LIMIT = 20
-
-# Birdeye reports exhausted monthly/plan credits as HTTP 400.
-QUOTA_COOLDOWN_SECONDS = 3600
-_quota_disabled_until = 0
-
-
-# ==========================================
-# TOKEN VALIDATION
-# ==========================================
-
-def valid_token(token):
-
-    if not isinstance(token, dict):
-        return False
-
-    address = token.get("address") or token.get("tokenAddress")
-
-    return isinstance(address, str) and bool(address.strip())
-
-
-def extract_items(data):
-
-    if not isinstance(data, dict):
-        return None
-
-    result = data.get("data")
-
-    if isinstance(result, list):
-        return result
-
-    if not isinstance(result, dict):
-        return None
-
-    for key in ("items", "tokens", "token_list"):
-        items = result.get(key)
-
-        if isinstance(items, list):
-            return items
-
-    return None
-
 
 def normalize_token(token):
 
@@ -86,14 +51,11 @@ def normalize_token(token):
 
 def scan_pumpfun():
 
-    global _quota_disabled_until
-
     found_tokens = []
 
     if not API_KEY:
         raise RuntimeError("Birdeye meme listing: BIRDEYE_API_KEY is missing")
-    if time.monotonic() < _quota_disabled_until:
-        raise RuntimeError("Birdeye meme listing: quota cooldown active")
+    check_quota("Birdeye meme listing")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -126,7 +88,7 @@ def scan_pumpfun():
             response = getattr(error, "response", None)
             status_code = getattr(response, "status_code", None)
 
-            if status_code not in (400, 404, 422):
+            if status_code not in (400, 404, 422) or _quota_exhausted(response):
                 raise
 
             print(
@@ -184,10 +146,7 @@ def scan_pumpfun():
         )
 
     except requests.HTTPError as error:
-        response_text = getattr(error.response, "text", None) or ""
-        if "compute units usage limit exceeded" in response_text[:300].lower():
-            _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
-            raise RuntimeError("Birdeye meme listing: quota exhausted; paused for 1 hour") from None
+        pause_if_quota_exhausted(error, "Birdeye meme listing")
         raise
 
     return found_tokens

@@ -4,6 +4,7 @@ Supports SOLANA_RPC_URL plus comma-separated SOLANA_RPC_URLS. Optional
 provider-specific variables: HELIUS_RPC_URL, QUICKNODE_RPC_URL,
 TRITON_RPC_URL and ALCHEMY_RPC_URL. Endpoint URLs are never logged or exposed.
 """
+import math
 import os
 import threading
 import time
@@ -66,7 +67,8 @@ def _entry(url):
 def _retry_after(response):
     value = response.headers.get("Retry-After")
     try:
-        return min(_MAX_COOLDOWN, max(1.0, float(value)))
+        delay = float(value)
+        return min(_MAX_COOLDOWN, max(1.0, delay)) if math.isfinite(delay) else 5.0
     except (TypeError, ValueError):
         return 5.0
 
@@ -127,10 +129,13 @@ def rpc_call(method, params):
                 if not isinstance(payload, dict):
                     raise ValueError("Invalid JSON-RPC response")
                 rpc_error = payload.get("error")
-                if rpc_error:
+                if rpc_error is not None:
                     code = rpc_error.get("code") if isinstance(rpc_error, dict) else None
-                    message = str(rpc_error)[:180]
-                    if code in (-32005, 429) or "rate limit" in message.lower():
+                    message = rpc_error.get("message", "") if isinstance(rpc_error, dict) else ""
+                    limited = isinstance(message, str) and any(
+                        phrase in message.lower() for phrase in ("rate limit", "too many requests")
+                    )
+                    if code in (-32005, 429) or limited:
                         state["cooldown_until"] = time.monotonic() + 5.0
                         state["rate_limits"] += 1
                     state["failures"] += 1

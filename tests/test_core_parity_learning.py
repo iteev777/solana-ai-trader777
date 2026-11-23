@@ -31,6 +31,21 @@ class RpcTransportTests(unittest.TestCase):
         self.assertNotIn("hidden", str(status))
         self.assertEqual(status["endpoints"][0]["rate_limits"], 1)
 
+    def test_json_rpc_error_is_counted_and_falls_back_even_if_result_present(self):
+        failed = Mock(status_code=200)
+        failed.json.return_value = {"error": {"code": -32603, "message": "hidden"}, "result": "wrong"}
+        healthy = Mock(status_code=200)
+        healthy.json.return_value = {"result": "ok"}
+        with (
+            patch.dict(os.environ, {"SOLANA_RPC_URLS": "https://a.example,https://b.example"}, clear=True),
+            patch.object(rpc_transport.requests, "post", side_effect=[failed, healthy]),
+        ):
+            self.assertEqual(rpc_transport.rpc_call("getHealth", []), "ok")
+            primary = rpc_transport.get_rpc_status()["endpoints"][0]
+        self.assertEqual(primary["failures"], 1)
+        self.assertEqual(primary["successes"], 0)
+        self.assertNotIn("hidden", str(primary))
+
 
 class AdaptiveLearningTests(unittest.TestCase):
     def test_no_sizing_change_before_minimum_sample(self):

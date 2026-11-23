@@ -24,24 +24,35 @@ def scan_dexscreener():
                 if not isinstance(address, str) or not address.strip():
                     continue
                 address = address.strip()
-                if address not in found:
-                    found[address] = {
-                        "tokenAddress": address,
-                        "chainId": "solana",
-                        "name": item.get("name") or item.get("description") or "Unknown",
-                        "symbol": item.get("symbol") or "Unknown",
-                        "discovery_sources": [source],
-                        "dexscreener_url": item.get("url"),
-                        "icon": item.get("icon"),
-                        "boost_amount": item.get("totalAmount") or item.get("amount")
-                    }
-                elif source not in found[address]["discovery_sources"]:
-                    found[address]["discovery_sources"].append(source)
+                token = found.setdefault(address, {
+                    "tokenAddress": address,
+                    "chainId": "solana",
+                    "discovery_sources": [],
+                })
+                if source not in token["discovery_sources"]:
+                    token["discovery_sources"].append(source)
+                fields = {
+                    "name": item.get("name") or item.get("description"),
+                    "symbol": item.get("symbol"),
+                    "dexscreener_url": item.get("url"),
+                    "icon": item.get("icon"),
+                    "boost_amount": item.get("totalAmount"),
+                }
+                if fields["boost_amount"] is None:
+                    fields["boost_amount"] = item.get("amount")
+                for key, value in fields.items():
+                    if token.get(key) in (None, "") and value not in (None, ""):
+                        token[key] = value
         except Exception as error:
-            print("DEXSCREENER DISCOVERY SOURCE ERROR:", source, repr(error), flush=True)
+            print("DEXSCREENER DISCOVERY SOURCE ERROR:", source, type(error).__name__, flush=True)
     if not available:
         raise RuntimeError("DexScreener: all discovery feeds unavailable")
     result = list(found.values())
+    for token in result:
+        token.setdefault("name", "Unknown")
+        token.setdefault("symbol", "Unknown")
+        for field in ("dexscreener_url", "icon", "boost_amount"):
+            token.setdefault(field, None)
     print("TROJAN V2 DEXSCREENER TOKENS:", len(result), flush=True)
     return result
 

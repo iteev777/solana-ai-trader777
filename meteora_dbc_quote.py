@@ -205,12 +205,11 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
         raise ValueError("Meteora DBC PoolConfig owner is invalid")
     config_first = _decode_pool_config(config_discovery.get("data"), chain)
 
-    if (
-        first["base_mint"] == config_first["quote_mint"]
-        or first["base_vault"] == first["quote_vault"]
-        or first["base_mint"] == first["base_vault"]
-        or config_first["quote_mint"] == first["quote_vault"]
-    ):
+    addresses = [
+        pool_address, first["config"], first["base_mint"], config_first["quote_mint"],
+        first["base_vault"], first["quote_vault"],
+    ]
+    if len(set(addresses)) != len(addresses):
         raise ValueError("Meteora DBC mint/vault relationships are invalid")
 
     if input_mint == first["base_mint"]:
@@ -224,12 +223,10 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
     if output_mint is not None and output_mint != expected_output:
         raise ValueError("Requested output mint does not match the Meteora DBC pool")
 
-    addresses = [
-        pool_address, first["config"], first["base_mint"], config_first["quote_mint"],
-        first["base_vault"], first["quote_vault"],
-    ]
-    snapshot_started = time.time()
+    snapshot_started = time.monotonic()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
+    if type(slot) is not int or slot < 0:
+        raise ValueError("Meteora DBC confirmed snapshot slot is invalid")
     if len(accounts) != len(addresses) or any(item is None for item in accounts):
         raise ValueError("Meteora DBC confirmed snapshot is missing a required account")
     pool_acc, config_acc, base_mint_acc, quote_mint_acc, base_vault_acc, quote_vault_acc = accounts
@@ -285,7 +282,7 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
     impact = abs(after_price - before_price) / before_price * 100.0 if before_price > 0 else float("nan")
     if not math.isfinite(impact):
         raise ValueError("Meteora DBC price impact is invalid")
-    age = time.time() - snapshot_started
+    age = time.monotonic() - snapshot_started
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DBC confirmed snapshot is stale")
 

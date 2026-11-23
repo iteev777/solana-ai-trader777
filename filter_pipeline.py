@@ -110,7 +110,7 @@ def _metadata_stage(token, mint):
     })
 
 
-def _market_stage(token, strategy):
+def _market_stage(token, mint, strategy):
     price = _number(token.get("priceUsd"))
     liquidity = _number(_get(token, "liquidity", "usd"))
     if price is None:
@@ -141,9 +141,9 @@ def _market_stage(token, strategy):
         })
 
     base_mint = _get(token, "baseToken", "address")
-    if base_mint and token.get("address") and base_mint != token.get("address"):
+    if base_mint and base_mint != mint.strip():
         return _result("REJECT", "market", "BASE_MINT_MISMATCH", {
-            "candidate_mint": token.get("address"), "base_mint": base_mint
+            "candidate_mint": mint.strip(), "base_mint": base_mint
         })
     return _result("PASS", "market", "MARKET_DATA_VALID", {
         "price_usd": price, "liquidity_usd": liquidity
@@ -343,14 +343,15 @@ def _age_stage(token):
     created = _number(token.get("pairCreatedAt"))
     if created is None:
         created = _number(token.get("created_at_ms"))
-    if created is None:
-        if os.getenv("TROJAN_FILTER_REQUIRE_POOL_AGE", "false").lower() == "true":
+    minimum = _env_float("TROJAN_FILTER_MIN_POOL_AGE_MINUTES", 0.0, 0.0, 10_000_000.0)
+    now = time.time()
+    created_seconds = created / 1000.0 if created is not None and created > 10_000_000_000 else created
+    if created_seconds is None or not 0 < created_seconds <= now:
+        if minimum > 0 or os.getenv("TROJAN_FILTER_REQUIRE_POOL_AGE", "false").lower() == "true":
             return _result("WAIT", "age", "POOL_AGE_UNKNOWN")
         return _result("PASS", "age", "POOL_AGE_NOT_REQUIRED")
     # Providers normally expose milliseconds; tolerate Unix seconds explicitly.
-    created_seconds = created / 1000.0 if created > 10_000_000_000 else created
-    age_minutes = max(0.0, (time.time() - created_seconds) / 60.0)
-    minimum = _env_float("TROJAN_FILTER_MIN_POOL_AGE_MINUTES", 0.0, 0.0, 10_000_000.0)
+    age_minutes = (now - created_seconds) / 60.0
     maximum = _env_float("TROJAN_FILTER_MAX_POOL_AGE_MINUTES", 10_000_000.0, 0.0, 10_000_000.0)
     if age_minutes < minimum:
         return _result("WAIT", "age", "POOL_TOO_NEW", {
@@ -465,18 +466,19 @@ def evaluate_token(token, mint, strategy="main"):
     """
     token = token if isinstance(token, dict) else {}
     stages = (
-        _metadata_stage(token, mint),
-        _market_stage(token, strategy),
-        _age_stage(token),
-        _valuation_stage(token),
-        _pool_metrics_stage(token),
-        _activity_stage(token),
-        _momentum_stage(token),
-        _provenance_stage(token),
-        _quality_stage(token),
+        (_metadata_stage, (token, mint)),
+        (_market_stage, (token, mint, strategy)),
+        (_age_stage, (token,)),
+        (_valuation_stage, (token,)),
+        (_pool_metrics_stage, (token,)),
+        (_activity_stage, (token,)),
+        (_momentum_stage, (token,)),
+        (_provenance_stage, (token,)),
+        (_quality_stage, (token,)),
     )
     decisions = []
-    for item in stages:
+    for stage, args in stages:
+        item = stage(*args)
         decisions.append(item)
         if item["status"] != "PASS":
             return {
@@ -490,6 +492,6 @@ def evaluate_token(token, mint, strategy="main"):
         "status": "PASS",
         "reason": "ALL_FILTER_STAGES_PASSED",
         "stage": "complete",
-        "decisions": list(stages),
+        "decisions": decisions,
         "evaluated_at": time.time(),
     }
