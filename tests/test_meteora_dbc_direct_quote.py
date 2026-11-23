@@ -178,6 +178,13 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fee collection mode"):
             self.quote(config_data=bytes(config))
 
+    def test_cross_side_mint_and_vault_cannot_alias(self):
+        pool_data = bytearray(self.pool_data)
+        pool_data[200:232] = chain._b58decode(self.base_mint)
+        with patch.object(self, "pool_account", dict(self.pool_account, data=bytes(pool_data))):
+            with self.assertRaisesRegex(ValueError, "mint/vault relationships"):
+                self.quote()
+
     def test_curve_checkpoints_must_be_increasing(self):
         config = bytearray(self.config_data)
         config[440:456] = ((1 << 64) * 10 // 10).to_bytes(16, "little")
