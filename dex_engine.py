@@ -228,6 +228,12 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
     if input_mint == output_mint:
         raise ValueError("Input and output mints must differ")
     amount = _uint(amount, "amount")
+    effective_slippage_bps = (
+        route_comparison.MAX_SLIPPAGE_BPS
+        if slippage_bps is None else _uint(slippage_bps, "slippage_bps", allow_zero=True)
+    )
+    if effective_slippage_bps > route_comparison.MAX_SLIPPAGE_BPS:
+        raise ValueError("Slippage exceeds configured safety cap")
     network_fee_output_amounts = network_fee_output_amounts or {}
     if not isinstance(network_fee_output_amounts, dict):
         raise ValueError("network_fee_output_amounts must be an object")
@@ -257,14 +263,14 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
 
     tasks = {
         "aggregators": lambda: route_comparison.compare_quotes(
-            input_mint, output_mint, amount, slippage_bps, pool_address=None
+            input_mint, output_mint, amount, effective_slippage_bps, pool_address=None
         )
     }
     for pool_address in pools:
         key = "direct:" + pool_address
         tasks[key] = lambda address=pool_address: _direct_pool_quote(
             address, input_mint, output_mint, amount,
-            slippage_bps if slippage_bps is not None else route_comparison.MAX_SLIPPAGE_BPS
+            effective_slippage_bps
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(tasks))) as executor:
@@ -320,7 +326,7 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount,
-        "slippage_bps": aggregate.get("slippage_bps"),
+        "slippage_bps": effective_slippage_bps,
         "pool_candidates_requested": len(pools),
         "pool_discovery": "AUTOMATIC_REGISTRY_PAIR_MATCH" if auto_discovery else "EXPLICIT_POOL_LIST",
         "pool_discovery_complete": not auto_discovery or len(pools) < MAX_POOL_CANDIDATES,
