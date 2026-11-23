@@ -39,7 +39,7 @@ class CopyFreshnessTests(unittest.TestCase):
 
     def test_invalid_max_age_falls_back_to_safe_default(self):
         with patch.dict("os.environ", {"TROJAN_COPY_MAX_EVENT_AGE_SECONDS": "nan"}):
-            result = copy_freshness.evaluate_event_freshness(960, 1000, now=1000)
+            result = copy_freshness.evaluate_event_freshness(980, 1000, now=1000)
         self.assertTrue(result["allowed"])
         self.assertEqual(result["max_age_seconds"], 30.0)
 
