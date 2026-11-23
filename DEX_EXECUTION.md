@@ -186,11 +186,10 @@ selection remains read-only and does not authorize signing or broadcasting.
 
 ## Safety gates
 
-- Execution is **disabled by default**.
-- Server-side execution additionally requires
-  `TROJAN_JUPITER_EXECUTE_ENABLED=true`.
-- The execute request additionally requires
-  `X-Trojan-Confirm-Live: 1`.
+- Jupiter `/execute` is **hard-locked in code** during the current project phase.
+- No environment variable or per-request confirmation can unlock it.
+- The adapter can request and simulate unsigned orders only; signing and
+  broadcasting remain unavailable until a separately reviewed Phase 5 release.
 - The API does not accept, store, or request a wallet private key.
 - A recent successful unsigned RPC simulation is required. The in-memory request cache expires after 120 seconds and each simulation approval is consumed atomically by the first execute attempt. A failed or timed-out execute attempt requires a fresh order; this deliberately favors replay protection over automatic retries. The cache is process-local, so order and execute must reach the same app instance. Multi-replica deployments must use sticky routing or a shared durable approval store before enabling execution.
 - Only a transaction returned by Jupiter `/order` can be executed with its cached `request_id`; do not modify the transaction message after order creation.
@@ -208,8 +207,8 @@ selection remains read-only and does not authorize signing or broadcasting.
 
 - `JUPITER_API_KEY`: optional for keyless development, recommended for production.
 - `TROJAN_JUPITER_V2_BASE_URL`: defaults to `https://api.jup.ag/swap/v2`.
-- `TROJAN_JUPITER_EXECUTE_ENABLED`: defaults to `false`; do not enable until
-  wallet signing, paper tests, simulation, and risk controls have been validated.
+- No Jupiter execution-enable environment variable is supported while the
+  Phase 5 hard lock is in place.
 
 
 ## DEX protocol capability reporting
