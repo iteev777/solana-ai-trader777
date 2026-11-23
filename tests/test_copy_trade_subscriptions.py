@@ -1,4 +1,7 @@
 import json
+import sys
+import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -116,6 +119,44 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
         self.assertEqual(result, {"processed": 0, "wallets": 2, "errors": 1})
         self.assertIn("wallet-A", copy_trade._status["last_poll_error"])
 
+
+
+    def _event(self, now, block_time):
+        return {
+            "wallet": "wallet-A", "signature": "sig-fresh" if block_time >= now - 30 else "sig-stale",
+            "action": "BUY", "token_mint": "mint-A", "token_delta": 1.0,
+            "sol_delta": -0.1, "economic_sol_delta": -0.1, "quote_delta": -0.1,
+            "logs": [], "invoked_programs": ["dex-program"],
+            "classification_reason": "TOKEN_IN_QUOTE_OUT",
+            "block_time": block_time, "received_at": now,
+        }
+
+    def test_fresh_wallet_event_can_queue_paper_copy_and_alert(self):
+        now = time.time()
+        event = self._event(now, now - 5)
+        fake_main = types.SimpleNamespace(queue_copy_signal=unittest.mock.Mock())
+        with patch.object(copy_trade, "_fetch_wallet_transaction", return_value=event), \
+             patch.object(copy_trade.database, "record_copy_trade_event", return_value=True), \
+             patch.object(copy_trade, "send_alert") as alert, \
+             patch.dict("os.environ", {"TROJAN_COPY_PAPER_ENABLED": "true"}), \
+             patch.dict(sys.modules, {"main": fake_main}):
+            self.assertTrue(copy_trade._process_wallet_signature("wallet-A", "sig-fresh"))
+        fake_main.queue_copy_signal.assert_called_once_with(event)
+        alert.assert_called_once()
+
+    def test_stale_recovered_wallet_event_is_recorded_but_never_copied_or_alerted(self):
+        now = time.time()
+        event = self._event(now, now - 120)
+        fake_main = types.SimpleNamespace(queue_copy_signal=unittest.mock.Mock())
+        with patch.object(copy_trade, "_fetch_wallet_transaction", return_value=event), \
+             patch.object(copy_trade.database, "record_copy_trade_event", return_value=True) as record, \
+             patch.object(copy_trade, "send_alert") as alert, \
+             patch.dict("os.environ", {"TROJAN_COPY_PAPER_ENABLED": "true"}), \
+             patch.dict(sys.modules, {"main": fake_main}):
+            self.assertTrue(copy_trade._process_wallet_signature("wallet-A", "sig-stale"))
+        record.assert_called_once()
+        fake_main.queue_copy_signal.assert_not_called()
+        alert.assert_not_called()
 
     def test_signature_fetch_includes_before_and_until_cursor_bounds(self):
         class Response:
