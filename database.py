@@ -1783,6 +1783,91 @@ def backup_database(backup_dir=None, keep=7):
     }
 
 
+
+def restore_database(backup_name, backup_dir=None):
+    """Restore a verified snapshot while the application is in offline maintenance mode.
+
+    This deliberately is not exposed as a normal dashboard action: replacing a
+    SQLite database while application workers are writing to it is unsafe.
+    Stop all workers, set TROJAN_RESTORE_MAINTENANCE_MODE=true, then invoke this
+    operation from a one-shot maintenance process.
+    """
+    if os.getenv("TROJAN_RESTORE_MAINTENANCE_MODE", "").strip().lower() not in ("1", "true", "yes"):
+        raise RuntimeError("Database restore requires offline maintenance mode")
+    if not isinstance(backup_name, str) or not backup_name or os.path.basename(backup_name) != backup_name:
+        raise ValueError("A backup filename, not a path, is required")
+    if not backup_name.endswith(".sqlite3"):
+        raise ValueError("Only .sqlite3 backup files can be restored")
+
+    directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
+    source_path = os.path.realpath(os.path.join(directory, backup_name))
+    if os.path.commonpath((os.path.realpath(directory), source_path)) != os.path.realpath(directory):
+        raise ValueError("Backup path is outside the configured backup directory")
+    if not os.path.isfile(source_path) or os.path.getsize(source_path) <= 0:
+        raise FileNotFoundError("Selected database backup does not exist or is empty")
+
+    # Verify the candidate before touching the active database.
+    candidate = sqlite3.connect("file:" + source_path.replace("?", "%3f") + "?mode=ro", uri=True, timeout=30)
+    try:
+        integrity = candidate.execute("PRAGMA integrity_check").fetchone()
+        version = candidate.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise sqlite3.DatabaseError("Selected backup failed SQLite integrity_check")
+        if not version or int(version[0]) != SCHEMA_VERSION:
+            raise sqlite3.DatabaseError("Selected backup schema version is incompatible")
+    finally:
+        candidate.close()
+
+    # Create an emergency snapshot of the current database before replacement.
+    emergency = backup_database(directory, keep=90)
+    destination = DATABASE
+    temporary = destination + ".restore.tmp"
+    source = None
+    target = None
+    try:
+        source = sqlite3.connect(source_path, timeout=30)
+        target = sqlite3.connect(temporary, timeout=30)
+        source.backup(target, pages=256, sleep=0.01)
+        target.commit()
+        restored_integrity = target.execute("PRAGMA integrity_check").fetchone()
+        if not restored_integrity or restored_integrity[0] != "ok":
+            raise sqlite3.DatabaseError("Restored temporary database failed integrity_check")
+    except Exception:
+        if target is not None:
+            target.close()
+            target = None
+        if source is not None:
+            source.close()
+            source = None
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
+    finally:
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
+
+    # This replacement must run only after every application worker has stopped.
+    for suffix in ("-wal", "-shm"):
+        sidecar = destination + suffix
+        if os.path.exists(sidecar):
+            os.remove(sidecar)
+    os.replace(temporary, destination)
+    return {
+        "restored": True,
+        "backup": backup_name,
+        "integrity": "ok",
+        "schema_version": SCHEMA_VERSION,
+        "emergency_backup": emergency["backup"],
+        "requires_application_restart": True,
+    }
+
+
 def get_database_health():
 
     with connect() as connection:
