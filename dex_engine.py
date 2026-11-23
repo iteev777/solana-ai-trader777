@@ -246,6 +246,11 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         discover_pool_addresses(input_mint, output_mint)
         if auto_discovery else _validate_pool_addresses(pool_addresses)
     )
+    valid_fee_keys = {"jupiter", "raptor"} | {"direct:" + address for address in pools}
+    unknown_fee_keys = set(fee_estimates) - valid_fee_keys
+    if unknown_fee_keys:
+        raise ValueError("Network fee estimate references an unknown route: "
+                         + sorted(unknown_fee_keys)[0][:100])
     started = time.perf_counter()
     raw_quotes = {}
     rejected = {}
