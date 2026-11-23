@@ -114,6 +114,34 @@ class DexExecutionTests(unittest.TestCase):
         })
         self.assertEqual(result["status"], "Success")
         self.assertTrue(result["explorer_url"].endswith("signature123"))
+        self.assertNotIn("req-123", dex_execution._simulated_orders)
+        with self.assertRaisesRegex(dex_execution.ExecutionLocked, "unused recent"):
+            dex_execution.execute_signed_order(
+                self.transaction, "req-123", confirmed=True
+            )
+
+    def test_expired_simulation_approval_is_rejected(self):
+        dex_execution._simulated_orders["expired"] = {
+            "simulation_status": "PASS",
+            "created_at": time.time() - dex_execution.ORDER_TTL_SECONDS - 1,
+        }
+        with patch.object(dex_execution, "EXECUTE_ENABLED", True):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "expired"):
+                dex_execution.execute_signed_order(
+                    self.transaction, "expired", confirmed=True
+                )
+
+    def test_failed_simulation_never_marks_order_eligible(self):
+        with patch.object(
+            dex_execution.requests, "get",
+            return_value=FakeResponse(self._order_payload()),
+        ), patch.object(
+            dex_execution, "_simulate_transaction",
+            return_value={"status": "FAIL", "signed": False, "broadcast": False},
+        ):
+            result = self._create_order(simulate=True)
+        self.assertFalse(result["execution_eligible"])
+        self.assertNotIn("req-123", dex_execution._simulated_orders)
 
     def test_execution_status_reports_locked_and_non_custodial(self):
         with patch.object(dex_execution, "EXECUTE_ENABLED", False):
