@@ -17,7 +17,7 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
     def test_rugcheck_merges_new_recent_trending_and_verified_feeds(self):
         responses = [
             [{"mint": VALID_MINT, "symbol": "SOLX", "name": "Sol X"}],
-            [{"mint": VALID_MINT, "symbol": "SOLX"}],
+            [{"mint": VALID_MINT, "metadata": {"name": "Sol X", "symbol": "SOLX"}}],
             [{"mint": VALID_MINT}],
             [{"mint": VALID_MINT, "symbol": "SOLX"}],
         ]
