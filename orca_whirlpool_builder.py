@@ -287,14 +287,14 @@ def simulate_orca_whirlpool_transaction(transaction_base64):
     value = result["value"]
     if "err" not in value:
         raise ValueError("Orca transaction simulation response is missing the error field")
-    logs = value.get("logs")
-    if logs is not None and not isinstance(logs, list):
+    logs = value.get("logs") or []
+    if not isinstance(logs, list):
         raise ValueError("Orca transaction simulation logs are malformed")
     if value["err"] is not None:
         raise ValueError("Orca transaction simulation failed: " + str(value["err"])[:200])
     return {"status": "PASS", "success": True, "err": None,
             "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
-            "logs": value.get("logs", [])[-20:],
+            "logs": [str(line)[:300] for line in logs[-20:]],
             "units_consumed": value.get("unitsConsumed"),
             "execution": "LOCKED", "signing": "NOT_PERFORMED",
             "broadcast": "NOT_PERFORMED"}
