@@ -79,5 +79,35 @@ class StrategyRulesTests(unittest.TestCase):
         self.assertIn("invalid", reason.lower())
 
 
+    def test_all_short_circuits_after_decisive_false(self):
+        context = strategy_rules._context(self.token, 80)
+        node = {"all": [
+            {"field": "liquidity_usd", "op": "gt", "value": 50000},
+            {"condition": "Rsi", "params": {"comparison": "BELOW", "threshold": 30}}
+        ]}
+        with patch("strategy_rules.strategy_conditions.evaluate_condition", side_effect=AssertionError("must short-circuit")):
+            state, _ = strategy_rules._evaluate(node, context)
+        self.assertEqual(state, "false")
+
+    def test_any_short_circuits_after_decisive_true(self):
+        context = strategy_rules._context(self.token, 80)
+        node = {"any": [
+            {"field": "liquidity_usd", "op": "gte", "value": 10000},
+            {"condition": "Rsi", "params": {"comparison": "BELOW", "threshold": 30}}
+        ]}
+        with patch("strategy_rules.strategy_conditions.evaluate_condition", side_effect=AssertionError("must short-circuit")):
+            state, _ = strategy_rules._evaluate(node, context)
+        self.assertEqual(state, "true")
+
+    def test_rule_evaluation_deadline_fails_closed(self):
+        state, reasons = strategy_rules._evaluate(
+            {"all": [{"field": "liquidity_usd", "op": "gte", "value": 1}]},
+            strategy_rules._context(self.token, 80),
+            deadline=0.0,
+        )
+        self.assertEqual(state, "timeout")
+        self.assertIn("timeout", reasons[0])
+
+
 if __name__ == "__main__":
     unittest.main()
