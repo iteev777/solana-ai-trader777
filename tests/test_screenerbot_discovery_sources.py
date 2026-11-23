@@ -66,6 +66,19 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
         self.assertEqual(token["rugcheck_payer"], "verified-payer")
         self.assertEqual(len(token["discovery_sources"]), 5)
 
+    def test_rugcheck_merge_preserves_explicit_false_and_zero_values(self):
+        responses = [
+            [{"mint": VALID_MINT, "jup_verified": False, "decimals": 0}],
+            [{"mint": VALID_MINT, "jup_verified": True, "decimals": 6,
+              "metadata": {"name": "Token", "symbol": "TOK"}}],
+            [{"mint": VALID_MINT}],
+            [{"mint": VALID_MINT}],
+        ]
+        with patch.object(sources, "_safe_fetch", side_effect=responses):
+            result = sources.scan_rugcheck()
+        self.assertEqual(result[0]["jup_verified"], False)
+        self.assertEqual(result[0]["decimals"], 0)
+
     def test_jupiter_merges_recent_organic_traded_and_trending(self):
         responses = [
             [{"id": VALID_MINT, "name": "Jupiter Token", "symbol": "JUPX"}],
