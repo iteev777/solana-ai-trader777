@@ -395,3 +395,8 @@ Trojan maintains a local SQLite denylist for Solana token mints, pool accounts a
 - `DELETE /api/blacklist/{entry_type}/{address}`
 
 Every address is validated as a 32-byte base58 Solana public key. Entries are soft-deactivated rather than erased; re-adding an existing entry reactivates it and updates its reason/source. Candidate mints and selected pool addresses are checked before strategy evaluation. When confirmed RPC security data is available, the largest token-account addresses and their parsed authorities are checked as well. The account list is limited to the provider's largest-account response and is not a complete holder census. Blacklist lookup errors fail closed for candidate approval.
+
+
+## Strategy indicator freshness
+
+Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, candle structure, ATR/volatility, volume spike, VWAP and indicator-derived pullbacks) now require an explicitly ready OHLCV indicator series with a valid timestamp. The default maximum age is 180 seconds, configurable from 30 to 3600 seconds with `TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS`. Missing, stale or future-dated indicator snapshots fail closed with an auditable condition reason. Market-only and direct position metrics do not require an OHLCV timestamp. Token age and time-of-day conditions use the same evaluation timestamp.
