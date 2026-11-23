@@ -162,6 +162,42 @@ class Token2022InspectorTests(unittest.TestCase):
         self.assertEqual(result["extensions"][0]["name"], "TRANSFER_FEE_AMOUNT")
         self.assertFalse(result["execution_enabled"])
 
+    def test_zero_fee_mint_compatibility_accepts_only_immutable_zero_fee_schedules(self):
+        config = bytearray(108)
+        raw = mint_data(tlv(1, bytes(config)))
+        result = inspector.validate_zero_fee_mint_data(raw)
+        self.assertEqual(result["transfer_fee_config"]["older"]["basis_points"], 0)
+        config[88:90] = (1).to_bytes(2, "little")
+        with self.assertRaisesRegex(ValueError, "must be zero"):
+            inspector.validate_zero_fee_mint_data(mint_data(tlv(1, bytes(config))))
+        config = bytearray(108)
+        config[:32] = chain._b58decode(key(19))
+        with self.assertRaisesRegex(ValueError, "authority must be permanently disabled"):
+            inspector.validate_zero_fee_mint_data(mint_data(tlv(1, bytes(config))))
+
+    def test_zero_fee_mint_rejects_transfer_hooks(self):
+        with self.assertRaisesRegex(ValueError, "unsupported by native swap"):
+            inspector.validate_zero_fee_mint_data(mint_data(tlv(14, bytes(64))))
+
+    def test_token2022_account_compatibility_allows_only_safe_account_extensions(self):
+        mint, authority = key(21), key(22)
+        raw = bytearray(166)
+        raw[:32] = chain._b58decode(mint)
+        raw[32:64] = chain._b58decode(authority)
+        raw[64:72] = (500).to_bytes(8, "little")
+        raw[108] = 1
+        raw[165] = inspector.TOKEN_ACCOUNT_TYPE
+        raw.extend(tlv(7, b""))
+        account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+        self.assertEqual(
+            inspector.validate_token2022_account_data(account, mint, authority), 500
+        )
+        raw = bytearray(raw[:166])
+        raw.extend(tlv(15, bytes(1)))
+        account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+        with self.assertRaisesRegex(ValueError, "unsupported Token-2022 account extension"):
+            inspector.validate_token2022_account_data(account, mint, authority)
+
     def test_rejects_non_token2022_account(self):
         with patch("token2022_inspector._read_account",
                    return_value={"owner": chain.TOKEN_PROGRAM, "data": bytes(165)}):
