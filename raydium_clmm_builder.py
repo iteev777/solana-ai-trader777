@@ -2,7 +2,8 @@
 
 Builds the SWAP_V2 exact-input instruction from a fresh confirmed tick quote.
 Only legacy SPL Token mints are accepted by the paired quote adapter today;
-Token-2022 and bitmap-extension-range quotes remain explicitly unsupported.
+Token-2022 mints remain explicitly unsupported. Bitmap-extension tick arrays
+are loaded from the same pool bitmap model as the quote adapter.
 No signing or broadcasting is performed.
 """
 import base64
@@ -109,10 +110,12 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
     if (output_mint != (first["mint_1"] if zero_for_one else first["mint_0"])):
         raise ValueError("Output mint does not match the opposite CLMM pool side")
 
-    arrays = clmm._array_starts(first, pool, zero_for_one, chain)
     bitmap_extension, _ = chain._find_program_address(
-        [b"pool_tick_array_bitmap_extension", _key(pool, "pool")], PROGRAM_ID
+        [clmm.BITMAP_EXTENSION_SEED, _key(pool, "pool")], PROGRAM_ID
     )
+    bitmap_discovery = chain._account(bitmap_extension)
+    initial_extension = clmm._decode_bitmap_extension(bitmap_discovery, pool, chain)
+    arrays = clmm._array_starts(first, pool, zero_for_one, chain, initial_extension)
     observation, _ = chain._find_program_address(
         [b"observation", _key(pool, "pool")], PROGRAM_ID
     )
@@ -125,6 +128,11 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM transaction snapshot is missing pool, config, vault or mint accounts")
     (pool_acc, config_acc, vault0_acc, vault1_acc, mint0_acc, mint1_acc,
      bitmap_acc, observation_acc, user_in_acc, user_out_acc) = accounts[:10]
+    snapshot_extension = clmm._decode_bitmap_extension(bitmap_acc, pool, chain)
+    if snapshot_extension != initial_extension:
+        raise ValueError("CLMM bitmap extension changed during transaction snapshot")
+    if observation_acc is None:
+        raise ValueError("CLMM observation account is missing from transaction snapshot")
     if pool_acc.get("owner") != PROGRAM_ID:
         raise ValueError("CLMM pool owner changed during transaction snapshot")
     current = clmm._decode_state(pool_acc.get("data"), chain)
@@ -146,10 +154,10 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM vaults must use legacy SPL Token")
     if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
         raise ValueError("CLMM mint account layout is invalid")
+    # Raydium CLMM vault authority is the pool address itself.
+    authority = pool
     _token_account(vault0_acc, authority, current["mint_0"], "CLMM vault 0")
     _token_account(vault1_acc, authority, current["mint_1"], "CLMM vault 1")
-    # Vault authority is the canonical CLMM pool PDA authority.
-    authority = pool
     if (chain._key(vault0_acc["data"], 32) != authority
             or chain._key(vault1_acc["data"], 32) != authority):
         raise ValueError("CLMM vault authority does not match canonical PDA")
