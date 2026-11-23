@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import dex_engine
+import route_comparison
 
 
 class MultiPoolDexEngineTests(unittest.TestCase):
@@ -148,6 +149,22 @@ class MultiPoolDexEngineTests(unittest.TestCase):
             {route["pool_id"] for route in result["routes_eligible"] if route["pool_id"]},
             {"pool-a", "pool-b"},
         )
+
+    def test_rejects_slippage_above_configured_cap_before_provider_calls(self):
+        with patch("route_comparison.compare_quotes") as aggregate:
+            with self.assertRaisesRegex(ValueError, "Slippage exceeds configured safety cap"):
+                dex_engine.build_routes(
+                    self.input_mint, self.output_mint, 100,
+                    pool_addresses=[], slippage_bps=route_comparison.MAX_SLIPPAGE_BPS + 1
+                )
+        aggregate.assert_not_called()
+
+    def test_rejects_boolean_slippage(self):
+        with self.assertRaisesRegex(ValueError, "slippage_bps must be an integer"):
+            dex_engine.build_routes(
+                self.input_mint, self.output_mint, 100,
+                pool_addresses=[], slippage_bps=True
+            )
 
     def test_rejects_invalid_fee_estimate(self):
         with self.assertRaises(ValueError):
