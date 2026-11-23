@@ -84,6 +84,7 @@ class NativeExecutionTests(unittest.TestCase):
         )
         self.assertTrue(approval["request_id"])
         status = native.get_native_execution_status()
+        self.assertIn("raydium_clmm", status["supported_protocols"])
         self.assertIn("raydium_amm_v4", status["supported_protocols"])
         self.assertFalse(status["server_signing"])
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
