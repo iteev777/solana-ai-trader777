@@ -34,8 +34,8 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `benchmarks/rust_rpc/src/bin/rpc_sidecar.rs` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/rust_rpc/src/main.rs` | `src/main.rs` | PENDING |  |
 | `blacklist.py` | `src/tokens/database/blacklist.rs`, `src/trader/safety/blacklist.rs`, `src/pools/database/blacklist.rs` | PARTIAL | Full module and tests read. Token/pool/account denylist with base58 validation, soft removal and batch matching. Reference has token source precedence/user-cleared suppression, emergency position exit and TTL/failure-count pool/account quarantine; these behaviors are not equivalent. Dashboard only exposes manual CRUD today. |
-| `candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
-| `candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
+| `candidate_observer.py` | No direct PumpPortal equivalent found in ScreenerBot; adjacent observation concepts in copy wallet watch | PARTIAL | Full module and focused tests read. Optional PumpPortal-only time-window observer; metered subscription opt-in, bounded sessions/events, signature dedupe, buyer concentration/volume/price gates and cleanup. No PumpPortal source found in reference; Trojan-specific feature, not a missing ScreenerBot feature. Concurrency/connection readiness and close-window race remain open. |
+| `candidate_quality.py` | No direct candidate-ranking equivalent found; adjacent `src/filtering/engine.rs`, `src/filtering/stage.rs` are hard filter pipeline, not score ranking | PARTIAL | Full module and tests read. Independent prioritization score uses liquidity, multi-window volume/flow, source-family diversity, age and momentum; missing data remains unknown and gating disabled. No one-to-one reference equivalent; filter pipeline still needs separate comparison. |
 | `clmm_quote_math.py` | Ei vielä kartoitettu | PENDING |  |
 | `copy_event_parser.py` | `src/chains/solana/transactions/deltas.rs`, `src/transactions/deltas.rs` | TESTED | Compared subject-relative token/native balance logic; added native SOL correction for subject-owned non-wSOL token-account rent, excluded wSOL from rent correction, and aligned noise floor to 50,000 lamports. It still emits one dominant token event rather than a complete multi-asset ledger. Commit `6c4efa1`; full validation `45254436959` (998 tests). |
 | `copy_freshness.py` | `src/trader/copy/guards.rs`, `src/trader/copy/analytics.rs`, `src/wallets/watch/poller.rs` | TESTED | Measures chain-to-observation arrival age from captured receipt time, rejects future/invalid timestamps and stale recovered events. Tests `f9b9445`, `17c003f`; full validation `45254436959` (998 tests). |
@@ -111,7 +111,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `rugcheck.py` | Ei vielä kartoitettu | PENDING |  |
 | `scanner.py` | Ei vielä kartoitettu | PENDING |  |
 | `service_health.py` | Ei vielä kartoitettu | PENDING |  |
-| `sniper_scanner.py` | Ei vielä kartoitettu | PENDING |  |
+| `sniper_scanner.py` | `src/tokens/discovery_sources.rs` (new-token feed responsibility only); no PumpPortal trade stream equivalent | PARTIAL | Full module and focused stream tests read. One shared PumpPortal WebSocket handles new-token and optional metered trade subscriptions, bounded queue/dedupe and reconnect resubscription. ScreenerBot uses different feed/runtime architecture; PumpPortal observer is Trojan-specific. |
 | `solana_onchain.py` | Ei vielä kartoitettu | PENDING |  |
 | `strategy.py` | Ei vielä kartoitettu | PENDING |  |
 | `strategy_catalog.py` | `src/strategies/conditions/catalog.rs`, strategy policy | TESTED | Exposes per-condition timeframe schema and maximum concurrent evaluation policy; full validation `45254436959`.  |
@@ -126,9 +126,9 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_ata_manager_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_blacklist.py` | `src/tokens/database/blacklist_tests.rs`, pool blacklist tests | TESTED | Full test file read; add/list/match/soft-remove/reactivation, invalid key/type, account report matching and schema initialization covered. Broader reference semantics remain uncovered. |
 | `tests/test_candidate_metadata_merge.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_candidate_quality_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_candidate_observer.py` | Trojan-specific PumpPortal observer tests; no direct reference tests | TESTED | Full test file read; validation/dedupe, concentration, opt-in/API-key gate and shared WebSocket lifecycle covered. Full validation on `bbff47a` included 998 tests. |
+| `tests/test_candidate_quality.py` | Trojan-specific ranking tests; adjacent filter tests | TESTED | Full test file read; source-family diversity, known market context and missing-data behavior covered. Ranking-vs-reference filter semantics remain separate. |
+| `tests/test_candidate_quality_pipeline.py` | Trojan-specific ranking tests; adjacent filter profile tests | TESTED | Full test file read; hard rejects, missing-data posture, market enrichment and deterministic tier ordering covered. |
 | `tests/test_copy_event_parser.py` | `src/chains/solana/transactions/deltas.rs`, `src/transactions/direction_tests.rs` | TESTED | Covers exact wallet deltas, ATA rent correction, wrapped SOL, loaded addresses and ambiguous/missing/mixed metadata; full validation `45254436959`. |
 | `tests/test_copy_freshness.py` | `src/trader/copy/guards.rs` tests | TESTED | Tests arrival-time age, queue-delay independence, stale/future/invalid timestamps and bounded fallback; 998-test full validation passed on `bbff47a`. |
 | `tests/test_copy_performance_protocol_telemetry.py` | `src/trader/copy/analytics_tests.rs`, protocol validation tests | PARTIAL | Full test file read; validates copy-wallet P&L attribution and open exposure plus protocol telemetry aggregation. Reference analytics/round ownership tests still require full comparison. |
@@ -196,7 +196,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_pre_strategy_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_pumpportal_trade_stream.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_pumpportal_trade_stream.py` | Trojan-specific PumpPortal stream tests; no direct reference tests | TESTED | Full test file read; trade-vs-create routing, reconnect resubscription, same-socket watch/unwatch and no-key fail-closed behavior covered. |
 | `tests/test_pumpswap_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpswap_v2_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_raydium_amm_v4_builder.py` | Ei vielä kartoitettu | PENDING |  |
