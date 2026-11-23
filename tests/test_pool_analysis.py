@@ -22,6 +22,20 @@ class PoolAnalysisResilienceTests(unittest.TestCase):
             "transient",
         )
 
+    def test_http_client_errors_are_transient_and_do_not_expose_urls(self):
+        from requests.exceptions import HTTPError
+
+        error = HTTPError("private provider URL")
+        self.assertEqual(pool_analysis.classify_pool_error(error), "transient")
+        pool_analysis.record_transient_failure("pool", error, now=10)
+        self.assertEqual(pool_analysis.get_pool_analysis_status(now=11)["last_error"], "HTTPError")
+
+    def test_polling_does_not_extend_expired_backoff_history(self):
+        pool_analysis.record_transient_failure("pool", now=0)
+        self.assertFalse(pool_analysis.should_skip_pool("pool", now=60))
+        self.assertFalse(pool_analysis.should_skip_pool("pool", now=660))
+        self.assertEqual(pool_analysis.record_transient_failure("pool", now=660)["failures"], 1)
+
     def test_missing_accounts_and_invalid_layouts_are_structural(self):
         self.assertEqual(
             pool_analysis.classify_pool_error(ValueError("on-chain account not found")),
