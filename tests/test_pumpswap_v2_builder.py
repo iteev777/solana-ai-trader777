@@ -12,13 +12,36 @@ def key(byte):
     return chain._b58encode(bytes([byte]) * 32)
 
 
-def token_account(mint, owner, amount=1000):
-    raw = bytearray(165)
+def token_account(mint, owner, amount=1000, token_program=chain.TOKEN_PROGRAM,
+                  transfer_fee=False, immutable_owner=False):
+    raw = bytearray(182 if immutable_owner else (178 if transfer_fee else 165))
     raw[0:32] = chain._b58decode(mint)
     raw[32:64] = chain._b58decode(owner)
     raw[64:72] = amount.to_bytes(8, "little")
     raw[108] = 1
-    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+    if transfer_fee:
+        raw[165] = 2
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (8).to_bytes(2, "little")
+    if immutable_owner:
+        raw[178:180] = (7).to_bytes(2, "little")
+        raw[180:182] = (0).to_bytes(2, "little")
+    return {"owner": token_program, "data": bytes(raw)}
+
+
+def token2022_mint(decimals=6):
+    from token2022_inspector import MINT_ACCOUNT_TYPE
+    raw = bytearray(166)
+    raw[44] = decimals
+    raw[45] = 1
+    raw[165] = MINT_ACCOUNT_TYPE
+    config = bytearray(108)
+    config[80:88] = (10_000).to_bytes(8, "little")
+    config[88:90] = (100).to_bytes(2, "little")
+    config[98:106] = (10_000).to_bytes(8, "little")
+    config[106:108] = (100).to_bytes(2, "little")
+    raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+    return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
 
 
 class PumpSwapV2BuilderTests(unittest.TestCase):
@@ -158,10 +181,55 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         self.assertEqual(result["instruction"], "sell_v2")
 
 
+    def test_builds_token2022_swapv2_with_mint_specific_programs_and_atas(self):
+        accounts = dict(self.account_map)
+        accounts[self.base_mint] = token2022_mint()
+        accounts[self.vault_base] = token_account(
+            self.base_mint, self.pool, 1000, chain.TOKEN_2022_PROGRAM,
+            transfer_fee=True,
+        )
+        accounts[self.user_base] = token_account(
+            self.base_mint, self.wallet, 1000, chain.TOKEN_2022_PROGRAM,
+            transfer_fee=True, immutable_owner=True,
+        )
+        quote = dict(
+            self.quote,
+            token_program_base=chain.TOKEN_2022_PROGRAM,
+            token_program_quote=chain.TOKEN_PROGRAM,
+        )
+
+        def pda(seeds, program):
+            if program == builder.ASSOCIATED_TOKEN_PROGRAM_ID:
+                if seeds[0] == chain._b58decode(self.wallet):
+                    return (self.user_base if seeds[2] == chain._b58decode(self.base_mint)
+                            else self.user_quote), 249
+                for recipient, ata in zip(self.recipients, self.buyback_atas):
+                    if seeds[0] == chain._b58decode(recipient):
+                        return ata, 250
+            return self.find_pda(seeds, program)
+
+        account_map = accounts
+        def multiple(keys):
+            return [account_map.get(k) for k in keys], 503
+        with patch.object(chain, "quote_pumpswap_pool", return_value=quote), \\
+             patch.object(chain, "_account", side_effect=lambda address: account_map[address]), \\
+             patch.object(chain, "_find_program_address", side_effect=pda), \\
+             patch.object(chain, "_multiple_accounts_with_context", side_effect=multiple), \\
+             patch.object(chain, "_rpc", return_value={"value": {
+                 "blockhash": self.blockhash, "lastValidBlockHeight": 123456
+             }}):
+            result = builder.build_pumpswap_v2_swap(
+                quote, self.wallet, self.user_base, self.user_quote
+            )
+        self.assertEqual(result["token_program_base"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_program_quote"], chain.TOKEN_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(result["instruction"], "buy_exact_quote_in_v2")
+
     def test_rejects_token_2022_mint_until_extension_aware_support_exists(self):
         accounts = dict(self.account_map)
         accounts[self.base_mint] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(166)}
-        with self.assertRaisesRegex(ValueError, "legacy SPL Token"):
+        with self.assertRaisesRegex(ValueError, "unsupported token program"):
             self.call_builder(account_map=accounts)
 
     def test_rejects_pool_state_with_wrong_pda_bump(self):
