@@ -75,6 +75,12 @@ class FilterPipelineTests(unittest.TestCase):
             result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "PASS")
 
+    def test_onchain_filter_accepts_numeric_false_environment_value(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "0"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+
     def test_zero_liquidity_rejected_but_missing_liquidity_waits(self):
         zero = dict(self.token, liquidity={"usd": 0})
         missing = dict(self.token)
