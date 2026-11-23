@@ -3,6 +3,8 @@
 # ==========================================
 
 import requests
+
+from api_client import get_json
 import math
 import time
 import threading
@@ -586,8 +588,7 @@ def get_rugcheck_report(token_address):
         try:
             # Share the same host-wide 60/minute limiter, 429 cooldown,
             # retry policy and request telemetry as the discovery feeds.
-            from api_client import get_json
-            data = get_json(
+                        data = get_json(
                 url,
                 headers={"Accept": "application/json"},
                 timeout=REQUEST_TIMEOUT,
