@@ -379,3 +379,8 @@ RugCheck also supports `TROJAN_RUGCHECK_MIN_LP_PROVIDERS` for a minimum reported
 
 The read-only direct quote path supports legacy SOL-paired Pump.fun curves using the on-chain Global and Pump Fees configuration. It verifies the bonding-curve PDA against the requested token mint, reads curve/global/fee/mint accounts at one confirmed slot, selects the market-cap fee tier, and validates both virtual pricing reserves and real settlement reserves. Mayhem, cashback, holder-reward, custom creator-fee, custom quote-mint, completed, truncated and Token-2022 curves are refused until their exact fee/settlement behavior is implemented. The route comparison forwards the requested output mint to this adapter; no instruction is constructed or signed.
 
+
+
+## Pool-count and reserve filtering
+
+The candidate filter can optionally enforce the number of distinct pools known to the multi-source pool registry with `TROJAN_FILTER_MIN_POOL_COUNT` and `TROJAN_FILTER_MAX_POOL_COUNT`. A stale or empty registry is treated as unknown, not as zero. GeckoTerminal normalized market snapshots preserve `reserve_in_usd`; an optional `TROJAN_FILTER_MIN_POOL_RESERVE_USD` floor returns WAIT if that measurement is unavailable and rejects a measured reserve below the floor. All three controls are disabled by default.

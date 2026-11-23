@@ -315,6 +315,7 @@ def normalize_gecko_pool(pool, requested_mint=None):
         "priceUsd": price_text,
         "priceNative": price_native_text if price_native is not None and price_native > 0 else None,
         "liquidity": {"usd": reserve},
+        "reserve_in_usd": reserve,
         "volume": {"m5": safe_float(volumes.get("m5")), "h24": safe_float(volumes.get("h24"))},
         "priceChange": {
             "m5": safe_float(changes.get("m5")),

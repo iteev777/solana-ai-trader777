@@ -519,6 +519,16 @@ def analyze_token_task(address, strategy_name, token):
         if not isinstance(token_data.get("liquidity"), dict):
             token_data["liquidity"] = {"usd": liquidity}
 
+        # Pool count comes only from the actual multi-source pool registry.
+        # An empty or stale registry is left unknown rather than represented as zero.
+        try:
+            from pool_registry import get_pool_candidates
+            registered_pools = get_pool_candidates(address)
+            if registered_pools:
+                token_data["pool_count"] = len(registered_pools)
+        except Exception as pool_metric_error:
+            log_event("POOL METRIC LOOKUP FAILED", address, repr(pool_metric_error))
+
         # Ordered, auditable filtering before strategy evaluation.
         # Optional activity/momentum thresholds are environment-configurable;
         # absent optional provider data is not silently converted to zero.
