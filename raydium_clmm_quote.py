@@ -320,6 +320,7 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "input_mint": input_mint,
         "output_mint": expected_output,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
         "out_amount": expected_output_amount,
         "gross_out_amount": gross_output,
         "token2022_input_transfer_fee": received_by_pool < amount_in,
