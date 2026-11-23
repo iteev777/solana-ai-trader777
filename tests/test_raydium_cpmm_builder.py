@@ -119,6 +119,34 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
                 user_output_token_account or self.user_out,
             )
 
+    def test_onchain_quote_accepts_zero_fee_token2022_mint(self):
+        import token2022_inspector
+        mint_data = bytearray(82)
+        mint_data[44] = 6
+        mint_data[45] = 1
+        pool_raw = bytearray(self.pool_raw)
+        pool_raw[232:264] = chain._b58decode(chain.TOKEN_2022_PROGRAM)
+        accounts = dict(self.account_map)
+        accounts[self.pool] = {"owner": builder.CPMM_PROGRAM_ID, "data": bytes(pool_raw)}
+        accounts[self.mint_a] = {
+            "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_data)
+        }
+        accounts[self.vault_a] = token_account(
+            self.mint_a, self.authority, 1_000_000, chain.TOKEN_2022_PROGRAM
+        )
+        with (
+            patch.object(chain, "_account", return_value=accounts[self.pool]),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         side_effect=lambda keys: ([accounts.get(k) for k in keys], 505)),
+            patch.object(chain, "_find_program_address", return_value=(self.authority, 255)),
+        ):
+            quote = chain.quote_raydium_cpmm_pool(
+                self.pool, self.mint_a, 100, 100
+            )
+        self.assertEqual(quote["token_program_base"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(quote["token_program_quote"], chain.TOKEN_PROGRAM)
+        self.assertGreater(quote["minimum_out_amount"], 0)
+
     def test_builds_unsigned_legacy_transaction_with_correct_swap_data(self):
         result = self.call_builder()
         tx = base64.b64decode(result["transaction"])
