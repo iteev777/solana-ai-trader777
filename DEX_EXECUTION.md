@@ -324,3 +324,19 @@ existing restrictions until their quote and instruction semantics are audited
 and tested individually. ATA creation for extension-sized Token-2022 accounts
 is also a separate unfinished part of the Token-2022 project. Live signing and
 broadcast remain disabled.
+
+
+## Token-2022 ATA sizing
+
+The non-custodial ATA order builder now accepts the supported Token-2022 mint
+extension subset and derives the associated-token address using the mint's
+actual token-program ID. Its rent query uses the required token-account data
+length rather than assuming the legacy 165-byte layout: 170 bytes for a
+Token-2022 account with the Associated Token Program's ImmutableOwner extension,
+and 182 bytes when TransferFeeAmount is additionally required by a mint with
+TransferFeeConfig. Existing Token-2022 ATAs are checked for the expected owner,
+size, mint, authority and initialized state. Unsupported mint extensions remain
+rejected; this is not general approval for every Token-2022 feature.
+
+The ATA order is still unsigned and simulated only. The wallet must sign and
+submit it externally; no account is created by the server.
