@@ -44,6 +44,22 @@ class AtaManagerTests(unittest.TestCase):
         self.assertEqual(result["broadcast"], "DISABLED")
         self.assertEqual(rpc.call_count, 5)
 
+    def test_compiled_instruction_uses_expected_program_accounts_and_discriminator(self):
+        blockhash = key(3)
+        message, transaction, keys = ata_manager._compile_create_message(
+            self.wallet, self.ata, self.wallet, self.mint,
+            chain.TOKEN_PROGRAM, blockhash,
+        )
+        self.assertEqual(message[:3], bytes([1, 0, 4]))
+        self.assertEqual(keys[0], self.wallet)
+        self.assertEqual(keys[1], self.ata)
+        self.assertEqual(keys[2], self.mint)
+        self.assertEqual(keys[-1], ata_manager.ASSOCIATED_TOKEN_PROGRAM_ID)
+        self.assertEqual(transaction[0], 1)
+        self.assertEqual(transaction[1:65], bytes(64))
+        # One compiled instruction; the final instruction data byte is CreateIdempotent.
+        self.assertEqual(message[-1], 1)
+
     @patch("ata_manager._rpc_account")
     def test_rejects_token_2022_mint(self, account):
         account.return_value = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(82)}
