@@ -134,9 +134,14 @@ class MeteoraDbcBuilderIntegrationTests(unittest.TestCase):
         input_ata = self.base_ata if input_is_base else self.quote_ata
         output_ata = self.quote_ata if input_is_base else self.base_ata
         amount = 1_000_000
-        quote = dbc.quote_meteora_dbc_pool(
-            self.pool, input_mint, amount, output_mint=output_mint
-        )
+        with (
+            patch.object(chain, "_account", side_effect=self._account),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         return_value=(self.quote_accounts, 654321)),
+        ):
+            quote = dbc.quote_meteora_dbc_pool(
+                self.pool, input_mint, amount, output_mint=output_mint
+            )
         user_in_address = _dbc_key(60) if wrong_ata else input_ata
         user_in = _dbc_token_account(input_mint, self.wallet, amount)
         user_out = _dbc_token_account(output_mint, self.wallet, 0)
