@@ -242,12 +242,30 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if fee_rate >= mathx.FEE_DENOMINATOR:
         raise ValueError("Raydium CLMM trade fee rate is invalid")
 
-    if mint0_acc.get("owner") != chain.TOKEN_PROGRAM or mint1_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Raydium CLMM Token-2022 mints are refused until extension fees and hooks are modelled")
-    if vault0_acc.get("owner") != chain.TOKEN_PROGRAM or vault1_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Raydium CLMM vaults must use the legacy SPL Token program")
-    reserve0 = chain._token_amount(vault0_acc, state["mint_0"])
-    reserve1 = chain._token_amount(vault1_acc, state["mint_1"])
+    import token2022_inspector as token2022
+    token_program_0 = mint0_acc.get("owner")
+    token_program_1 = mint1_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_0 not in supported_programs or token_program_1 not in supported_programs:
+        raise ValueError("Raydium CLMM mint uses an unsupported token program")
+    if vault0_acc.get("owner") != token_program_0 or vault1_acc.get("owner") != token_program_1:
+        raise ValueError("Raydium CLMM vault token program does not match its mint")
+    mint0_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint0_acc.get("data", b""))
+        if token_program_0 == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint1_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint1_acc.get("data", b""))
+        if token_program_1 == chain.TOKEN_2022_PROGRAM else None
+    )
+    reserve0 = token2022.validate_token_account_for_program(
+        vault0_acc, token_program_0, state["mint_0"], pool_address,
+        "Raydium CLMM vault 0",
+    )
+    reserve1 = token2022.validate_token_account_for_program(
+        vault1_acc, token_program_1, state["mint_1"], pool_address,
+        "Raydium CLMM vault 1",
+    )
     if reserve0 <= 0 or reserve1 <= 0:
         raise ValueError("Raydium CLMM vault reserves are empty")
 
@@ -259,19 +277,32 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     decoded_ticks = sorted(set(decoded_ticks), key=lambda item: item[0])
     span = TICK_ARRAY_SIZE * state["tick_spacing"]
     coverage_tick = arrays[-1][0] if zero_for_one else arrays[-1][0] + span
+    input_token2022 = mint0_token2022 if zero_for_one else mint1_token2022
+    output_token2022 = mint1_token2022 if zero_for_one else mint0_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
     quote = mathx.quote_exact_input(
         state["sqrt_price_x64"], state["liquidity"], state["tick_current"],
-        decoded_ticks, zero_for_one, amount_in, fee_rate, coverage_tick,
+        decoded_ticks, zero_for_one, received_by_pool, fee_rate, coverage_tick,
     )
     output_reserve = reserve1 if zero_for_one else reserve0
     if quote["out_amount"] > output_reserve:
         raise ValueError("Raydium CLMM quote exceeds the output vault reserve")
+    gross_output = quote["out_amount"]
+    expected_output = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), gross_output
+    )
+    if expected_output <= 0:
+        raise ValueError("Token-2022 output transfer fee consumes the entire output amount")
 
     spot_ratio = (
         (state["sqrt_price_x64"] / mathx.Q64) ** 2
         if zero_for_one else (mathx.Q64 / state["sqrt_price_x64"]) ** 2
     )
-    average_ratio = quote["out_amount"] / amount_in
+    average_ratio = expected_output / amount_in
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Raydium CLMM price impact is invalid")
@@ -279,7 +310,7 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Raydium CLMM confirmed snapshot is stale")
 
-    minimum_out = quote["out_amount"] * (10_000 - slippage_bps) // 10_000
+    minimum_out = expected_output * (10_000 - slippage_bps) // 10_000
     return {
         "provider": "raydium_clmm_direct",
         "protocol": PROGRAM,
@@ -289,7 +320,14 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "input_mint": input_mint,
         "output_mint": expected_output,
         "input_amount": amount_in,
-        "out_amount": quote["out_amount"],
+        "out_amount": expected_output,
+        "gross_out_amount": gross_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": expected_output < gross_output,
+        "token2022_output_gross_amount": gross_output,
+        "token_program_input": token_program_0 if zero_for_one else token_program_1,
+        "token_program_output": token_program_1 if zero_for_one else token_program_0,
         "minimum_out_amount": minimum_out,
         "fee_mint": input_mint,
         "fee_amount": quote["fee_amount"],
