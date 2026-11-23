@@ -213,7 +213,6 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["amm_config"], first["vault_0"], first["vault_1"],
         first["mint_0"], first["mint_1"], bitmap_extension_address,
     ] + [address for _, address in arrays]
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
         raise ValueError("Raydium CLMM snapshot must include a positive confirmed slot")
@@ -310,7 +309,10 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Raydium CLMM price impact is invalid")
-    age = time.time() - snapshot_started
+    block_time = chain._rpc("getBlockTime", [slot])
+    if isinstance(block_time, bool) or not isinstance(block_time, (int, float)) or not math.isfinite(float(block_time)):
+        raise ValueError("Raydium CLMM confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("Raydium CLMM confirmed snapshot is stale")
 
