@@ -547,7 +547,7 @@ def analyze_token_task(address, strategy_name, token):
     import trading_control
     if trading_control.is_force_stopped():
         return {
-            "status": "paused",
+            "status": "waiting",
             "reason": "FORCE STOP ACTIVE",
             "address": address,
         }
