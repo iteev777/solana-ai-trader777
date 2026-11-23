@@ -186,7 +186,9 @@ def check_trade_approval(
         trade_size=trade_size,
         strategy=strategy,
         main_positions=main_count,
-        sniper_positions=sniper_count
+        sniper_positions=sniper_count,
+        token_address=token_address,
+        mode="paper"
     )
 
 
