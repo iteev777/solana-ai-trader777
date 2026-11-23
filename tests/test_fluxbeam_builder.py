@@ -137,7 +137,10 @@ class FluxbeamBuilderTests(unittest.TestCase):
 
     def test_reverse_direction_reorders_every_side_specific_account(self):
         reverse = dict(self.quote, input_mint=self.mint_b, output_mint=self.mint_a)
-        result = self.call_builder(quote=reverse)
+        accounts_map = dict(self.account_map)
+        accounts_map[self.user_in] = token_account(self.mint_b, self.wallet, 1000)
+        accounts_map[self.user_out] = token_account(self.mint_a, self.wallet, 0)
+        result = self.call_builder(quote=reverse, account_map=accounts_map)
         accounts = result["instruction_accounts"]
         self.assertEqual(accounts[3], self.user_in)
         self.assertEqual(accounts[4:7], [self.vault_b, self.vault_a, self.user_out])
