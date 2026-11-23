@@ -27,6 +27,29 @@ The server:
 The response is `SUBMITTED_NOT_CONFIRMED`, not a confirmation claim. The
 caller must independently track the returned signature to finality.
 
+## Broadcast request
+
+After the external wallet signs the exact unsigned transaction returned by the
+order endpoint:
+
+```http
+POST /api/native-execute
+Content-Type: application/json
+X-Trojan-Action: 1
+X-Trojan-Confirm-Live: 1
+
+{
+  "request_id": "<single-use-order-request-id>",
+  "signed_transaction": "<base64-signed-legacy-transaction>"
+}
+```
+
+A successful RPC submission returns the transaction signature and
+`SUBMITTED_NOT_CONFIRMED`. Do not treat that response as finality; monitor the
+signature independently. If the RPC call times out, the response includes the
+expected signature where possible so the caller can check chain state before
+requesting another order.
+
 ## Safety and deployment constraints
 
 - The server never receives or stores a private key and never signs.
