@@ -15,7 +15,7 @@ class StandardIndicatorMathTests(unittest.TestCase):
 
     def test_rsi_uses_wilder_smoothing(self):
         value = calculate_rsi([1, 2, 1, 2, 1, 2], period=3)
-        self.assertAlmostEqual(value, 100.0 - 100.0 / (1.0 + 55.0 / 26.0), places=10)
+        self.assertAlmostEqual(value, 100.0 - 100.0 / (1.0 + 17.0 / 10.0), places=10)
 
     def test_rsi_flat_and_one_direction_series_have_defined_values(self):
         self.assertEqual(calculate_rsi([5] * 16), 50.0)
