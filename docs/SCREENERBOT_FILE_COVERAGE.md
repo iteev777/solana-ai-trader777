@@ -1516,8 +1516,8 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/tokens/database/security.rs` | PENDING |  |
 | `src/tokens/database/tracking.rs` | PENDING |  |
 | `src/tokens/decimals.rs` | PENDING |  |
-| `src/tokens/discovery.rs` | PENDING |  |
-| `src/tokens/discovery_sources.rs` | PENDING |  |
+| `src/tokens/discovery.rs` | MAPPED | `discovery/token_aggregator.py`, `tests/test_token_aggregator.py` | Compared concurrent source aggregation, candidate normalization, dedupe, source provenance, blacklist/existing-token handling and discovery stats. Trojan persists per-feed health and merges market metadata; reference has shutdown-aware scheduling, confirmed-network-offline/tool-contention skip behavior, dynamic config and chain-adapter feed registration. These lifecycle/config differences remain open. |
+| `src/tokens/discovery_sources.rs` | MAPPED | `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, `discovery/dexscreener_scanner.py`, `discovery/token_aggregator.py` | Compared DexScreener profiles/latest/top boosts; Gecko new/trending/recent updates; RugCheck new/recent/trending/verified; Jupiter recent/organic/traded/trending; CoinGecko and DeFiLlama. Trojan adds independent source health, extra Birdeye feeds and strict Pubkey normalization. Full API lane/deferred rate-limit semantics and every edge-case remain partial. |
 | `src/tokens/error.rs` | PENDING |  |
 | `src/tokens/favorites.rs` | PENDING |  |
 | `src/tokens/filtered.rs` | PENDING |  |
