@@ -642,7 +642,7 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         impact_basis_input = net_input
         spot_price = reserve_base / reserve_quote
         output_mint = decoded["base_mint"]
-        unspent_input = received_by_pool - net_input - total_fee
+        unspent_input = amount_in - net_input - total_fee
     else:
         gross_quote_out = min(
             (reserve_quote * received_by_pool) // (reserve_base + received_by_pool),
