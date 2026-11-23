@@ -15,7 +15,7 @@ QUOTE_MINTS = {
 JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 # Rent, account creation/closure and ordinary fee residue must not be mistaken
 # for a SOL quote leg. This intentionally rejects very small SOL-quoted copies.
-NATIVE_QUOTE_MIN_LAMPORTS = 10_000_000
+NATIVE_QUOTE_MIN_LAMPORTS = 50_000
 
 
 def _account_keys(message):
@@ -111,7 +111,7 @@ def _raw_token_totals(rows, wallet):
             return None
         decimals_by_mint[mint] = decimals
         totals[mint] = totals.get(mint, 0) + int(amount)
-    return totals, decimals_by_mint
+    return totals, decimals_by_mint, account_mints
 
 
 def _balance_delta(before, after):
@@ -128,6 +128,28 @@ def _balance_delta(before, after):
         ):
             return None
         result.append(post - pre)
+    return result
+
+
+def _subject_native_delta(meta, wallet_index, owned_token_indices):
+    """Correct wallet SOL movement for rent held by subject-owned token accounts."""
+    deltas = _balance_delta(meta.get("preBalances"), meta.get("postBalances"))
+    if deltas is None or wallet_index >= len(deltas):
+        return None
+    fee = meta.get("fee", 0)
+    if isinstance(fee, bool) or not isinstance(fee, int) or fee < 0:
+        return None
+    result = deltas[wallet_index] + (fee if wallet_index == 0 else 0)
+    seen = {wallet_index}
+    for index in owned_token_indices:
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            return None
+        if index in seen:
+            continue
+        if index >= len(deltas):
+            return None
+        seen.add(index)
+        result += deltas[index]
     return result
 
 
@@ -152,21 +174,32 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
     sol_deltas = _balance_delta(meta.get("preBalances"), meta.get("postBalances"))
     if sol_deltas is None or wallet_index >= len(sol_deltas):
         return None
-    fee = meta.get("fee", 0)
-    if isinstance(fee, bool) or not isinstance(fee, int) or fee < 0:
-        return None
     sol_delta_lamports = sol_deltas[wallet_index]
-    fee_lamports = fee if wallet_index == 0 else 0
-    economic_sol_lamports = sol_delta_lamports + fee_lamports
     sol_delta = sol_delta_lamports / 1_000_000_000
-    economic_sol_delta = economic_sol_lamports / 1_000_000_000
 
     pre_result = _raw_token_totals(meta.get("preTokenBalances"), wallet)
     post_result = _raw_token_totals(meta.get("postTokenBalances"), wallet)
     if pre_result is None or post_result is None:
         return None
-    pre, pre_decimals = pre_result
-    post, post_decimals = post_result
+    pre, pre_decimals, pre_accounts = pre_result
+    post, post_decimals, post_accounts = post_result
+    owned_account_mints = dict(pre_accounts)
+    for account_index, account_mint in post_accounts.items():
+        if account_index in owned_account_mints and owned_account_mints[account_index] != account_mint:
+            return None
+        owned_account_mints[account_index] = account_mint
+    if wallet_index in owned_account_mints:
+        return None
+    owned_non_wrapped_sol_accounts = [
+        index for index, account_mint in owned_account_mints.items()
+        if account_mint != SOL_MINT
+    ]
+    economic_sol_lamports = _subject_native_delta(
+        meta, wallet_index, owned_non_wrapped_sol_accounts
+    )
+    if economic_sol_lamports is None:
+        return None
+    economic_sol_delta = economic_sol_lamports / 1_000_000_000
     deltas = {}
     for mint in set(pre) | set(post):
         decimals = post_decimals.get(mint, pre_decimals.get(mint))
@@ -203,7 +236,7 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
                 quote_mint: amount for quote_mint, amount in quote_flows.items()
                 if quote_mint != SOL_MINT
             }
-            native_is_material = abs(economic_sol_lamports) >= NATIVE_QUOTE_MIN_LAMPORTS
+            native_is_material = abs(economic_sol_lamports) > NATIVE_QUOTE_MIN_LAMPORTS
             if stable_flows and native_is_material:
                 reason = "MIXED_NATIVE_AND_STABLE_QUOTE"
             elif stable_flows:
