@@ -32,6 +32,25 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         self.assertEqual(result["signals"]["top10_holder_pct"], 24.0)
         self.assertEqual(result["signals"]["total_lp_providers"], 25)
 
+    def test_risk_band_does_not_override_admission_threshold(self):
+        for score, band in ((0, "low"), (30, "low"), (31, "medium"),
+                            (60, "medium"), (61, "high"), (100, "high")):
+            with self.subTest(score=score):
+                self.assertEqual(analyze_rugcheck_report(
+                    safe_report(score_normalised=score))["risk_band"], band)
+        result = analyze_rugcheck_report(safe_report(score_normalised=40))
+        self.assertEqual((result["risk_band"], result["status"]), ("medium", "REJECT"))
+
+    def test_invalid_scores_and_conflicting_authority_fail_closed(self):
+        for score in (False, -1, 101, float("nan")):
+            with self.subTest(score=score):
+                result = analyze_rugcheck_report(safe_report(score_normalised=score))
+                self.assertIsNone(result["risk_band"])
+                self.assertEqual(result["status"], "UNKNOWN")
+        report = safe_report(mintAuthority="ActiveAuthority",
+                             token={"mintAuthority": None})
+        self.assertEqual(analyze_rugcheck_report(report)["status"], "REJECT")
+
     def test_rugged_flag_is_hard_rejection(self):
         result = analyze_rugcheck_report(safe_report(rugged=True))
         self.assertEqual(result["status"], "REJECT")
