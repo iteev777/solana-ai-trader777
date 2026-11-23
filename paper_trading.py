@@ -5,6 +5,7 @@ from datetime import datetime
 import database
 from position_policy import get_dca_steps, get_exit_steps
 import exit_policy
+import paper_fill_model
 
 
 # ==========================================
@@ -122,9 +123,16 @@ def open_position(
     if not token_address:
         return "Invalid token address"
 
-    entry_price = _positive_finite(entry_price)
-    if entry_price is None:
+    market_entry_price = _positive_finite(entry_price)
+    if market_entry_price is None:
         return "Invalid price"
+    position_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    try:
+        entry_price, entry_slippage_bps = paper_fill_model.buy_fill_price(
+            market_entry_price, position_metadata
+        )
+    except ValueError:
+        return "Invalid paper fill price"
 
     if strategy not in VALID_STRATEGIES:
         return "Invalid strategy"
@@ -168,10 +176,12 @@ def open_position(
             invested=position_size,
             strategy=strategy,
             metadata={
-                **(metadata if isinstance(metadata, dict) else {}),
+                **position_metadata,
                 "engine": "trojan_v2",
                 "strategy": strategy,
                 "adaptive_size_multiplier": adaptive_multiplier,
+                "paper_entry_slippage_bps": entry_slippage_bps,
+                "paper_fill_model": "CONSERVATIVE_MARKET_SLIPPAGE",
             }
         )
 
@@ -186,8 +196,12 @@ def open_position(
             token_address,
             "| STRATEGY:",
             strategy,
-            "| PRICE:",
+            "| MARKET PRICE:",
+            market_entry_price,
+            "| FILL PRICE:",
             entry_price,
+            "| SLIPPAGE BPS:",
+            entry_slippage_bps,
             "| SIZE:",
             position_size,
             "| ADAPTIVE:",
@@ -221,10 +235,18 @@ def close_position(
         if token_address not in positions:
             return "Position not found"
 
+        position = positions.get(token_address) or {}
+        metadata = position.get("metadata") if isinstance(position.get("metadata"), dict) else {}
+        try:
+            fill_price, exit_slippage_bps = paper_fill_model.sell_fill_price(
+                current_price, metadata
+            )
+        except ValueError:
+            return "Invalid paper fill price"
         result = database.close_position_atomic(
             mode=MODE,
             token_address=token_address,
-            current_price=current_price,
+            current_price=fill_price,
             reason=reason
         )
 
@@ -232,6 +254,10 @@ def close_position(
             refresh_account()
             return result
 
+        result["market_price"] = current_price
+        result["effective_fill_price"] = fill_price
+        result["slippage_bps"] = exit_slippage_bps
+        result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
         refresh_account()
 
         print(
@@ -314,11 +340,23 @@ def update_position(token_address, current_price):
         if dca_count < len(dca_steps) and change > -(exit_config["stop_loss_pct"] / 100.0):
             step = dca_steps[dca_count]
             if change <= -(step["drop_pct"] / 100.0):
+                try:
+                    dca_fill_price, dca_slippage_bps = paper_fill_model.buy_fill_price(current_price)
+                except ValueError:
+                    return "Invalid paper DCA fill price"
                 result = database.add_position_investment_atomic(
-                    MODE, token_address, current_price, step["add_usd"],
-                    metadata={"dca_count": dca_count + 1}
+                    MODE, token_address, dca_fill_price, step["add_usd"],
+                    metadata={
+                        "dca_count": dca_count + 1,
+                        "paper_dca_slippage_bps": dca_slippage_bps,
+                        "paper_fill_model": "CONSERVATIVE_MARKET_SLIPPAGE",
+                    }
                 )
                 if isinstance(result, dict):
+                    result["market_price"] = current_price
+                    result["effective_fill_price"] = dca_fill_price
+                    result["slippage_bps"] = dca_slippage_bps
+                    result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
                     refresh_account()
                     print("PAPER DCA TIER:", token_address, "|", result, flush=True)
                     return result
@@ -332,8 +370,14 @@ def update_position(token_address, current_price):
             if step_index in completed:
                 continue
             if change >= step["profit_pct"] / 100.0:
+                try:
+                    exit_fill_price, exit_slippage_bps = paper_fill_model.sell_fill_price(
+                        current_price, metadata
+                    )
+                except ValueError:
+                    return "Invalid paper exit fill price"
                 result = database.partial_close_position_atomic(
-                    MODE, token_address, current_price,
+                    MODE, token_address, exit_fill_price,
                     fraction=step["sell_fraction"],
                     reason="EXIT LADDER TIER " + str(step_index + 1)
                 )
@@ -342,7 +386,13 @@ def update_position(token_address, current_price):
                     metadata["exit_ladder_completed"] = completed
                     metadata["partial_take_profit_done"] = True
                     metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0) or 0) + 1
+                    metadata["paper_exit_slippage_bps"] = exit_slippage_bps
+                    metadata["paper_fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
                     database.update_position_metadata(MODE, token_address, metadata)
+                    result["market_price"] = current_price
+                    result["effective_fill_price"] = exit_fill_price
+                    result["slippage_bps"] = exit_slippage_bps
+                    result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
                     refresh_account()
                     print("PAPER EXIT LADDER:", token_address, "|", result, flush=True)
                     return result
