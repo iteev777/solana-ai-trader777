@@ -1,3 +1,4 @@
+"""Concurrent multi-source Solana token discovery and source health telemetry."""
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +24,45 @@ MAX_RESULTS = 500
 MAX_WORKERS = min(9, len(SCANNERS))
 _aggregator_lock = threading.Lock()
 _last_source_stats = {}
+_source_history = {}
 _last_scan_at = None
+
+
+def _provider_family(source):
+    value = str(source or "").strip().lower()
+    for prefix in ("geckoterminal", "dexscreener", "birdeye", "pumpfun",
+                   "pumpportal", "rugcheck", "jupiter", "coingecko", "defillama"):
+        if value == prefix or value.startswith(prefix + "_"):
+            return prefix
+    return value.split("_", 1)[0] if value else "unknown"
+
+
+def _source_result(name, ok, count, started, error=None):
+    completed = time.time()
+    elapsed_ms = round(max(0.0, time.perf_counter() - started) * 1000, 2)
+    history = _source_history.setdefault(name, {
+        "total_runs": 0, "successes": 0, "failures": 0,
+        "consecutive_failures": 0, "last_success_at": None, "last_error_at": None,
+    })
+    history["total_runs"] += 1
+    if ok:
+        history["successes"] += 1
+        history["consecutive_failures"] = 0
+        history["last_success_at"] = completed
+    else:
+        history["failures"] += 1
+        history["consecutive_failures"] += 1
+        history["last_error_at"] = completed
+    return {
+        "name": name,
+        "provider_family": _provider_family(name),
+        "count": count,
+        "ok": bool(ok),
+        "error": (str(error)[:180] if error else None),
+        "latency_ms": elapsed_ms,
+        "completed_at": completed,
+        **history,
+    }
 
 
 def normalize_token(token):
@@ -41,10 +80,12 @@ def normalize_token(token):
 def get_discovery_status():
     return {
         "source_count": len(SCANNERS),
-        "sources": list(_last_source_stats.values()),
+        "independent_provider_count": len(set(_provider_family(name) for name, _ in SCANNERS)),
+        "sources": [dict(value) for value in _last_source_stats.values()],
         "last_scan_at": _last_scan_at,
         "last_scan_age_seconds": max(0, round(time.time() - _last_scan_at, 1)) if _last_scan_at else None,
         "max_results": MAX_RESULTS,
+        "health_model": "per-feed-success-failure-latency-in-memory",
     }
 
 
@@ -58,18 +99,25 @@ def collect_tokens():
         source_stats = {}
         current_time = time.time()
         source_results = {}
+        started_at = {name: time.perf_counter() for name, _ in SCANNERS}
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {pool.submit(scanner): name for name, scanner in SCANNERS}
             for future in as_completed(futures):
                 name = futures[future]
                 try:
                     result = future.result()
-                    source_results[name] = result if isinstance(result, list) else []
-                    source_stats[name] = {"name": name, "count": len(source_results[name]), "ok": True, "error": None}
+                    if not isinstance(result, list):
+                        raise TypeError("scanner returned a non-list payload")
+                    source_results[name] = result
+                    source_stats[name] = _source_result(
+                        name, True, len(result), started_at[name]
+                    )
                 except Exception as error:
                     print("TOKEN SOURCE WORKER ERROR:", name, repr(error), flush=True)
                     source_results[name] = []
-                    source_stats[name] = {"name": name, "count": 0, "ok": False, "error": str(error)[:180]}
+                    source_stats[name] = _source_result(
+                        name, False, 0, started_at[name], error
+                    )
 
         for name, _scanner in SCANNERS:
             for token in source_results.get(name, []):
@@ -96,16 +144,25 @@ def collect_tokens():
                         candidate[key] = value
 
         results = list(discovered.values())
-        results.sort(key=lambda t: (len(t["discovery_sources"]), t["discovery_timestamp"]), reverse=True)
+        # Rank source corroboration by independent provider families, not by
+        # the number of feed endpoints one vendor exposes.
+        results.sort(key=lambda token: (
+            len(set(_provider_family(source) for source in token["discovery_sources"])),
+            len(token["discovery_sources"]),
+            token["discovery_timestamp"],
+        ), reverse=True)
         results = results[:MAX_RESULTS]
         for name, _scanner in SCANNERS:
-            source_stats.setdefault(name, {"name": name, "count": 0, "ok": True, "error": None})
+            source_stats.setdefault(name, _source_result(
+                name, False, 0, time.perf_counter(), "SOURCE_NOT_EXECUTED"
+            ))
         _last_source_stats = source_stats
         _last_scan_at = current_time
         print("TROJAN V2 TOKEN AGGREGATOR | SOURCES:", len(SCANNERS), "| UNIQUE:", len(results), flush=True)
         for name, _scanner in SCANNERS:
             stat = source_stats[name]
-            print("SCANNER:", name, "| FOUND:", stat["count"], "| OK:", stat["ok"], flush=True)
+            print("SCANNER:", name, "| FOUND:", stat["count"], "| OK:", stat["ok"],
+                  "| LATENCY_MS:", stat["latency_ms"], flush=True)
         return results
     finally:
         _aggregator_lock.release()
