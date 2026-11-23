@@ -1,9 +1,10 @@
 """Unsigned native PumpSwap V2 transaction preparation.
 
 Supports exact-quote-in buys and exact-base-in sells for non-cashback,
-non-mayhem, legacy SPL Token pools only. Pool/config/PDA/account relationships
-are revalidated at a confirmed RPC context. Transactions are compiled unsigned
-for external wallet signing and are never broadcast by this module.
+non-mayhem pools using legacy SPL Token or the audited Token-2022 transfer-fee
+extension subset. Pool/config/PDA/account relationships and mint-specific token
+programs are revalidated at a confirmed RPC context. Transactions are compiled
+unsigned for external wallet signing and are never broadcast by this module.
 """
 import base64
 import struct
