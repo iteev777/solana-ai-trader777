@@ -169,7 +169,8 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
                 )
 
     def test_rejects_stale_quote(self):
-        with patch.object(chain, "quote_pumpswap_pool", return_value=dict(self.quote, slot=600)):
+        with patch.object(chain, "_account", return_value=self.account_map[self.pool]), \
+             patch.object(chain, "quote_pumpswap_pool", return_value=dict(self.quote, slot=499)):
             with self.assertRaisesRegex(ValueError, "older than the supplied quote"):
                 builder.build_pumpswap_v2_swap(
                     self.quote, self.wallet, self.user_base, self.user_quote
