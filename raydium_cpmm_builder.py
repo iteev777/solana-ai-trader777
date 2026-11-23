@@ -295,9 +295,9 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
             or mint_quote_acc.get("owner") != token_program_quote):
         raise ValueError("Raydium CPMM mint owner does not match the pool token program")
     if token_program_base == chain.TOKEN_2022_PROGRAM:
-        token2022.validate_zero_fee_mint_data(mint_base_acc["data"])
+        token2022.validate_swap_compatible_mint_data(mint_base_acc["data"])
     if token_program_quote == chain.TOKEN_2022_PROGRAM:
-        token2022.validate_zero_fee_mint_data(mint_quote_acc["data"])
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc["data"])
     if (vault_base_acc.get("owner") != token_program_base
             or vault_quote_acc.get("owner") != token_program_quote):
         raise ValueError("Raydium CPMM vault owner does not match its mint token program")
@@ -389,7 +389,7 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         "minimum_output_amount": minimum_out,
         "token_program_input": token_program_input,
         "token_program_output": token_program_output,
-        "token2022_zero_fee_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
+        "token2022_fee_aware_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
         "instruction": "SwapBaseInput",
         "instruction_data_base64": base64.b64encode(instruction_data).decode("ascii"),
         "account_keys": account_keys,
