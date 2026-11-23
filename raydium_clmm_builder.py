@@ -11,7 +11,7 @@ import struct
 
 import solana_onchain as chain
 import raydium_clmm_quote as clmm
-from raydium_cpmm_builder import _compile_legacy_message
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["raydium_clmm"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
@@ -233,6 +233,8 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
         "execution": "LOCKED",
