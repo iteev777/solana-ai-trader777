@@ -69,8 +69,10 @@ def _priority_fee_micro_lamports():
 
 
 def _compile_legacy_message(payer, recent_blockhash, program_id, metas, data,
-                            compute_unit_limit=300_000, compute_unit_price=10_000):
+                            compute_unit_limit=300_000, compute_unit_price=None):
     """Compile a DEX instruction with optional Solana compute-budget instructions."""
+    if compute_unit_price is None:
+        compute_unit_price = _priority_fee_micro_lamports()
     _pubkey(payer, "wallet")
     blockhash = _pubkey(recent_blockhash, "recent blockhash")
     _pubkey(program_id, "program id")
