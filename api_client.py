@@ -10,6 +10,7 @@ import copy
 import hashlib
 import threading
 import requests
+from requests.adapters import HTTPAdapter
 
 from urllib.parse import urlparse
 from email.utils import parsedate_to_datetime
@@ -57,9 +58,31 @@ host_blocked_until = {}
 cache = {}
 _api_stats = {}
 _inflight_cache_requests = {}
+_http_session_local = threading.local()
 
 cache_lock = threading.Lock()
 state_lock = threading.Lock()
+
+
+def get_http_session():
+    """Return a persistent connection-pooled HTTP session for this worker thread.
+
+    requests.Session is not treated as a shared cross-thread object. Each worker
+    owns its session, while urllib3 pools keep provider connections reusable.
+    """
+    session = getattr(_http_session_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=10,
+            max_retries=0,
+            pool_block=True,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _http_session_local.session = session
+    return session
 
 
 # ==========================================
@@ -360,7 +383,7 @@ def _get_json_impl(
 
             try:
 
-                response = requests.get(
+                response = get_http_session().get(
                     url,
                     params=params,
                     headers=headers,
