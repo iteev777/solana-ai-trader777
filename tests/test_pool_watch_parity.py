@@ -1,5 +1,6 @@
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import onchain_stream as stream
 import solana_onchain as onchain
@@ -71,6 +72,63 @@ class CandidatePoolWatchTests(unittest.TestCase):
                           return_value={"owner": "unknown-program", "data": b""}):
             with self.assertRaisesRegex(ValueError, "not a supported"):
                 onchain.get_pool_watch_accounts("pool-id", "pumpswap")
+
+    def test_shared_account_notification_refreshes_both_watches(self):
+        pool_a = ("pool", "raydium_cpmm", "mint-a")
+        pool_b = ("pool", "raydium_cpmm", "mint-b")
+        ws = Mock()
+        ws.recv.side_effect = [
+            json.dumps({"id": 1, "result": 55}),
+            json.dumps({"method": "accountNotification", "params": {
+                "subscription": 55, "result": {}
+            }}),
+            EOFError,
+        ]
+        with patch.object(onchain, "get_pool_watch_accounts", return_value=["shared"]), \
+             patch.object(stream, "_active_watch_keys_locked", return_value={pool_a, pool_b}), \
+             patch.object(stream, "_batch_refresh_pool") as batch, \
+             patch.object(stream, "_batch_refreshing", False), \
+             patch.object(stream, "_dirty_pools", set()), \
+             patch.object(stream, "_status", dict(stream._status)):
+            with self.assertRaises(EOFError):
+                stream._watch_connection(ws)
+            self.assertEqual(stream._dirty_pools, {pool_a, pool_b})
+            batch.submit.assert_called_once_with(stream._refresh_many, [pool_a, pool_b], True)
+        self.assertEqual(ws.send.call_count, 1)
+
+    def test_late_acknowledgement_is_released_after_watch_removed(self):
+        pool = ("pool", "raydium_cpmm", "mint")
+        ws = Mock()
+        ws.recv.side_effect = [
+            stream.websocket.WebSocketTimeoutException,
+            json.dumps({"id": 1, "result": 55}),
+            EOFError,
+        ]
+        with patch.object(onchain, "get_pool_watch_accounts", return_value=["shared"]), \
+             patch.object(stream, "_active_watch_keys_locked", side_effect=[{pool}, set(), set()]), \
+             patch.object(stream, "_batch_refreshing", True), \
+             patch.object(stream, "_dirty_pools", set()), \
+             patch.object(stream, "_status", dict(stream._status)):
+            with self.assertRaises(EOFError):
+                stream._watch_connection(ws)
+        requests = [json.loads(call.args[0]) for call in ws.send.call_args_list]
+        self.assertEqual([request["method"] for request in requests], [
+            "accountSubscribe", "accountUnsubscribe"
+        ])
+        self.assertEqual(requests[1]["params"], [55])
+
+    def test_late_snapshot_cannot_recreate_removed_watch(self):
+        pool = ("pool", "raydium_cpmm", "mint")
+        with patch.object(stream, "_ensure_thread_locked"), \
+             patch.object(stream.time, "time", return_value=100):
+            stream.sync_watched_pools([pool])
+            verified = {"onchainVerified": True, "observedAt": 100}
+            self.assertTrue(stream.store_pool_snapshot(pool, verified))
+            self.assertFalse(stream.store_pool_snapshot(pool, dict(verified, observedAt=98)))
+            self.assertEqual(stream.get_latest_snapshot(*pool)["observedAt"], 100)
+            stream.sync_watched_pools([])
+            self.assertFalse(stream.store_pool_snapshot(pool, verified))
+            self.assertIsNone(stream.get_latest_snapshot(*pool))
 
 
 if __name__ == "__main__":

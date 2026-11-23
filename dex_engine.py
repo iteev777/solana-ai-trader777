@@ -101,6 +101,11 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
 
     if item.get("snapshot_age_seconds") is not None:
         age = _finite(item["snapshot_age_seconds"], "snapshot_age_seconds")
+        if item.get("quoted_at") is not None:
+            elapsed = now - _finite(item["quoted_at"], "quoted_at")
+            if age < 0 or elapsed < 0:
+                raise ValueError("QUOTE_TIMESTAMP_IN_FUTURE")
+            age += elapsed
     elif item.get("quoted_at") is not None:
         age = now - _finite(item["quoted_at"], "quoted_at")
     else:
@@ -117,6 +122,14 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
     if network_cost >= minimum_out:
         raise ValueError("NETWORK_COST_CONSUMES_OUTPUT")
     net_minimum = minimum_out - network_cost
+    latency = item.get("latency_ms", item.get("quote_latency_ms"))
+    if latency is not None:
+        try:
+            latency = _finite(latency, "latency_ms")
+        except ValueError:
+            latency = None
+        if latency is not None and latency < 0:
+            latency = None
     return {
         "provider": str(item.get("provider") or provider_key)[:80],
         "provider_key": provider_key,
@@ -131,7 +144,7 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
         "network_fee_priced": network_fee_output_amount is not None,
         "price_impact_percent": impact,
         "quote_age_seconds": round(age, 3),
-        "latency_ms": item.get("latency_ms", item.get("quote_latency_ms")),
+        "latency_ms": latency,
         "hops": hops,
         "route": route,
         "slot": item.get("slot"),
@@ -147,6 +160,7 @@ def _direct_pool_quote(pool_address, input_mint, output_mint, amount, slippage_b
         pool_address, input_mint, amount, slippage_bps, output_mint=output_mint
     )
     quote = dict(quote)
+    quote["quoted_at"] = time.time()
     quote["pool_id"] = pool_address
     quote["provider"] = quote.get("provider") or quote.get("protocol") or "direct_pool"
     quote["status"] = "QUOTED"
@@ -166,14 +180,9 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
     direct:<pool-address>) to an estimate denominated in output-token raw units.
     Missing entries are not guessed or converted across incompatible units.
     """
-    if not isinstance(input_mint, str) or not input_mint.strip():
-        raise ValueError("Input mint is required")
-    if not isinstance(output_mint, str) or not output_mint.strip():
-        raise ValueError("Output mint is required")
-    input_mint, output_mint = input_mint.strip(), output_mint.strip()
-    if input_mint == output_mint:
-        raise ValueError("Input and output mints must differ")
-    amount = _uint(amount, "amount")
+    input_mint, output_mint, amount, slip = route_comparison._validate(
+        input_mint, output_mint, amount, slippage_bps
+    )
     pools = _validate_pool_addresses(pool_addresses)
     network_fee_output_amounts = network_fee_output_amounts or {}
     if not isinstance(network_fee_output_amounts, dict):
@@ -190,14 +199,13 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
 
     tasks = {
         "aggregators": lambda: route_comparison.compare_quotes(
-            input_mint, output_mint, amount, slippage_bps, pool_address=None
+            input_mint, output_mint, amount, slip, pool_address=None
         )
     }
     for pool_address in pools:
         key = "direct:" + pool_address
         tasks[key] = lambda address=pool_address: _direct_pool_quote(
-            address, input_mint, output_mint, amount,
-            slippage_bps if slippage_bps is not None else route_comparison.MAX_SLIPPAGE_BPS
+            address, input_mint, output_mint, amount, slip
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(tasks))) as executor:
@@ -238,11 +246,11 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
 
     candidates.sort(
         key=lambda item: (
-            item["net_minimum_output"],
-            item["minimum_out_amount"],
-            -(float(item["latency_ms"]) if item["latency_ms"] is not None else 1e12)
-        ),
-        reverse=True
+            -item["net_minimum_output"],
+            -item["minimum_out_amount"],
+            item["latency_ms"] if item["latency_ms"] is not None else math.inf,
+            item["provider_key"],
+        )
     )
     if candidates:
         candidates[0]["selected"] = True
@@ -253,7 +261,7 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount,
-        "slippage_bps": aggregate.get("slippage_bps"),
+        "slippage_bps": slip,
         "pool_candidates_requested": len(pools),
         "routes_eligible": candidates,
         "routes_rejected": rejected,
