@@ -6,6 +6,10 @@ import main
 
 
 class MainServiceLifecycleTests(unittest.TestCase):
+    def tearDown(self):
+        from service_manager import clear_global_service_manager
+        clear_global_service_manager()
+
     def test_runtime_services_are_registered_and_started_through_manager(self):
         with patch.dict(os.environ, {
             "TROJAN_DASHBOARD_TOKEN": "test-token",
