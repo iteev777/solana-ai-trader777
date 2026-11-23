@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 226
+- Trojanin seurattavat tiedostot: 228
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -25,7 +25,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `README.md` | `README.md`<br>`electron/README.md`<br>`electron/assets/README.md`<br>`src/apis/README.md`<br>`src/apis/llm/deepseek/README.md`<br>`src/ohlcvs/README.md`<br>`src/tokens/README.md` | PENDING |  |
 | `adaptive_learning.py` | Ei vielä kartoitettu | PENDING |  |
 | `ai_analyzer.py` | Ei vielä kartoitettu | PENDING |  |
-| `api_client.py` | Ei vielä kartoitettu | PENDING |  |
+| `api_client.py` | `src/apis/` request clients | TESTED | Added per-host/per-endpoint request, cache, latency and error telemetry; cache-miss accounting is limited to cache-enabled requests. Tests `test_api_client_stats.py`; full validation run `45254436959` (998 tests).  |
 | `ata_manager.py` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/pool_rpc_parity.py` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/rust_rpc/Cargo.toml` | `Cargo.toml` | PENDING |  |
@@ -37,10 +37,10 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
 | `candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
 | `clmm_quote_math.py` | Ei vielä kartoitettu | PENDING |  |
-| `copy_event_parser.py` | `src/wallets/watch/runtime.rs`, `src/wallets/watch/types.rs` | PARTIAL | Full parser read; validates wallet identity, successful tx, exact raw token balance deltas, loaded-address program IDs, recognized swap allowlist and ambiguous multi-leg cases. Focused parser tests read; complete reference decoder/runtime comparison remains open. |
-| `copy_freshness.py` | `src/trader/copy/guards.rs`, `src/trader/copy/analytics.rs` | UPDATED | Changed freshness to measure chain-to-observation arrival age using receipt timestamp, not downstream processing time; added future-receipt validation. Commit `7d5548d`; tests `f9b9445`, `17c003f`. Full validation pending. |
+| `copy_event_parser.py` | `src/wallets/watch/runtime.rs`, `src/wallets/watch/types.rs` | TESTED | Conservative raw-balance parser now validates account indexes, unique subject identity, loaded program indexes, one token leg/one quote leg, native SOL and ATA-rent correction; ambiguous/mixed flows fail closed. Tests in `test_copy_event_parser.py`; full validation run `45254436959`. Full reference decoder/runtime comparison remains open.
+| `copy_freshness.py` | `src/trader/copy/guards.rs`, `src/trader/copy/analytics.rs` | TESTED | Measures chain-to-observation arrival age from captured receipt time, rejects future/invalid timestamps. Tests `f9b9445`, `17c003f`; full validation run `45254436959` (998 tests).
 | `copy_risk.py` | `src/trader/copy/risk.rs`, `src/trader/copy/sizing.rs` | PARTIAL | Full file and focused tests read. Trojan enforces wallet-isolated USD exposure/daily loss/position limits; reference enforces per-task target min/max, filter/self-copy, slippage, buy-once and SOL budget/sizing caps. These are complementary, not equivalent; task-level controls remain open. |
-| `copy_trade.py` | `src/wallets/watch/service.rs`, `src/wallets/watch/poller.rs`, `src/trader/copy/service.rs`, `src/trader/copy/guards.rs` | UPDATED | Full 520-line monitor read. Found and fixed null transaction RPC result being treated as a completed skip, which could advance the durable cursor past a transaction still indexing. Null now raises retryable error; deduplicated signatures and unclassifiable terminal transactions do not block progress. Commit `3969332`; test `4abfb91`. Full wallet-watch/copy-task architecture comparison remains open. |
+| `copy_trade.py` | `src/wallets/watch/service.rs`, `src/wallets/watch/poller.rs`, `src/trader/copy/service.rs`, `src/trader/copy/guards.rs` | TESTED | Full monitor read. Added bounded paged catch-up, durable per-wallet cursor, oldest-first replay, safe null-index retry, replay dedupe, bounded skip-to-head and stale-event suppression. Tests cover cursor persistence, retry, page order and skip cap; full validation run `45254436959`. Full wallet-watch/copy-task architecture comparison remains open.
 | `dashboard.py` | Ei vielä kartoitettu | PENDING |  |
 | `database.py` | `src/database/`, `src/positions/db.rs` | PARTIAL | Atomic paper DCA investment and partial-close transaction paths inspected; full database parity audit remains open. |
 | `devnet_e2e.py` | Ei vielä kartoitettu | PENDING |  |
@@ -49,7 +49,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `dex_capabilities.py` | Ei vielä kartoitettu | PENDING |  |
 | `dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
-| `dexscreener_api.py` | Ei vielä kartoitettu | PENDING |  |
+| `dexscreener_api.py` | `src/apis/dexscreener/` endpoint behavior | TESTED | New independent validated wrappers for token pools, token batches, pair lookup, search, token orders and supported chains; batch capped at 30 and path segments validated. Tests `test_dexscreener_api.py`; full validation `45254436959`.  |
 | `discovery/__init__.py` | Ei vielä kartoitettu | PENDING |  |
 | `discovery/birdeye_scanner.py` | Ei vielä kartoitettu | PENDING |  |
 | `discovery/dexscreener_scanner.py` | Ei vielä kartoitettu | PENDING |  |
@@ -70,7 +70,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `exit_policy.py` | Ei vielä kartoitettu | PENDING |  |
 | `filter_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
 | `fluxbeam_builder.py` | Ei vielä kartoitettu | PENDING |  |
-| `indicators.py` | Ei vielä kartoitettu | PENDING |  |
+| `indicators.py` | `src/ohlcvs/` and indicator consumers | TESTED | Aligned supported frames to `1m, 5m, 15m, 1h, 4h, 12h, 1d`; persisted-history validation preserves original malformed counters. Tests `test_ohlcv_indicators.py`; full validation `45254436959`.  |
 | `liquidity_monitor.py` | Ei vielä kartoitettu | PENDING |  |
 | `live_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `live_trading.py` | Ei vielä kartoitettu | PENDING |  |
@@ -89,13 +89,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `paper_fill_model.py` | Ei vielä kartoitettu | PENDING |  |
-| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/positions/operations/dca.rs` | PARTIAL | DCA gate and atomic paper add path compared/updated; full position/exit lifecycle audit remains open. Commits `6acfd66`, `f8ae81c`. |
+| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/positions/operations/dca.rs` | PARTIAL | DCA gate now requires fresh provider timestamp, cooldown/min-hold, first-entry/average basis, bounded size and in-flight guard; atomic add/partial close reviewed. Full position/exit lifecycle, daily-loss DCA gate and live transaction reconciliation remain open. Full validation `45254436959`.
 | `playground_token2022_ata.ts` | Ei vielä kartoitettu | PENDING |  |
 | `pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs` | TESTED | Full file compared for DCA policy; added cooldown, min hold, basis selection, fresh-price gate and first-buy multiplier while retaining legacy add_usd. Commit `bee9ff1`; 974-test validation passed. |
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs` | TESTED | Pure DCA evaluator covers cooldown, min hold, basis selection, fresh-price gate, hard stop and first-buy multiplier while retaining legacy `add_usd`; tests `test_position_policy.py`; full validation `45254436959` (998 tests).
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -106,7 +106,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `raydium_cpmm_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `requirements.txt` | `tools/fonts/requirements.txt` | PENDING |  |
 | `risk_manager.py` | `src/trader/safety/`, `src/trader/` risk gates | PARTIAL | DCA add capped by existing max ticket, balance fraction and minimum ticket; complete risk subsystem comparison remains open. |
-| `route_comparison.py` | Ei vielä kartoitettu | PENDING |  |
+| `route_comparison.py` | `src/swaps/router.rs`, `registry.rs`, `operations.rs` | TESTED | Read-only Jupiter/Raptor/direct-pool quote comparison now exposes typed failure kind, retryability, retry-after and HTTP status; execution remains locked. Tests `test_route_comparison.py`, `test_quote_errors.py`; full validation `45254436959`.  |
 | `rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `rugcheck.py` | Ei vielä kartoitettu | PENDING |  |
 | `scanner.py` | Ei vielä kartoitettu | PENDING |  |
@@ -114,9 +114,9 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `sniper_scanner.py` | Ei vielä kartoitettu | PENDING |  |
 | `solana_onchain.py` | Ei vielä kartoitettu | PENDING |  |
 | `strategy.py` | Ei vielä kartoitettu | PENDING |  |
-| `strategy_catalog.py` | Ei vielä kartoitettu | PENDING |  |
-| `strategy_conditions.py` | Ei vielä kartoitettu | PENDING |  |
-| `strategy_rules.py` | Ei vielä kartoitettu | PENDING |  |
+| `strategy_catalog.py` | `src/strategies/conditions/catalog.rs`, strategy policy | TESTED | Exposes per-condition timeframe schema and maximum concurrent evaluation policy; full validation `45254436959`.  |
+| `strategy_conditions.py` | `src/strategies/conditions/` | TESTED | Added per-condition timeframe selection over seven OHLCV frames; selected timeframe overrides top-level 1m convenience metrics; missing/stale frames fail closed. Tests `test_strategy_conditions.py`; full validation `45254436959`.  |
+| `strategy_rules.py` | `src/strategies/engine.rs`, `src/strategies/conditions/` | TESTED | Added bounded concurrent rule evaluation, deadline includes semaphore wait; saturation fails closed. Tests `test_strategy_rules.py`; full validation `45254436959`.  |
 | `swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
 | `telegram_alerts.py` | Ei vielä kartoitettu | PENDING |  |
 | `test_discovery.py` | Ei vielä kartoitettu | PENDING |  |
@@ -129,11 +129,11 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_quality_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_copy_event_parser.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_copy_event_parser.py` | `src/wallets/watch/runtime.rs`, `types.rs` tests | TESTED | Covers exact wallet deltas, rent correction, wrapped SOL, loaded addresses and ambiguous/missing metadata; full validation `45254436959`.  |
 | `tests/test_copy_freshness.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_copy_performance_protocol_telemetry.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_copy_risk.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_copy_trade_subscriptions.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_copy_trade_subscriptions.py` | `src/wallets/watch/` poller tests | TESTED | Covers wallet subscription completeness, bounded pagination, durable cursor replay, null-index retry, skip cap and stale-event suppression; full validation `45254436959`.  |
 | `tests/test_copy_wallet_watchlist.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_core_parity_learning.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_database_backup.py` | Ei vielä kartoitettu | PENDING |  |
@@ -175,7 +175,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_native_dashboard_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_native_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_new_persistence.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_ohlcv_indicators.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_ohlcv_indicators.py` | `src/ohlcvs/` tests | TESTED | Verifies seven reference timeframes and persisted-history readiness/quality behavior; full validation `45254436959`.  |
 | `tests/test_ohlcv_integrity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_onchain_indicators.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -206,7 +206,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_raydium_cpmm_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_raydium_cpmm_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_risk_guard_extensions.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_route_comparison.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_route_comparison.py` | `src/swaps/` quote/route tests | TESTED | Quote comparison now verifies typed rejection status; full validation `45254436959`.  |
 | `tests/test_rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_cache_concurrency.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_distribution_extensions.py` | Ei vielä kartoitettu | PENDING |  |
@@ -219,9 +219,9 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_screenerbot_parity_foundation.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_screenerbot_rugcheck_defaults.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_standard_indicator_math.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_strategy_conditions.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_strategy_conditions.py` | `src/strategies/conditions/` tests | TESTED | Covers selected timeframe metrics, missing timeframe fail-closed behavior and schema validation; full validation `45254436959`.  |
 | `tests/test_strategy_quality_integration.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_strategy_rules.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_strategy_rules.py` | `src/strategies/engine.rs` tests | TESTED | Covers concurrent-evaluation saturation and timeout fail-closed behavior; full validation `45254436959`.  |
 | `tests/test_swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token2022_inspector.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token2022_inspector_api.py` | Ei vielä kartoitettu | PENDING |  |
@@ -235,6 +235,8 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `trading_manager.py` | Ei vielä kartoitettu | PENDING |  |
 | `wallet_preflight.py` | Ei vielä kartoitettu | PENDING |  |
 
+| `quote_errors.py` | `src/swaps/error.rs` | TESTED | Independent typed quote failure classifier for timeout, rate limit, no route, not tradable, rejected quote and unavailable; retry policy/HTTP status exposed. Tests `test_quote_errors.py`; full validation `45254436959`. |
+| `tests/test_quote_errors.py` | `src/swaps/error.rs` behavior tests | TESTED | Covers timeout, rate limit/retry-after, no-route vs not-tradable distinction, rejected payload and provider 5xx; full validation `45254436959`. |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
 | `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
-| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `tests/trader_dca.rs` | TESTED | New pure DCA gate tests: legacy and multiplier sizing, price freshness, min-hold, cooldown, basis and hard-stop failures. 974 tests passed. |
+| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `tests/trader_dca.rs` | TESTED | Pure DCA gate tests cover legacy and multiplier sizing, price freshness, min-hold, cooldown, basis and hard-stop failures; full validation `45254436959` (998 tests).
