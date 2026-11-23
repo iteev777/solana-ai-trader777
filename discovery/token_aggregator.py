@@ -1,5 +1,6 @@
 """Concurrent multi-source Solana token discovery and source health telemetry."""
 import time
+import math
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -12,7 +13,7 @@ from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coin
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
-    ("birdeye_meme_listing", scan_pumpfun),
+    ("pumpfun", scan_pumpfun),
     ("birdeye", scan_birdeye),
     ("dexscreener", scan_dexscreener),
     ("rugcheck", scan_rugcheck),
@@ -63,6 +64,55 @@ def _source_result(name, ok, count, started, error=None):
         "completed_at": completed,
         **history,
     }
+
+
+def _missing_value(value):
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ("", "unknown", "n/a", "none", "null")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return not math.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return True
+    return False
+
+
+def _merge_value(current, incoming):
+    if _missing_value(current):
+        return incoming
+    if _missing_value(incoming):
+        return current
+    if isinstance(current, dict) and isinstance(incoming, dict):
+        merged = dict(current)
+        for key, value in incoming.items():
+            if key not in merged:
+                merged[key] = value
+            else:
+                merged[key] = _merge_value(merged[key], value)
+        return merged
+    if isinstance(current, list) and isinstance(incoming, list):
+        return incoming if not current and incoming else current
+    if isinstance(current, (int, float)) and not isinstance(current, bool):
+        if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
+            try:
+                if float(current) <= 0 < float(incoming):
+                    return incoming
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return current
+
+
+def _merge_candidate(candidate, token):
+    """Fill gaps and replace invalid zero-valued market metrics, never erase good data."""
+    for key, value in token.items():
+        if key in ("tokenAddress", "chainId", "discovery_sources", "discovery_timestamp"):
+            continue
+        if key not in candidate:
+            candidate[key] = value
+        else:
+            candidate[key] = _merge_value(candidate[key], value)
 
 
 def normalize_token(token):
@@ -139,9 +189,7 @@ def collect_tokens():
                 for source in valid_sources:
                     if source not in candidate["discovery_sources"]:
                         candidate["discovery_sources"].append(source)
-                for key, value in token.items():
-                    if key not in candidate and value is not None:
-                        candidate[key] = value
+                _merge_candidate(candidate, token)
 
         results = list(discovered.values())
         # Rank source corroboration by independent provider families, not by
