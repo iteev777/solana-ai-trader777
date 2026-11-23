@@ -166,6 +166,37 @@ def open_position(
         if position_count(strategy) >= MAX_POSITIONS_PER_STRATEGY:
             return "Strategy position limit reached"
 
+        # Re-apply hard risk limits after adaptive sizing. The adaptive
+        # multiplier must never bypass the configured ticket or balance cap.
+        import risk_manager
+        position_size = min(
+            round(position_size, 2),
+            risk_manager.MAX_TRADE_SIZE,
+            round(balance * risk_manager.MAX_TRADE_BALANCE_FRACTION, 2),
+        )
+        if position_size < risk_manager.MIN_TRADE_SIZE:
+            return "Adaptive size is below the minimum safe trade size"
+
+        main_count = sum(
+            1 for item in positions.values()
+            if isinstance(item, dict) and item.get("strategy", "main") == "main"
+        )
+        sniper_count = sum(
+            1 for item in positions.values()
+            if isinstance(item, dict) and item.get("strategy", "main") == "sniper"
+        )
+        approved, risk_reason = risk_manager.check_trade_risk(
+            balance=balance,
+            open_positions=len(positions),
+            daily_loss=account.get("daily_loss", 0),
+            trade_size=position_size,
+            strategy=strategy,
+            main_positions=main_count,
+            sniper_positions=sniper_count,
+        )
+        if not approved:
+            return "Risk limit after adaptive sizing: " + risk_reason
+
         if balance < position_size * (1 + database.PAPER_FEE_RATE):
             return "Insufficient balance including estimated entry fee"
 
