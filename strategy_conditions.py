@@ -274,7 +274,8 @@ def evaluate_condition(node, context):
             created = _metric(context, "pairCreatedAt", "token.pairCreatedAt")
             if created is not None:
                 created = created / 1000 if created > 10_000_000_000 else created
-                age = max(0, (time.time() - created) / 60)
+                evaluated_at = _num(context.get("evaluated_at")) or time.time()
+                age = max(0, (evaluated_at - created) / 60)
         result = _compare(age, params.get("comparison", "ABOVE"), _num(params.get("minutes", 60)))
         detail = "token age minutes"
     elif name == "TransactionVelocity":
