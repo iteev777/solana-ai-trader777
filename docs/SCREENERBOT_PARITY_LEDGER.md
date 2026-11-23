@@ -14,16 +14,16 @@
 
 | Inventory | ScreenerBot | Trojan |
 |---|---:|---:|
-| Tracked files | 3,043 | 220 |
+| Tracked files | 3,043 | 223 |
 | Main source directory | `src/`: 1,660 | Root Python modules + `discovery/` |
-| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 107 `tests/` files |
+| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 109 `tests/` files |
 | Locales | 609 | No equivalent locale tree identified |
 | Desktop shell | `electron/`: 35 | No equivalent desktop shell identified |
 | Tools and fixtures | `tools/`: 444 | No equivalent tools tree identified |
 | Images/icons/assets | `icons/`: 71; `assets/`: 10 | No equivalent large asset tree identified |
 | Build/workflow/docs/config | Present across root and hidden dirs | Present across root and hidden dirs |
 
-Trojan inventory at the latest audited revision includes 193 Python files, 2 Rust files, 1 TypeScript file, 10 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
+Trojan inventory at the latest audited revision includes 196 Python files, 2 Rust files, 1 TypeScript file, 10 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
 
 ScreenerBot is substantially larger because its repository includes a full Rust application, Electron shell, translations, UI assets, fixture corpora, tooling and tests. These must be classified individually as: (a) runtime feature with a Trojan equivalent, (b) runtime feature missing from Trojan, (c) platform-specific feature not applicable to Trojan's deployment model, (d) test/fixture/build support, or (e) non-code asset. Do not silently omit categories.
 
@@ -48,7 +48,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
 | Positions and accounting | Positions lifecycle, DCA, partial exits, P&L | `position_policy.py`, `paper_trading.py`, `database.py` | Not audited |
 | Copy trading and wallet watch | Copy tasks, shared wallet watch, durable cursor/replay handling | `copy_*.py`, `copy_event_parser.py`, `sniper_scanner.py` | Not audited |
-| Pool pricing, cache and decoders | `src/pools/cache.rs`, `driver.rs`, `service.rs`, `maintenance.rs`, `types.rs`, `database/operations.rs`, `database/writer.rs`, plus native DEX drivers | `pool_registry.py`, `market_data.py`, `pool_account_fetcher.py`, `pool_analysis.py`, `pool_selection.py`, `onchain_stream.py`, `database.py`, DEX quote/builders and pool tests | Partial audit; multi-source registry, stale-safe quote cache, bounded RPC/account caches, retry quarantine, persistence and runtime metrics inspected; price-history parity and lifecycle/maintenance integration still open |
+| Pool pricing, cache and decoders | `src/pools/cache.rs`, `driver.rs`, `service.rs`, `maintenance.rs`, `types.rs`, `database/operations.rs`, `database/writer.rs`, plus native DEX drivers | `pool_registry.py`, `market_data.py`, `pool_account_fetcher.py`, `pool_analysis.py`, `pool_selection.py`, `onchain_stream.py`, `indicators.py`, `ohlcv_integrity.py`, `database.py`, DEX quote/builders and pool tests | Partial audit; multi-source registry, stale-safe quote cache, bounded RPC/account caches, retry quarantine, persistence, multi-timeframe indicators and runtime metrics inspected; native multi-source candle fetching, gap filling and lifecycle/maintenance integration still open |
 | Swap routing and execution | Router comparison, direct swaps, verification | `dex_*.py`, `protocol_quotes.py`, `route_comparison.py`, execution builders | Not audited |
 | OHLCV and indicators | Candle service, timeframes, indicators | `market_data.py`, `indicators.py`, `ohlcv_integrity.py` | Not audited |
 | Strategies and learning | Strategy conditions/rule trees, AI scoring | `strategy*.py`, `adaptive_learning.py`, `ai_analyzer.py` | Not audited |
@@ -86,6 +86,10 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 
 - Pool/cache comparison: ScreenerBot keeps per-chain latest-price and price-history maps, refuses to return stale cached prices, records history at a configured interval, loads historical rows only for open positions, protects open-position histories from eviction, cleans gapped histories and evicts inactive history after two hours. Trojan has a 10-second bounded provider quote cache, a separate multi-source pool registry with 60-second refresh/300-second stale limits and persistent pool snapshots, plus bounded pool-account caches, transient/structural retry quarantine and per-position/candidate on-chain refresh metrics. These components are not one-to-one: a complete dedicated latest-price/history cache with ScreenerBot's per-chain API and open-position-protected history eviction has not been verified. This remains open.
 - Pool architecture comparison: ScreenerBot has a chain-owned four-stage pricing driver (discovery, analysis, fetch, calculation), a lifecycle supervisor and scheduled maintenance task. Trojan currently uses `pool_registry.py` background provider completion, `pool_account_fetcher.py` batched account refresh and `onchain_stream.py` scheduling, with `pool_analysis.py` failure classification. Similar operational goals exist, but there is no verified one-to-one stage driver interface, per-chain service lifecycle or periodic database gap/retention maintenance equivalent yet.
+
+- OHLCV comparison: ScreenerBot's supported timeframe set is exactly `1m, 5m, 15m, 1h, 4h, 12h, 1d`. Trojan's prior indicator output instead exposed `1m, 3m, 5m, 15m, 30m, 1h, 4h`. Updated `indicators.py` to expose the same seven timeframe keys and added a test that verifies the exact set and that 12h/1d remain not-ready when the 1m history is too short. This aligns the public timeframe contract, not the complete fetch pipeline: Trojan currently fetches a single 1m GeckoTerminal series and aggregates locally; ScreenerBot fetches native timeframe feeds, uses a data-server/feed fallback chain and has persistent gap detection/filling, retry tracking and per-timeframe cache/database management. These remain open gaps.
+- `ohlcv_integrity.py` already sorts and deduplicates candle rows, rejects invalid OHLCV values, measures staleness and discontinuities, and fails closed when quality is insufficient. It does not attempt bounded historical gap repair as ScreenerBot's `ohlcvs/gaps.rs` does.
+- Test-suite cleanup uncovered two stale control tests: `risk_manager.check_trade_risk()` intentionally returns `"TRADE APPROVED"` on approval, not `None`; `trading_control.set_force_stopped()` previously truncated reason text after trimming and could leave a trailing space. Updated the assertion and now trims after the 300-character bound. These fixes are independent of OHLCV behavior.
 - Filtering parity review: ScreenerBot's `MetaStage` resolves valid token decimals before age/cooldown checks; Trojan's local pipeline currently has pool-age checks and discovery decimals enrichment but no equivalent mandatory cache/DB/server/RPC decimals resolver or position-cooldown stage. ScreenerBot's metadata/symbol/on-chain/market stages are distinct; Trojan combines some checks in `filter_pipeline.py`. These are explicitly open, not counted as complete.
 - This is an initial sample, not a claim that all discovery files or edge cases have been inspected.
 
