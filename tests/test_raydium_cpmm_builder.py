@@ -12,13 +12,13 @@ def key(byte):
     return chain._b58encode(bytes([byte]) * 32)
 
 
-def token_account(mint, owner, amount=1000):
+def token_account(mint, owner, amount=1000, token_program=chain.TOKEN_PROGRAM):
     raw = bytearray(165)
     raw[0:32] = chain._b58decode(mint)
     raw[32:64] = chain._b58decode(owner)
     raw[64:72] = amount.to_bytes(8, "little")
     raw[108] = 1
-    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+    return {"owner": token_program, "data": bytes(raw)}
 
 
 class RaydiumCpmmBuilderTests(unittest.TestCase):
@@ -30,8 +30,15 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         self.mint_b = key(5)
         self.vault_a = key(6)
         self.vault_b = key(7)
-        self.user_in = key(8)
-        self.user_out = key(9)
+        self.real_find_program_address = chain._find_program_address
+        self.user_in = self.real_find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_PROGRAM),
+             chain._b58decode(self.mint_a)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        self.user_out = self.real_find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_PROGRAM),
+             chain._b58decode(self.mint_b)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
         self.authority = key(10)
         self.observation = key(11)
         self.blockhash = key(12)
@@ -45,6 +52,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             "out_amount": 100,
             "minimum_out_amount": 80,
             "slot": 500,
+            "token_program_base": chain.TOKEN_PROGRAM,
+            "token_program_quote": chain.TOKEN_PROGRAM,
         }
         pool_raw = bytearray(413)
         pool_raw[:8] = chain._discriminator("PoolState")
@@ -85,21 +94,29 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             self.observation: {"owner": builder.CPMM_PROGRAM_ID, "data": self.observation_raw},
         }
 
-    def call_builder(self, quote=None, account_map=None):
+    def call_builder(self, quote=None, account_map=None,
+                     user_input_token_account=None, user_output_token_account=None):
         account_map = account_map or self.account_map
-        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=self.quote), \
-             patch.object(chain, "_account", return_value=self.account_map[self.pool]), \
+        selected_quote = quote or self.quote
+        def pda(seeds, program):
+            if seeds == [builder.AUTHORITY_SEED]:
+                return self.authority, 255
+            if seeds == [builder.OBSERVATION_SEED, chain._b58decode(self.pool)]:
+                return self.observation, 254
+            return self.real_find_program_address(seeds, program)
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=selected_quote), \
+             patch.object(chain, "_account", side_effect=lambda address: account_map[address]), \
              patch.object(chain, "_decode_pool", wraps=chain._decode_pool), \
-             patch.object(chain, "_find_program_address", side_effect=[
-                 (self.authority, 255), (self.observation, 254)
-             ]), \
+             patch.object(chain, "_find_program_address", side_effect=pda), \
              patch.object(chain, "_multiple_accounts_with_context",
                           side_effect=lambda keys: ([account_map.get(k) for k in keys], 503)), \
              patch.object(chain, "_rpc", return_value={"value": {
                  "blockhash": self.blockhash, "lastValidBlockHeight": 123456
              }}):
             return builder.build_raydium_cpmm_swap(
-                quote or self.quote, self.wallet, self.user_in, self.user_out
+                selected_quote, self.wallet,
+                user_input_token_account or self.user_in,
+                user_output_token_account or self.user_out,
             )
 
     def test_builds_unsigned_legacy_transaction_with_correct_swap_data(self):
@@ -118,11 +135,58 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         self.assertFalse(result["live_trading_ready"])
         self.assertEqual(result["quote_slot_lag"], 3)
 
-    def test_rejects_token_2022_mint_until_extension_aware_support_exists(self):
+    def test_builds_zero_fee_token2022_input_with_matching_program_accounts(self):
+        token2022_mint = bytearray(82)
+        token2022_mint[44] = 6
+        token2022_mint[45] = 1
+        pool_raw = bytearray(self.pool_raw)
+        pool_raw[232:264] = chain._b58decode(chain.TOKEN_2022_PROGRAM)
         accounts = dict(self.account_map)
-        accounts[self.mint_a] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(166)}
-        with self.assertRaisesRegex(ValueError, "legacy SPL Token"):
-            self.call_builder(account_map=accounts)
+        accounts[self.pool] = {"owner": builder.CPMM_PROGRAM_ID, "data": bytes(pool_raw)}
+        accounts[self.mint_a] = {
+            "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(token2022_mint)
+        }
+        accounts[self.vault_a] = token_account(
+            self.mint_a, self.authority, token_program=chain.TOKEN_2022_PROGRAM
+        )
+        token2022_user_ata = self.real_find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint_a)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        accounts[token2022_user_ata] = token_account(
+            self.mint_a, self.wallet, 1000, chain.TOKEN_2022_PROGRAM
+        )
+        quote = dict(
+            self.quote,
+            token_program_base=chain.TOKEN_2022_PROGRAM,
+        )
+        result = self.call_builder(
+            quote=quote, account_map=accounts,
+            user_input_token_account=token2022_user_ata,
+        )
+        self.assertTrue(result["token2022_zero_fee_supported"])
+        self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
+
+    def test_rejects_nonzero_token2022_transfer_fee(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[88:90] = (100).to_bytes(2, "little")
+        tlv = (1).to_bytes(2, "little") + (108).to_bytes(2, "little") + bytes(config)
+        mint_data = bytearray(166)
+        mint_data[44] = 6
+        mint_data[45] = 1
+        mint_data[165] = MINT_ACCOUNT_TYPE
+        mint_data.extend(tlv)
+        pool_raw = bytearray(self.pool_raw)
+        pool_raw[232:264] = chain._b58decode(chain.TOKEN_2022_PROGRAM)
+        accounts = dict(self.account_map)
+        accounts[self.pool] = {"owner": builder.CPMM_PROGRAM_ID, "data": bytes(pool_raw)}
+        accounts[self.mint_a] = {
+            "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_data)
+        }
+        quote = dict(self.quote, token_program_base=chain.TOKEN_2022_PROGRAM)
+        with self.assertRaisesRegex(ValueError, "transfer fees must be zero"):
+            self.call_builder(quote=quote, account_map=accounts)
 
     def test_rejects_quote_from_another_protocol(self):
         quote = dict(self.quote, protocol="raydium_clmm")
