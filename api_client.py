@@ -701,7 +701,7 @@ def get_api_status():
 
     with state_lock:
         stats = {}
-        for (key, value in _api_stats.items():
+        for key, value in _api_stats.items():
             host, endpoint = key
             item = dict(value)
             total = item["total_requests"]
