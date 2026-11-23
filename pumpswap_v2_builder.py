@@ -255,11 +255,11 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     )
 
     base_balance = token2022.validate_token_account_for_program(
-        user_base_acc, token_program_base, wallet, current["base_mint"],
+        user_base_acc, token_program_base, current["base_mint"], wallet,
         "PumpSwap user base token account",
     )
     quote_balance = token2022.validate_token_account_for_program(
-        user_quote_acc, token_program_quote, wallet, current["quote_mint"],
+        user_quote_acc, token_program_quote, current["quote_mint"], wallet,
         "PumpSwap user quote token account",
     )
     for address, mint, token_program in (
