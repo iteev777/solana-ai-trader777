@@ -75,18 +75,18 @@ def _metadata_stage(token, mint):
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
     if not symbol:
-        if os.getenv("TROJAN_FILTER_REJECT_EMPTY_SYMBOLS", "true").lower() == "true":
+        if _env_bool("TROJAN_FILTER_REJECT_EMPTY_SYMBOLS", True):
             return _result("REJECT", "metadata", "EMPTY_SYMBOL")
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
     if (
-        os.getenv("TROJAN_FILTER_REJECT_NUMERIC_SYMBOLS", "true").lower() == "true"
+        _env_bool("TROJAN_FILTER_REJECT_NUMERIC_SYMBOLS", True)
         and symbol.isascii() and symbol.isdigit()
     ):
         return _result("REJECT", "metadata", "NUMERIC_SYMBOL")
-    reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "false").lower() == "true"
+    reject_single = _env_bool("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", False)
     if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
-    if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
+    if not name and _env_bool("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", False):
         return _result("WAIT", "metadata", "NAME_UNKNOWN" if name_raw is None else "NAME_INVALID")
 
     info = token.get("info") if isinstance(token.get("info"), dict) else {}
@@ -95,7 +95,7 @@ def _metadata_stage(token, mint):
         token.get("logoURI") or token.get("logo_uri") or token.get("logo_url")
         or token.get("imageUrl") or info.get("imageUrl") or token_meta.get("image")
     )
-    require_logo = os.getenv("TROJAN_FILTER_REQUIRE_LOGO_URL", "false").lower() == "true"
+    require_logo = _env_bool("TROJAN_FILTER_REQUIRE_LOGO_URL", False)
     if require_logo and not (isinstance(logo, str) and logo.strip().startswith(("https://", "http://"))):
         return _result("WAIT", "metadata", "LOGO_URL_MISSING")
 
@@ -112,7 +112,7 @@ def _metadata_stage(token, mint):
         isinstance(direct_website, str)
         and direct_website.strip().startswith(("https://", "http://"))
     )
-    if os.getenv("TROJAN_FILTER_REQUIRE_WEBSITE_URL", "false").lower() == "true" and not has_website:
+    if _env_bool("TROJAN_FILTER_REQUIRE_WEBSITE_URL", False) and not has_website:
         return _result("WAIT", "metadata", "WEBSITE_URL_MISSING")
 
     return _result("PASS", "metadata", "METADATA_VALID", {
@@ -398,7 +398,7 @@ def _momentum_stage(token):
         if minimum > maximum:
             minimum, maximum = -100.0, 10000.0
         require_name = "TROJAN_FILTER_REQUIRE_" + label + "_CHANGE"
-        required = os.getenv(require_name, "false").lower() == "true"
+        required = _env_bool(require_name, False)
         if change is None:
             if required:
                 reason = "M5_MOMENTUM_UNKNOWN" if key == "m5" else "MOMENTUM_" + label + "_UNKNOWN"
@@ -426,7 +426,7 @@ def _age_stage(token):
     if created is None:
         created = _number(token.get("created_at_ms"))
     if created is None:
-        if os.getenv("TROJAN_FILTER_REQUIRE_POOL_AGE", "false").lower() == "true":
+        if _env_bool("TROJAN_FILTER_REQUIRE_POOL_AGE", False):
             return _result("WAIT", "age", "POOL_AGE_UNKNOWN")
         return _result("PASS", "age", "POOL_AGE_NOT_REQUIRED")
     # Providers normally expose milliseconds; tolerate Unix seconds explicitly.
