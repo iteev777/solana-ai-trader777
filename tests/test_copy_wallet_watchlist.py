@@ -82,5 +82,22 @@ class CopyWalletWatchlistTests(unittest.TestCase):
         self.assertEqual(len(database.list_copy_watch_wallets()), 1)
 
 
+    def test_copy_watch_cursor_persists_and_updates_per_wallet(self):
+        self.assertIsNone(database.get_copy_watch_cursor(DASHBOARD_WALLET))
+        database.set_copy_watch_cursor(DASHBOARD_WALLET, "signature-first")
+        self.assertEqual(database.get_copy_watch_cursor(DASHBOARD_WALLET), "signature-first")
+        database.set_copy_watch_cursor(DASHBOARD_WALLET, "signature-next")
+        self.assertEqual(database.get_copy_watch_cursor(DASHBOARD_WALLET), "signature-next")
+        self.assertIsNone(database.get_copy_watch_cursor(ENV_WALLET))
+
+    def test_copy_watch_cursor_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            database.get_copy_watch_cursor(" ")
+        with self.assertRaises(ValueError):
+            database.set_copy_watch_cursor(DASHBOARD_WALLET, "")
+        with self.assertRaises(ValueError):
+            database.set_copy_watch_cursor(DASHBOARD_WALLET, "x" * 129)
+
+
 if __name__ == "__main__":
     unittest.main()
