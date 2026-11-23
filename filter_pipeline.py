@@ -73,10 +73,14 @@ def _clean_metadata_text(value):
 
 
 def _metadata_stage(token, mint):
-    symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name_raw = token.get("name") or _get(token, "baseToken", "name")
+    symbol = _clean_metadata_text(token.get("symbol")) or _clean_metadata_text(
+        _get(token, "baseToken", "symbol")
+    )
+    name_raw = token.get("name")
     name = _clean_metadata_text(name_raw)
-    symbol = _clean_metadata_text(symbol)
+    if not name:
+        name_raw = _get(token, "baseToken", "name")
+        name = _clean_metadata_text(name_raw)
 
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
@@ -102,26 +106,29 @@ def _metadata_stage(token, mint):
 
     info = token.get("info") if isinstance(token.get("info"), dict) else {}
     token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
-    logo = (
-        token.get("logoURI") or token.get("logo_uri") or token.get("logo_url")
-        or token.get("imageUrl") or info.get("imageUrl") or token_meta.get("image")
+    logo_candidates = (
+        token.get("logoURI"), token.get("logo_uri"), token.get("logo_url"),
+        token.get("imageUrl"), info.get("imageUrl"), token_meta.get("image"),
     )
+    logo = next((
+        value.strip() for value in logo_candidates
+        if isinstance(value, str) and value.strip().startswith(("https://", "http://"))
+    ), None)
     require_logo = _env_bool("TROJAN_FILTER_REQUIRE_LOGO_URL", False)
-    if require_logo and not (isinstance(logo, str) and logo.strip().startswith(("https://", "http://"))):
+    if require_logo and logo is None:
         return _result("WAIT", "metadata", "LOGO_URL_MISSING")
 
-    websites = token.get("websites")
-    if not isinstance(websites, list):
-        websites = info.get("websites") if isinstance(info.get("websites"), list) else []
+    website_candidates = []
+    for container in (token, info):
+        websites = container.get("websites") if isinstance(container, dict) else None
+        if isinstance(websites, list):
+            website_candidates.extend(
+                item.get("url") for item in websites if isinstance(item, dict)
+            )
+        website_candidates.extend((container.get("website"), container.get("website_url")))
     has_website = any(
-        isinstance(item, dict) and isinstance(item.get("url"), str)
-        and item["url"].strip().startswith(("https://", "http://"))
-        for item in websites
-    )
-    direct_website = token.get("website") or token.get("website_url")
-    has_website = has_website or (
-        isinstance(direct_website, str)
-        and direct_website.strip().startswith(("https://", "http://"))
+        isinstance(value, str) and value.strip().startswith(("https://", "http://"))
+        for value in website_candidates
     )
     if _env_bool("TROJAN_FILTER_REQUIRE_WEBSITE_URL", False) and not has_website:
         return _result("WAIT", "metadata", "WEBSITE_URL_MISSING")
