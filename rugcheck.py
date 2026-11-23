@@ -175,17 +175,28 @@ def analyze_rugcheck_report(data):
 
     reasons = []
     high_risks = medium_risks = low_risks = unknown_risks = 0
-    normalized_score = get_number(data.get("score_normalised"))
-    if normalized_score is not None and (
-        not normalized_score.is_integer() or not 0.0 <= normalized_score <= 100.0
-    ):
+    normalized_raw = data.get("score_normalised")
+    normalized_score = get_number(normalized_raw)
+    normalized_invalid = normalized_raw is not None and (
+        normalized_score is None
+        or not normalized_score.is_integer()
+        or not 0.0 <= normalized_score <= 100.0
+    )
+    if normalized_invalid:
+        unknown_risks += 1
         reasons.append("Normalized risk score is outside the valid integer 0-100 range")
         normalized_score = None
 
-    raw_score = get_number(data.get("score"))
-    if raw_score is not None and (
-        not raw_score.is_integer() or raw_score < 0 or raw_score > 2_147_483_647
-    ):
+    raw_score_raw = data.get("score")
+    raw_score = get_number(raw_score_raw)
+    raw_score_invalid = raw_score_raw is not None and (
+        raw_score is None
+        or not raw_score.is_integer()
+        or raw_score < 0
+        or raw_score > 2_147_483_647
+    )
+    if raw_score_invalid:
+        unknown_risks += 1
         reasons.append("Raw risk score is outside the valid non-negative i32 range")
         raw_score = None
     maximum_raw_score = _risk_threshold(
