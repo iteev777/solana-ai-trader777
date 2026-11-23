@@ -171,6 +171,12 @@ def _decode_user_token_account(account, expected_owner, expected_mint, label):
         raise ValueError(label + " is not owned by the signing wallet")
     if raw[108] != 1:
         raise ValueError(label + " is not initialized or is frozen")
+    delegate_option = int.from_bytes(raw[72:76], "little")
+    close_authority_option = int.from_bytes(raw[129:133], "little")
+    if delegate_option not in (0, 1) or close_authority_option not in (0, 1):
+        raise ValueError(label + " authority option is invalid")
+    if delegate_option == 1 or close_authority_option == 1:
+        raise ValueError(label + " has an active delegate or close authority")
     return int.from_bytes(raw[64:72], "little")
 
 
