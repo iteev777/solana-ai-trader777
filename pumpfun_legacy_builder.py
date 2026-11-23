@@ -1,9 +1,10 @@
 """Unsigned native Pump.fun legacy bonding-curve buy/sell builder.
 
-Implements the verified classic SOL-quoted curve instructions only. Alternate
-quote mints, Token-2022, mayhem, cashback and holder-reward modes remain
-fail-closed. The builder re-quotes and re-reads curve/global/fee/mint/token
-accounts, derives canonical PDAs/ATAs, and returns an unsigned transaction.
+Implements the verified classic SOL-quoted curve instructions for legacy SPL
+Token and the audited Token-2022 transfer-fee extension subset. Alternate quote
+mints, mayhem, cashback and holder-reward modes remain fail-closed. The builder
+re-quotes and re-reads curve/global/fee/mint/token accounts, derives canonical
+PDAs/ATAs with the mint-specific token program, and returns an unsigned transaction.
 """
 import base64
 import struct
