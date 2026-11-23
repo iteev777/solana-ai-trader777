@@ -121,15 +121,15 @@ def get_positions():
 # ==========================================
 
 def open_position(
-    if _force_stop_active():
-        return "FORCE STOP ACTIVE"
-
     token_address,
     entry_price,
     strategy="main",
     metadata=None,
     trade_size=None
 ):
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
     global balance, positions
 
     if not token_address:
@@ -261,13 +261,13 @@ def open_position(
 # ==========================================
 
 def close_position(
-    if _force_stop_active():
-        return "FORCE STOP ACTIVE"
-
     token_address,
     current_price,
     reason="MANUAL EXIT"
 ):
+    if _force_stop_active():
+        return "FORCE STOP ACTIVE"
+
     global balance, positions
 
     current_price = _positive_finite(current_price)
