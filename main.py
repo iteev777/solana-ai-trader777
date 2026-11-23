@@ -7,6 +7,8 @@ import time
 import queue
 import os
 import math
+import signal
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import paper_trading as paper
@@ -76,6 +78,8 @@ last_scan_time = 0
 last_statistics_time = 0
 
 last_prices = {}
+
+_shutdown_event = threading.Event()
 
 
 # ==========================================
@@ -1850,11 +1854,93 @@ def print_statistics():
 # MAIN LOOP
 # ==========================================
 
-def run_bot():
+def _service_manager_health():
+    """Create the managed background services used by the main runtime."""
+    import dashboard
+    import copy_trade
+    from service_manager import ServiceManager, ServiceSpec, set_global_service_manager
 
+    def dashboard_health():
+        thread = dashboard._server_thread
+        running = bool(thread and thread.is_alive())
+        return {
+            "status": "healthy" if running else "degraded",
+            "message": None if running else "dashboard worker is not running",
+        }
+
+    def sniper_health():
+        thread = sniper._listener_thread
+        running = bool(thread and thread.is_alive())
+        connected = bool(sniper.get_trade_subscription_status().get("connected"))
+        if not running:
+            return {"status": "unhealthy", "message": "sniper listener worker exited"}
+        return {
+            "status": "healthy" if connected else "degraded",
+            "message": None if connected else "PumpPortal listener reconnecting",
+        }
+
+    def copy_health():
+        status = copy_trade.get_copy_monitor_status()
+        if not status.get("configured"):
+            return {"status": "disabled", "message": "copy wallet monitor not configured"}
+        return {
+            "status": "healthy" if status.get("running") else "degraded",
+            "message": None if status.get("running") else status.get("last_error") or "copy monitor connecting",
+        }
+
+    def start_sniper():
+        thread = sniper.start_listener()
+        if thread is None:
+            raise RuntimeError("sniper listener thread did not start")
+        return thread
+
+    service_manager = ServiceManager(stop_grace_seconds=5.0, cache_ttl_seconds=5.0)
+    service_manager.register(ServiceSpec(
+        name="dashboard",
+        start=dashboard.start_dashboard,
+        stop=lambda _handle: dashboard.stop_dashboard(),
+        health=dashboard_health,
+        priority=10,
+        essential=False,
+        enabled=lambda: bool(os.getenv("TROJAN_DASHBOARD_TOKEN")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="sniper_listener",
+        start=start_sniper,
+        stop=lambda _handle: sniper.stop_listener(),
+        health=sniper_health,
+        priority=20,
+        essential=False,
+        enabled=True,
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="copy_wallet_monitor",
+        start=copy_trade.start_copy_monitor,
+        stop=lambda _handle: copy_trade.stop_copy_monitor(),
+        health=copy_health,
+        priority=30,
+        essential=False,
+        enabled=lambda: bool(copy_trade.get_copy_monitor_status().get("configured")),
+        stops_alone=True,
+    ))
+    set_global_service_manager(service_manager)
+    return service_manager
+
+
+def _request_shutdown(_signum=None, _frame=None):
+    _shutdown_event.set()
+
+
+def run_bot():
     global last_scan_time
     global last_statistics_time
     global discovery_future
+
+    service_manager = None
+    previous_signal_handlers = {}
+    _shutdown_event.clear()
 
     print("====================================")
     print("TROJAN V2 - SOLANA AI TRADING BOT")
@@ -1866,86 +1952,103 @@ def run_bot():
     print("LIVE EXECUTION: LOCKED")
     print("====================================")
 
-    initialize_database()
-    paper.refresh_account()
-
     try:
-        from dashboard import start_dashboard
-        start_dashboard()
-    except Exception as dashboard_error:
-        log_event("DASHBOARD START ERROR", reason=repr(dashboard_error))
-
-    sniper.start_listener()
-
-    try:
-        from copy_trade import start_copy_monitor
-        start_copy_monitor()
-    except Exception as copy_error:
-        log_event("COPY WATCH START ERROR", reason=repr(copy_error))
-
-    log_event("SNIPER THREAD STARTED")
-    log_event("BOT STARTED")
-
-    while True:
-
-        loop_start = time.time()
-
-        try:
-
-            # Free completed task slots first.
-
-            process_completed_tasks()
-            process_copy_signals()
-
-            # Receive and schedule new tokens.
-
-            receive_sniper_tokens()
-            process_sniper_tokens()
-            process_discovery_pending()
-
-            # Run network-heavy discovery separately so API latency cannot
-            # block the position monitor and stop-loss checks.
-            if discovery_future is not None and discovery_future.done():
-
+        # Railway sends SIGTERM during deploy/restart. Convert it to the same
+        # graceful stop path as Ctrl+C; signal handlers are installed only from
+        # the main thread, as required by Python.
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    discovery_future.result()
-                except Exception as error:
-                    log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
+                    previous_signal_handlers[signum] = signal.getsignal(signum)
+                    signal.signal(signum, _request_shutdown)
+                except (ValueError, OSError):
+                    previous_signal_handlers.pop(signum, None)
 
-                discovery_future = None
+        initialize_database()
+        paper.refresh_account()
 
-            if (
-                discovery_future is None
-                and time.time() - last_scan_time >= SCAN_INTERVAL
-            ):
-
-                discovery_future = discovery_executor.submit(
-                    add_discovery_tokens
-                )
-
-                last_scan_time = time.time()
-                log_event("BACKGROUND DISCOVERY STARTED")
-
-            # Monitor all positions through batch market data.
-
-            monitor_positions()
-            import service_health
-            service_health.heartbeat("main_loop")
-
-            if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
-
-                print_statistics()
-                last_statistics_time = time.time()
-
-        except Exception as error:
-
-            log_event("MAIN LOOP ERROR", reason=repr(error))
-
-        elapsed = time.time() - loop_start
-
-        time.sleep(
-            max(1, POSITION_CHECK_INTERVAL - elapsed)
+        service_manager = _service_manager_health()
+        startup = service_manager.start_all()
+        for failure in startup.get("failures", []):
+            log_event("SERVICE START FAILURE", address=failure.get("name"), reason=failure.get("error"))
+        for blocked in startup.get("blocked", []):
+            log_event("SERVICE START BLOCKED", address=blocked.get("name"), reason=blocked.get("reason"))
+        log_event(
+            "SERVICE MANAGER STARTED",
+            reason="started=" + ",".join(startup.get("started", []))
+            + " | disabled=" + ",".join(startup.get("disabled", [])),
         )
+        log_event("BOT STARTED")
+
+        while not _shutdown_event.is_set():
+            loop_start = time.time()
+            try:
+                process_completed_tasks()
+                process_copy_signals()
+                receive_sniper_tokens()
+                process_sniper_tokens()
+                process_discovery_pending()
+
+                # Network-heavy discovery stays separate from the position monitor.
+                if discovery_future is not None and discovery_future.done():
+                    try:
+                        discovery_future.result()
+                    except Exception as error:
+                        log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
+                    discovery_future = None
+
+                if (
+                    discovery_future is None
+                    and time.time() - last_scan_time >= SCAN_INTERVAL
+                ):
+                    discovery_future = discovery_executor.submit(add_discovery_tokens)
+                    last_scan_time = time.time()
+                    log_event("BACKGROUND DISCOVERY STARTED")
+
+                monitor_positions()
+                import service_health
+                service_health.heartbeat("main_loop")
+
+                if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
+                    print_statistics()
+                    last_statistics_time = time.time()
+
+            except Exception as error:
+                log_event("MAIN LOOP ERROR", reason=repr(error))
+
+            elapsed = time.time() - loop_start
+            _shutdown_event.wait(max(1, POSITION_CHECK_INTERVAL - elapsed))
+
+    except KeyboardInterrupt:
+        _shutdown_event.set()
+    finally:
+        _shutdown_event.set()
+        log_event("BOT SHUTTING DOWN")
+        if service_manager is not None:
+            try:
+                stopped = service_manager.stop_all()
+                for failure in stopped.get("failures", []):
+                    log_event("SERVICE STOP FAILURE", address=failure.get("name"), reason=failure.get("reason"))
+                log_event(
+                    "SERVICE MANAGER STOPPED",
+                    reason="stopped=" + ",".join(stopped.get("stopped", [])),
+                )
+            except Exception as error:
+                log_event("SERVICE MANAGER SHUTDOWN ERROR", reason=repr(error))
+            try:
+                from service_manager import clear_global_service_manager
+                clear_global_service_manager()
+            except Exception as error:
+                log_event("SERVICE MANAGER CLEAR ERROR", reason=repr(error))
+
+        executor.shutdown(wait=False, cancel_futures=True)
+        discovery_executor.shutdown(wait=False, cancel_futures=True)
+
+        for signum, previous in previous_signal_handlers.items():
+            try:
+                signal.signal(signum, previous)
+            except (ValueError, OSError):
+                pass
 
 
 # ==========================================
@@ -1953,21 +2056,4 @@ def run_bot():
 # ==========================================
 
 if __name__ == "__main__":
-
-    try:
-
-        run_bot()
-
-    except KeyboardInterrupt:
-
-        log_event("BOT SHUTTING DOWN")
-
-        executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
-
-        discovery_executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
+    run_bot()
