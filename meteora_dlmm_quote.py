@@ -5,6 +5,7 @@ direction. It models market-making bin liquidity and dynamic fees, but not
 limit-order fills or Token-2022 transfer hooks; unsupported account modes fail
 closed rather than assuming extra output.
 """
+import hashlib
 import math
 import time
 
@@ -434,7 +435,16 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "loaded_bin_arrays": len(loaded_indices),
         "loaded_bin_array_indices": loaded_indices,
         "loaded_bin_array_addresses": array_addresses[:len(loaded_indices)],
+        "loaded_bin_array_sha256": [
+            hashlib.sha256(accounts[7 + offset]["data"]).hexdigest()
+            for offset in range(len(loaded_indices))
+        ],
+        "pool_state_sha256": hashlib.sha256(pool_acc["data"]).hexdigest(),
         "bitmap_extension_present": bitmap_acc is not None,
+        "bitmap_extension_sha256": (
+            hashlib.sha256(bitmap_acc["data"]).hexdigest()
+            if bitmap_acc is not None else None
+        ),
         "slippage_bps": slippage_bps,
         "volatility_accumulator_end": state["volatility_accumulator"],
         "price_impact_percent": round(impact, 6),
