@@ -215,7 +215,7 @@ Pool RPC transport failures (timeouts, provider outages and rate limits) are kep
 
 ## Multi-stage token discovery and candidate ranking
 
-Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata.
+Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata. RugCheck discovery runs its `new_tokens`, `recent`, `trending` and `verified` endpoints as separate parallel feeds with independent health records. Configure them with `TROJAN_RUGCHECK_ENABLED` and the per-feed switches `TROJAN_RUGCHECK_NEW_ENABLED`, `TROJAN_RUGCHECK_RECENT_ENABLED`, `TROJAN_RUGCHECK_TRENDING_ENABLED` and `TROJAN_RUGCHECK_VERIFIED_ENABLED` (all default to true).
 
 Before scheduling analysis, the discovery loop fills missing market-data snapshots in bounded batches and ranks candidates using liquidity, 5m/1h/6h/24h volume, buy/sell flow, source agreement, pool age, and multi-window momentum. Candidate tiers (strong/watch/weak/reject) are exposed through `/api/discovery` and the dashboard. Incomplete data remains visible as unknown and is not silently converted into a rejection. Only explicit invalid market facts (for example zero liquidity or a non-positive quoted price) are hard-rejected by this ranking stage. Scores are prioritisation signals, not buy signals, and do not unlock live trading.
 
@@ -351,7 +351,7 @@ The current adapter deliberately uses the highest total fee found across the on-
 
 ## RugCheck request resilience
 
-RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used cache, and measures cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 60 seconds, accepted range 0–3,600; set 0 to disable caching). Failed, rate-limited and invalid responses are never cached, and stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
+RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used memory cache plus a persistent SQLite report cache, and measures in-process cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 1,800 seconds, accepted range 0–3,600; set 0 to disable caching). Report lookups and all four discovery feeds share the API client's host-wide 60-requests-per-minute budget, 429 cooldown and retry handling. Failed, rate-limited and invalid responses are never cached, and expired/stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
 
 
 ## Paper position input safety
