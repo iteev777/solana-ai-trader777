@@ -98,6 +98,16 @@ class MultiSourcePoolRegistryTests(unittest.TestCase):
         self.assertEqual(rows[0]["marketSources"], ["dexscreener", "geckoterminal"])
         self.assertIn("geckoterminal", rows[0]["poolSourceData"])
 
+    def test_empty_or_cross_chain_refresh_does_not_extend_cached_pool_age(self):
+        row = {"pairAddress": "pool", "baseToken": {"address": TOKEN}}
+        with patch.object(pool_registry.time, "time", return_value=100.0):
+            pool_registry.merge_pool_candidates(TOKEN, [row], "dexscreener")
+        with patch.object(pool_registry.time, "time", return_value=200.0):
+            self.assertEqual(pool_registry.merge_pool_candidates(TOKEN, [], "dexscreener"), 0)
+            self.assertEqual(pool_registry.merge_pool_candidates(
+                TOKEN, [dict(row, chainId="ethereum")], "dexscreener"), 0)
+        self.assertEqual(pool_registry._candidate_updated_at[TOKEN], 100.0)
+
     def test_registry_returns_deep_copies(self):
         row = {
             "pairAddress": "copy-pool",
