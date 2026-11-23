@@ -13,7 +13,7 @@ from collections import OrderedDict
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
-REQUEST_TIMEOUT = 20
+REQUEST_TIMEOUT = 15
 CACHE_SECONDS = 60
 MAX_CACHE_ENTRIES = 2000
 MAX_SAFE_SCORE = 40
@@ -584,16 +584,16 @@ def get_rugcheck_report(token_address):
 
         url = API_URL + token_address + "/report"
         try:
-            response = requests.get(
+            # Share the same host-wide 60/minute limiter, 429 cooldown,
+            # retry policy and request telemetry as the discovery feeds.
+            from api_client import get_json
+            data = get_json(
                 url,
                 headers={"Accept": "application/json"},
-                timeout=REQUEST_TIMEOUT
+                timeout=REQUEST_TIMEOUT,
+                cache_ttl=0,
+                max_retries=1,
             )
-            if response.status_code == 429:
-                print("RUGCHECK: Rate limit reached")
-                return None
-            response.raise_for_status()
-            data = response.json()
             if not isinstance(data, dict):
                 print("RUGCHECK ERROR: Invalid response")
                 return None
