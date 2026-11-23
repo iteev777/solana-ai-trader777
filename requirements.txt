@@ -2,3 +2,4 @@ requests
 python-dotenv
 websocket-client
 Flask>=3.0,<4.0
+solders>=0.21,<1.0
