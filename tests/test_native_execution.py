@@ -157,6 +157,29 @@ class NativeExecutionTests(unittest.TestCase):
                     self.unsigned, approval["request_id"], confirmed=True
                 )
 
+    def test_signature_status_reports_confirmed_and_failed_states(self):
+        with patch.object(chain, "_rpc", return_value={"value": [{
+            "err": None, "confirmationStatus": "confirmed",
+            "slot": 123, "confirmations": 2
+        }]}):
+            result = native.get_native_transaction_status(self.expected_signature)
+        self.assertEqual(result["status"], "CONFIRMED")
+        self.assertTrue(result["confirmed"])
+        self.assertFalse(result["finalized"])
+
+        with patch.object(chain, "_rpc", return_value={"value": [{
+            "err": {"InstructionError": [0, "Custom"]},
+            "confirmationStatus": "confirmed", "slot": 124,
+            "confirmations": None
+        }]}):
+            failed = native.get_native_transaction_status(self.expected_signature)
+        self.assertEqual(failed["status"], "FAILED")
+        self.assertFalse(failed["confirmed"])
+
+    def test_signature_status_rejects_invalid_signature(self):
+        with self.assertRaisesRegex(ValueError, "64 bytes"):
+            native.get_native_transaction_status("1")
+
     def test_status_reports_live_execution_locked_by_default(self):
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
             status = native.get_native_execution_status()
