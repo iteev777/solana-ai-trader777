@@ -46,3 +46,26 @@ replace placeholder strings and replace non-positive numeric market metrics with
 positive observations. Existing positive values are retained rather than being
 overwritten blindly. Raw source provenance is merged so consensus scoring still
 counts independent provider families, not endpoint count.
+
+
+## Discovery source controls
+
+The discovery runner supports a global switch and provider/feed switches. Values
+`1`, `true`, `yes` and `on` enable a feed; `0`, `false`, `no` and `off` disable
+it. All source switches default to enabled. They are read when the Python process
+imports the discovery aggregator, so restart the process after changing them.
+
+| Variable | Controls |
+|---|---|
+| `TROJAN_DISCOVERY_ENABLED` | Entire discovery cycle |
+| `TROJAN_GECKOTERMINAL_ENABLED` | All GeckoTerminal discovery feeds |
+| `TROJAN_GECKOTERMINAL_NEW_POOLS_ENABLED` | GeckoTerminal new pools |
+| `TROJAN_GECKOTERMINAL_TRENDING_ENABLED` | GeckoTerminal trending pools |
+| `TROJAN_GECKOTERMINAL_RECENTLY_UPDATED_ENABLED` | GeckoTerminal recently updated tokens |
+| `TROJAN_PUMPFUN_ENABLED` | Pump.fun discovery |
+| `TROJAN_BIRDEYE_ENABLED` | Birdeye discovery |
+
+Existing provider-level and per-feed controls for DexScreener, RugCheck, Jupiter,
+CoinGecko and DeFiLlama are also supported by the aggregator. Disabling one
+provider does not disable other providers. A provider failure is recorded against
+that feed and does not discard successful results from other feeds.
