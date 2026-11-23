@@ -41,6 +41,18 @@ VALID_STRATEGIES = ("main", "sniper")
 _lock = threading.RLock()
 
 
+
+
+def _positive_finite(value):
+    """Return a finite positive float, or None for unsafe market input."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    import math
+    return number if math.isfinite(number) and number > 0 else None
+
+
 # ==========================================
 # INITIALIZATION
 # ==========================================
@@ -110,12 +122,8 @@ def open_position(
     if not token_address:
         return "Invalid token address"
 
-    try:
-        entry_price = float(entry_price)
-    except (ValueError, TypeError):
-        return "Invalid price"
-
-    if entry_price <= 0:
+    entry_price = _positive_finite(entry_price)
+    if entry_price is None:
         return "Invalid price"
 
     if strategy not in VALID_STRATEGIES:
@@ -160,10 +168,10 @@ def open_position(
             invested=position_size,
             strategy=strategy,
             metadata={
+                **(metadata if isinstance(metadata, dict) else {}),
                 "engine": "trojan_v2",
                 "strategy": strategy,
                 "adaptive_size_multiplier": adaptive_multiplier,
-                **(metadata if isinstance(metadata, dict) else {})
             }
         )
 
@@ -202,12 +210,8 @@ def close_position(
 ):
     global balance, positions
 
-    try:
-        current_price = float(current_price)
-    except (ValueError, TypeError):
-        return "Invalid price"
-
-    if current_price <= 0:
+    current_price = _positive_finite(current_price)
+    if current_price is None:
         return "Invalid price"
 
     with _lock:
@@ -277,9 +281,18 @@ def update_position(token_address, current_price):
         if not position:
             return "Position not found"
 
-        entry = float(position["entry_price"])
-        if entry <= 0:
+        entry = _positive_finite(position.get("entry_price"))
+        if entry is None:
             return "Invalid entry price"
+
+        # Parse every configured policy before mutating position state.
+        try:
+            dca_steps = get_dca_steps()
+            exit_config = exit_policy.get_exit_policy()
+            exit_steps = get_exit_steps() if PARTIAL_TAKE_PROFIT_ENABLED else []
+        except (TypeError, ValueError, OverflowError) as policy_error:
+            print("PAPER POSITION POLICY INVALID:", repr(policy_error), flush=True)
+            return "Invalid position policy configuration"
 
         change = (current_price / entry) - 1
         metadata = position.get("metadata", {})
@@ -288,10 +301,8 @@ def update_position(token_address, current_price):
 
         # Persist the best observed price so trailing protection survives
         # a process restart and does not reset on every monitor cycle.
-        peak_price = max(
-            float(metadata.get("peak_price", entry) or entry),
-            current_price
-        )
+        stored_peak = _positive_finite(metadata.get("peak_price", entry)) or entry
+        peak_price = max(entry, stored_peak, current_price)
         if peak_price > float(metadata.get("peak_price", 0) or 0):
             metadata["peak_price"] = peak_price
             database.update_position_metadata(
@@ -300,9 +311,7 @@ def update_position(token_address, current_price):
 
         # Configurable DCA tiers. Every tier is one-shot, ordered, and
         # blocked at/beyond the hard stop. The default remains disabled.
-        dca_steps = get_dca_steps()
         dca_count = int(metadata.get("dca_count", 0) or 0)
-        exit_config = exit_policy.get_exit_policy()
         if dca_count < len(dca_steps) and change > -(exit_config["stop_loss_pct"] / 100.0):
             step = dca_steps[dca_count]
             if change <= -(step["drop_pct"] / 100.0):
@@ -317,7 +326,6 @@ def update_position(token_address, current_price):
 
         # Configurable multi-step exit ladder. Each fraction applies to
         # the remaining position, so successive sells cannot over-close it.
-        exit_steps = get_exit_steps() if PARTIAL_TAKE_PROFIT_ENABLED else []
         completed = metadata.get("exit_ladder_completed", [])
         if not isinstance(completed, list):
             completed = []
