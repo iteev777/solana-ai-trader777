@@ -26,8 +26,7 @@ def _scan_feed(source, url, *, chain_filter=False):
             kwargs["params"] = {"chainId": "solana"}
         payload = get_json(url, **kwargs)
         if not isinstance(payload, list):
-            print("DEXSCREENER INVALID RESPONSE:", source, flush=True)
-            return found
+            raise ValueError(f"DexScreener {source} response must be a JSON array")
 
         seen = set()
         for item in payload:
@@ -69,6 +68,9 @@ def _scan_feed(source, url, *, chain_filter=False):
         print("DEXSCREENER", source, "TOKENS:", len(found), flush=True)
     except Exception as error:
         print("DEXSCREENER DISCOVERY SOURCE ERROR:", source, repr(error), flush=True)
+        # Each feed is its own aggregator task: propagate so its status is marked
+        # failed without cancelling the other independent DexScreener feeds.
+        raise
     return found
 
 
@@ -89,7 +91,13 @@ def scan_dexscreener():
     """Backward-compatible combined scan; production aggregation uses three tasks."""
     found = {}
     for scanner in (scan_profiles, scan_latest_boosts, scan_top_boosts):
-        for token in scanner():
+        try:
+            records = scanner()
+        except Exception:
+            # Legacy combined callers retain best-effort behavior. Production
+            # aggregation calls each scanner separately and records each failure.
+            continue
+        for token in records:
             address = token["tokenAddress"]
             if address not in found:
                 found[address] = token
