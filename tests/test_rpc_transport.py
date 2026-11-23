@@ -20,6 +20,9 @@ class FakeStdout:
 
 class RustRpcTransportTests(unittest.TestCase):
     def setUp(self):
+        self.sidecar_bin_patch = patch.object(rpc_transport, "_RUST_SIDECAR_BIN", "fake-rust-sidecar")
+        self.sidecar_bin_patch.start()
+        self.addCleanup(self.sidecar_bin_patch.stop)
         self.url = "https://rpc.example.invalid"
         self.sidecar_bin_patch = patch.object(
             rpc_transport, "_RUST_SIDECAR_BIN", "/tmp/trojan-rust-rpc-sidecar-test"
