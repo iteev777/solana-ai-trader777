@@ -282,9 +282,11 @@ def simulate_meteora_dbc_transaction(transaction_base64):
         {"encoding": "base64", "sigVerify": False,
          "replaceRecentBlockhash": True, "commitment": "confirmed"},
     ])
-    value = (result or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
         raise ValueError("Solana RPC returned a malformed simulation result")
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Solana RPC simulation response is missing the error field")
     logs = value.get("logs") or []
     if not isinstance(logs, list):
         raise ValueError("Solana RPC returned malformed simulation logs")
