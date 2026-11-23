@@ -3,8 +3,10 @@
 # ==========================================
 
 import requests
+import json
 
 from api_client import get_json
+import database
 import math
 import time
 import threading
@@ -16,7 +18,7 @@ from collections import OrderedDict
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
 REQUEST_TIMEOUT = 15
-CACHE_SECONDS = 60
+CACHE_SECONDS = 1800
 MAX_CACHE_ENTRIES = 2000
 MAX_SAFE_SCORE = 40
 
@@ -534,6 +536,87 @@ def _cache_ttl_seconds():
         return CACHE_SECONDS
 
 
+def _ensure_persistent_cache_table():
+    with database.connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS rugcheck_report_cache (
+                token_address TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                fetched_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rugcheck_report_cache_fetched
+            ON rugcheck_report_cache(fetched_at)
+        """)
+
+
+def _load_persisted_report(token_address, now):
+    """Load a fresh report from SQLite when the process-local cache is cold."""
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT report_json, analysis_json, fetched_at "
+                "FROM rugcheck_report_cache WHERE token_address = ?",
+                (token_address,),
+            ).fetchone()
+            if row is None:
+                return None
+            if now - float(row["fetched_at"]) >= _cache_ttl_seconds():
+                connection.execute(
+                    "DELETE FROM rugcheck_report_cache WHERE token_address = ?",
+                    (token_address,),
+                )
+                return None
+            report = json.loads(row["report_json"])
+            analysis = json.loads(row["analysis_json"])
+            if not isinstance(report, dict) or not isinstance(analysis, dict):
+                raise ValueError("Persisted RugCheck cache entry has invalid shape")
+            return {
+                "token_address": token_address,
+                "report": report,
+                "analysis": analysis,
+            }
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE READ ERROR:", repr(error), flush=True)
+        return None
+
+
+def _persist_report(token_address, result):
+    """Persist only successfully parsed report/analysis pairs; cache failures never block."""
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            connection.execute("""
+                INSERT INTO rugcheck_report_cache (
+                    token_address, report_json, analysis_json, fetched_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(token_address) DO UPDATE SET
+                    report_json = excluded.report_json,
+                    analysis_json = excluded.analysis_json,
+                    fetched_at = excluded.fetched_at
+            """, (
+                token_address,
+                json.dumps(result["report"], separators=(",", ":"), default=str),
+                json.dumps(result["analysis"], separators=(",", ":"), default=str),
+                time.time(),
+            ))
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE WRITE ERROR:", repr(error), flush=True)
+
+
+def _get_cached_report(token_address, now):
+    cached = _get_cached_report(token_address, time.time())
+    if cached is not None:
+        return cached
+    persisted = _load_persisted_report(token_address, now)
+    if persisted is not None:
+        _store_cached_report(token_address, persisted)
+    return persisted
+
+
 def _cached_report(token_address, now):
     with _cache_lock:
         cached = _cache.get(token_address)
@@ -580,7 +663,7 @@ def get_rugcheck_report(token_address):
         return _cached_report(token_address, time.monotonic())
 
     try:
-        cached = _cached_report(token_address, time.monotonic())
+        cached = _get_cached_report(token_address, time.time())
         if cached is not None:
             return cached
 
@@ -606,6 +689,7 @@ def get_rugcheck_report(token_address):
                 "analysis": analysis
             }
             _store_cached_report(token_address, result)
+            _persist_report(token_address, result)
 
             print("================================")
             print("TROJAN V2 RUGCHECK")
@@ -643,14 +727,23 @@ def get_rugcheck_report(token_address):
 # ==========================================
 
 def clear_rugcheck_cache(token_address=None):
-
     with _cache_lock:
-
         if token_address:
             _cache.pop(token_address, None)
-
         else:
             _cache.clear()
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            if token_address:
+                connection.execute(
+                    "DELETE FROM rugcheck_report_cache WHERE token_address = ?",
+                    (token_address,),
+                )
+            else:
+                connection.execute("DELETE FROM rugcheck_report_cache")
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE CLEAR ERROR:", repr(error), flush=True)
 
 
 # ==========================================
