@@ -124,6 +124,47 @@ def _read_account(address):
     return {"owner": value.get("owner"), "data": raw, "lamports": value.get("lamports")}
 
 
+
+def inspect_token2022_account(address):
+    """Inspect one Token-2022 token account without interpreting extension data."""
+    if not isinstance(address, str) or not address:
+        raise ValueError("Token account public key is required")
+    try:
+        decoded = chain._b58decode(address)
+    except Exception:
+        raise ValueError("Token account must be a valid Solana public key")
+    if len(decoded) != 32 or chain._b58encode(decoded) != address:
+        raise ValueError("Token account must be a valid Solana public key")
+    account = _read_account(address)
+    if account["owner"] != chain.TOKEN_2022_PROGRAM:
+        raise ValueError("Account is not owned by the Token-2022 program")
+    raw = account["data"]
+    if len(raw) == 165:
+        extensions = []
+        layout = "BASE_TOKEN_ACCOUNT_NO_EXTENSIONS"
+    else:
+        extensions = parse_tlv_extensions(raw, TOKEN_ACCOUNT_TYPE)
+        layout = "EXTENDED_TOKEN_ACCOUNT"
+    if len(raw) < 165 or raw[108] not in (1, 2):
+        raise Token2022LayoutError("Token-2022 token account base state is invalid")
+    return {
+        "status": "INSPECTED_NOT_SWAP_APPROVED",
+        "address": address,
+        "token_program": chain.TOKEN_2022_PROGRAM,
+        "account_size": len(raw),
+        "mint": chain._key(raw, 0),
+        "authority": chain._key(raw, 32),
+        "raw_balance": int.from_bytes(raw[64:72], "little"),
+        "state": "INITIALIZED" if raw[108] == 1 else "FROZEN",
+        "layout": layout,
+        "extensions": extensions,
+        "extension_count": len(extensions),
+        "swap_eligibility": "BLOCKED_UNTIL_PROTOCOL_SPECIFIC_TOKEN_2022_SUPPORT",
+        "execution_enabled": False,
+        "signing": "NOT_PERFORMED",
+        "broadcast": "NOT_PERFORMED",
+    }
+
 def inspect_token2022_mint(mint):
     if not isinstance(mint, str) or not mint:
         raise ValueError("Mint public key is required")
