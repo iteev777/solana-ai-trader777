@@ -327,3 +327,14 @@ Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_
 
 
 RugCheck's structured `analysis` and `signals` are carried with each candidate's approval or rejection result. The same report object is evaluated and propagated, avoiding a second provider request and ensuring the dashboard/API can inspect the exact risk evidence behind the gate. Missing or invalid reports remain rejected; the propagation does not weaken the gate.
+
+
+## OHLCV integrity, freshness and retention
+
+GeckoTerminal candle rows are normalized, sorted and deduplicated before indicators or storage use them. Rows with non-finite values, invalid OHLC geometry, negative volume, fractional/future timestamps are discarded. The indicator pipeline records invalid/duplicate counts, missing-minute gaps, largest gap and latest-candle age. A stale series (default maximum age 180 seconds) or a discontinuity larger than five minutes is marked not-ready across timeframes; no synthetic candles are inserted and strategy conditions fail closed when the indicator snapshot is unavailable.
+
+- `TROJAN_OHLCV_MAX_AGE_SECONDS` (default 180; bounded to 30–3600)
+- `TROJAN_OHLCV_MAX_GAP_SECONDS` (default 300; bounded to 60–3600)
+- `TROJAN_OHLCV_RETENTION_DAYS` (default 30; bounded to 1–3650)
+
+SQLite candle writes validate and deduplicate the same way, and the fetch worker prunes expired rows at most once per hour. Historical candles may still be stored even when the latest series is too stale to trade; storage does not make stale data strategy-ready.
