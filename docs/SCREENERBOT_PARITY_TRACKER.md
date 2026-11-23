@@ -18,23 +18,24 @@ status in this review.
 | `discovery/birdeye_scanner.py` | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs` (provider isolation and rate budgets) | No direct Birdeye discovery client identified at the pinned ScreenerBot ref. Trojan provides the optional V3 and trending feeds. Its quota response was unnecessarily retried against the trending endpoint before cooldown. A shared account-quota state across Birdeye scanners remains open. | `c4767f1` Honor Birdeye quota exhaustion before trying fallback. Keep compatibility fallback for non-quota errors and reject boolean volumes. | Syntax and diff checks passed. Added quota and no-second-request regression. |
 | `discovery/pumpfun_scanner.py` | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs` (provider coordination) | Trojan uses Birdeye for meme listings; no matching Birdeye feed identified in ScreenerBot. Disparate quota state caused follow-up requests to the same account after quota exhaustion. Shared cooldown cannot cancel a sibling request already in flight. | `f25280c` Share Birdeye quota cooldown across discovery endpoints. Reuse parsing and quota policy from the sibling scanner, preserving the listing-specific fallback and metadata. | Syntax and diff checks passed. Added cross-feed provider regression. |
 | `discovery/screenerbot_sources.py` | `src/tokens/discovery_sources.rs`, `src/apis/{rugcheck,coingecko,defillama}/{mod,types}.rs`, `src/chains/solana/apis/jupiter/sources.rs` | Route names and Solana filtering overlap. Reference permits JSON null for empty RugCheck stats, uses recent metadata and retains decimals. Jupiter featured boards, native price fallback and shared interactive/background budgeting remain unverified here. | `e2365e3` Preserve discovery metadata and accept empty RugCheck stats. Distinguish transport failure, retain decimals and merge feed metadata, and validate decoded mint length. | Syntax and diff checks passed. Added empty/failure and metadata regression fixtures. |
+| `sniper_scanner.py` | `src/chains/solana/pools/discovery.rs`, `src/tokens/discovery.rs` | No PumpPortal discovery subscription was found at the pinned reference. Its pool discovery validates public keys before handing descriptors to the analyzer and stops with the service; Trojan receives token launch events instead, with a bounded queue and reconnect loop. Listener shutdown and metrics remain gaps. | `a74ebe4` Validate PumpPortal candidates before reserving queue space. Reuse the REST discovery mint gate, preserve deduplication and retry on queue overflow, and omit untrusted metadata and exception text from logs. | Added mocked WebSocket callback coverage for invalid addresses, duplicates and full-queue redelivery. |
+| `discovery/__init__.py` | Python package marker; no direct Rust counterpart | The file contains only a comment. It has no functions, imports, API calls or initialization behavior. | No code change required. | Static inspection. |
 
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Seven of 60 production
+path in this branch, including review artifacts. Nine of 60 production
 Python files have completed this review. The last completed file is
-`discovery/screenerbot_sources.py`. Resume at `sniper_scanner.py`, then finish
-the discovery package before continuing to token validation.
+`discovery/__init__.py`. Resume at `candidate_quality.py` for candidate validation and ranking.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Fourteen source files are reviewed and 1,997 remain
+are listed as well. Fifteen source files are reviewed and 1,996 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 574 tests passed, including the process-level paper/dashboard and live
+All 575 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

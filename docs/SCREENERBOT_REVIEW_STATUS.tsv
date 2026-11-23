@@ -914,7 +914,7 @@ src/chains/solana/pools/decoders/pumpfun_legacy.rs	source	unreviewed	Pending rev
 src/chains/solana/pools/decoders/raydium_clmm.rs	source	unreviewed	Pending review
 src/chains/solana/pools/decoders/raydium_cpmm.rs	source	unreviewed	Pending review
 src/chains/solana/pools/decoders/raydium_legacy_amm.rs	source	unreviewed	Pending review
-src/chains/solana/pools/discovery.rs	source	unreviewed	Pending review
+src/chains/solana/pools/discovery.rs	source	reviewed	sniper_scanner.py: shared public-key admission concept, but reference periodically refreshes watched pools rather than subscribing to PumpPortal launches. Pool selection and held-mint prioritization require separate Trojan pool review.
 src/chains/solana/pools/driver.rs	source	unreviewed	Pending review
 src/chains/solana/pools/fetcher.rs	source	unreviewed	Pending review
 src/chains/solana/pools/fetcher_ops.rs	source	unreviewed	Pending review

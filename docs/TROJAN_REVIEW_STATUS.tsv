@@ -15,7 +15,7 @@ copy_trade.py	production	unreviewed
 dashboard.py	production	unreviewed
 database.py	production	unreviewed
 dex_engine.py	production	unreviewed
-discovery/__init__.py	production	unreviewed
+discovery/__init__.py	production	reviewed
 discovery/birdeye_scanner.py	production	reviewed
 discovery/dexscreener_scanner.py	production	reviewed
 discovery/gecko_scanner.py	production	reviewed
@@ -60,7 +60,7 @@ rpc_transport.py	production	unreviewed
 rugcheck.py	production	unreviewed
 scanner.py	production	reviewed
 service_health.py	production	unreviewed
-sniper_scanner.py	production	unreviewed
+sniper_scanner.py	production	reviewed
 solana_onchain.py	production	unreviewed
 strategy.py	production	unreviewed
 strategy_catalog.py	production	unreviewed
