@@ -260,6 +260,10 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertTrue(status["native_transaction_builders"]["orca_whirlpool"]["rpc_simulation_required"])
         self.assertTrue(status["native_transaction_builders"]["orca_whirlpool"]["rpc_simulation_available"])
         self.assertFalse(status["native_transaction_builders"]["orca_whirlpool"]["live_execution"])
+        self.assertTrue(status["native_transaction_builders"]["meteora_dlmm"]["available"])
+        self.assertTrue(status["native_transaction_builders"]["meteora_dlmm"]["rpc_simulation_required"])
+        self.assertTrue(status["native_transaction_builders"]["meteora_dlmm"]["rpc_simulation_available"])
+        self.assertFalse(status["native_transaction_builders"]["meteora_dlmm"]["live_execution"])
         self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
     def test_dashboard_does_not_claim_simulation_available_without_entrypoint(self):
@@ -322,6 +326,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         ])
         raydium = report["protocols"]["raydium_cpmm"]
         orca = report["protocols"]["orca_whirlpool"]
+        meteora = report["protocols"]["meteora_dlmm"]
         self.assertTrue(raydium["pool_decoder_available"])
         self.assertTrue(raydium["quote"]["available"])
         self.assertTrue(raydium["transaction_builder"]["available"])
@@ -333,6 +338,12 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertTrue(orca["simulation"]["available"])
         self.assertFalse(orca["broadcast"])
         self.assertFalse(orca["live_execution"])
+        self.assertTrue(meteora["pool_decoder_available"])
+        self.assertTrue(meteora["quote"]["available"])
+        self.assertTrue(meteora["transaction_builder"]["available"])
+        self.assertTrue(meteora["simulation"]["available"])
+        self.assertFalse(meteora["broadcast"])
+        self.assertFalse(meteora["live_execution"])
         self.assertEqual(
             report["execution_policy"],
             "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED"
@@ -368,7 +379,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
 
         report = dex_capabilities.get_dex_capabilities([])
         self.assertNotIn("unknown_dex", report["protocols"])
-        self.assertEqual(report["native_builder_count"], 3)
+        self.assertEqual(report["native_builder_count"], 4)
         self.assertEqual(report["execution_policy"],
                          "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED")
 
