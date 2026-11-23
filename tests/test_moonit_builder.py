@@ -106,6 +106,9 @@ class MoonitBuilderTests(unittest.TestCase):
             )
 
     def test_builds_native_sol_buy_with_verified_11_account_order(self):
+        decoded = chain._decode_pool("moonit_amm", self.curve_data)
+        self.assertEqual(decoded["base_mint"], self.mint)
+        self.assertEqual(self.quote["output_mint"], self.mint)
         result = self.call_builder()
         data = base64.b64decode(result["instruction_data_base64"])
         transaction = base64.b64decode(result["transaction"])
