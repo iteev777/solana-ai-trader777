@@ -8,9 +8,14 @@ wallet keys, signing, transactions, or trading are used.
 import json
 import os
 import statistics
+import sys
 import time
 
-os.environ.setdefault("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+# Running a script by path puts benchmarks/ at sys.path[0]; add repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if not os.getenv("SOLANA_RPC_URL", "").strip():
+    os.environ["SOLANA_RPC_URL"] = "https://api.mainnet-beta.solana.com"
 os.environ.setdefault("SOLANA_RPC_MIN_INTERVAL", "0.0")
 os.environ.setdefault("SOLANA_RPC_TIMEOUT", "12")
 
