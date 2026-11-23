@@ -85,6 +85,12 @@ class Token2022InspectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "account type is invalid"):
             inspector.parse_tlv_extensions(mint_data(tlv(1, bytes(108))), 99)
 
+    def test_epoch_selection_rejects_negative_epoch_as_non_negative(self):
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            inspector.select_transfer_fee_schedule(
+                {"older": {}, "newer": {"epoch": 2}}, -1
+            )
+
     def test_epoch_selection_rejects_values_outside_u64(self):
         with self.assertRaisesRegex(ValueError, "u64"):
             inspector.select_transfer_fee_schedule(
