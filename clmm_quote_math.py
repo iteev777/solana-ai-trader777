@@ -1,10 +1,19 @@
-"""Integer-only Raydium CLMM tick and exact-input quote arithmetic."""
+"""Integer-only Raydium CLMM tick and exact-input quote arithmetic.
+
+Arithmetic follows the reference venue's bounded integer model: pool state and
+amounts are width-checked, intermediate products are bounded to U256, and
+instruction-sized output/fee amounts saturate at u64 rather than leaking
+unbounded Python integers into a transaction quote.
+"""
 from dataclasses import dataclass
 
 Q64 = 1 << 64
 FEE_DENOMINATOR = 1_000_000
 MIN_TICK = -443_636
 MAX_TICK = 443_636
+U64_MAX = (1 << 64) - 1
+U128_MAX = (1 << 128) - 1
+U256_MAX = (1 << 256) - 1
 
 _TICK_FACTORS = (
     (0x2, 0xFFF97272373D4000), (0x4, 0xFFF2E50F5F657000),
@@ -25,9 +34,49 @@ class Tick:
     liquidity_net: int
 
 
+def _integer(value, name, minimum=0, maximum=U128_MAX):
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ValueError(name + " is outside its supported integer range")
+    return value
+
+
+def _mul_div_floor(a, b, denominator):
+    _integer(a, "multiplication operand")
+    _integer(b, "multiplication operand")
+    _integer(denominator, "division denominator", minimum=1)
+    product = a * b
+    if product > U256_MAX:
+        raise ValueError("CLMM multiplication exceeds the U256 intermediate range")
+    result = product // denominator
+    if result > U128_MAX:
+        raise ValueError("CLMM division result exceeds the u128 range")
+    return result
+
+
+def _mul_div_ceil(a, b, denominator):
+    _integer(a, "multiplication operand")
+    _integer(b, "multiplication operand")
+    _integer(denominator, "division denominator", minimum=1)
+    product = a * b
+    if product > U256_MAX:
+        raise ValueError("CLMM multiplication exceeds the U256 intermediate range")
+    result = (product + denominator - 1) // denominator
+    if result > U128_MAX:
+        raise ValueError("CLMM division result exceeds the u128 range")
+    return result
+
+
+def _scaled_liquidity(liquidity):
+    liquidity = _integer(liquidity, "liquidity", minimum=1)
+    scaled = liquidity * Q64
+    if scaled > U128_MAX:
+        raise ValueError("CLMM liquidity cannot be represented in the Q64.64 u128 intermediate")
+    return scaled
+
+
 def ceil_div(numerator, denominator):
-    if denominator <= 0 or numerator < 0:
-        raise ValueError("invalid ceil division operands")
+    _integer(numerator, "ceil division numerator")
+    _integer(denominator, "ceil division denominator", minimum=1)
     return (numerator + denominator - 1) // denominator
 
 
@@ -40,62 +89,111 @@ def sqrt_price_at_tick(tick):
         if absolute & bit:
             ratio = (ratio * factor) >> 64
     if tick > 0:
-        ratio = ((1 << 128) - 1) // ratio
-    if ratio <= 0 or ratio >= 1 << 128:
+        ratio = U128_MAX // ratio
+    if ratio <= 0 or ratio > U128_MAX:
         raise ValueError("invalid Q64.64 square-root price")
     return ratio
 
 
 def amount_in_to_target(zero_for_one, liquidity, sqrt_from, sqrt_to):
-    if liquidity <= 0 or sqrt_from <= 0 or sqrt_to <= 0:
-        raise ValueError("invalid concentrated-liquidity step state")
+    if not isinstance(zero_for_one, bool):
+        raise ValueError("swap direction must be boolean")
+    liquidity = _integer(liquidity, "liquidity", minimum=1)
+    sqrt_from = _integer(sqrt_from, "starting square-root price", minimum=1)
+    sqrt_to = _integer(sqrt_to, "target square-root price", minimum=1)
     if zero_for_one:
         if sqrt_from <= sqrt_to:
             return 0
-        numerator = liquidity * Q64
-        return ceil_div(ceil_div(numerator * (sqrt_from - sqrt_to), sqrt_from), sqrt_to)
+        numerator = _scaled_liquidity(liquidity)
+        step = _mul_div_ceil(numerator, sqrt_from - sqrt_to, sqrt_from)
+        return ceil_div(step, sqrt_to)
     if sqrt_to <= sqrt_from:
         return 0
-    return ceil_div(liquidity * (sqrt_to - sqrt_from), Q64)
+    return _mul_div_ceil(liquidity, sqrt_to - sqrt_from, Q64)
 
 
 def amount_out_for_move(zero_for_one, liquidity, sqrt_from, sqrt_to):
-    if liquidity <= 0:
-        raise ValueError("pool liquidity is empty")
+    if not isinstance(zero_for_one, bool):
+        raise ValueError("swap direction must be boolean")
+    liquidity = _integer(liquidity, "liquidity", minimum=1)
+    sqrt_from = _integer(sqrt_from, "starting square-root price", minimum=1)
+    sqrt_to = _integer(sqrt_to, "target square-root price", minimum=1)
     if zero_for_one:
         if sqrt_to > sqrt_from:
             raise ValueError("zero-for-one price must not increase")
-        return liquidity * (sqrt_from - sqrt_to) // Q64
-    if sqrt_to < sqrt_from:
-        raise ValueError("one-for-zero price must not decrease")
-    intermediate = (liquidity * Q64 * (sqrt_to - sqrt_from)) // sqrt_to
-    return intermediate // sqrt_from
+        output = _mul_div_floor(liquidity, sqrt_from - sqrt_to, Q64)
+    else:
+        if sqrt_to < sqrt_from:
+            raise ValueError("one-for-zero price must not decrease")
+        numerator = _scaled_liquidity(liquidity)
+        intermediate = _mul_div_floor(numerator, sqrt_to - sqrt_from, sqrt_to)
+        output = intermediate // sqrt_from
+    return min(output, U64_MAX)
 
 
 def next_sqrt_price_from_input(zero_for_one, liquidity, sqrt_price, net_input):
-    if liquidity <= 0 or sqrt_price <= 0 or net_input < 0:
-        raise ValueError("invalid partial-step state")
+    if not isinstance(zero_for_one, bool):
+        raise ValueError("swap direction must be boolean")
+    liquidity = _integer(liquidity, "liquidity", minimum=1)
+    sqrt_price = _integer(sqrt_price, "square-root price", minimum=1)
+    net_input = _integer(net_input, "net input")
     if zero_for_one:
-        numerator = liquidity * Q64
-        return ceil_div(numerator * sqrt_price, numerator + net_input * sqrt_price)
-    return sqrt_price + net_input * Q64 // liquidity
+        numerator = _scaled_liquidity(liquidity)
+        product = net_input * sqrt_price
+        if product > U128_MAX or numerator + product > U128_MAX:
+            raise ValueError("CLMM partial-step denominator exceeds the u128 range")
+        return _mul_div_ceil(numerator, sqrt_price, numerator + product)
+    delta = _mul_div_floor(net_input, Q64, liquidity)
+    next_price = sqrt_price + delta
+    if next_price > U128_MAX:
+        raise ValueError("CLMM next square-root price exceeds the u128 range")
+    return next_price
+
+
+def _normalize_ticks(initialized_ticks):
+    if not isinstance(initialized_ticks, (list, tuple)):
+        raise ValueError("initialized ticks must be a list or tuple")
+    normalized = []
+    seen = set()
+    for item in initialized_ticks:
+        if isinstance(item, Tick):
+            index, liquidity_net = item.index, item.liquidity_net
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            index, liquidity_net = item
+        else:
+            raise ValueError("initialized tick has an invalid shape")
+        if isinstance(index, bool) or not isinstance(index, int) or not MIN_TICK <= index <= MAX_TICK:
+            raise ValueError("initialized tick index is invalid")
+        if isinstance(liquidity_net, bool) or not isinstance(liquidity_net, int) or not -(1 << 127) <= liquidity_net < (1 << 127):
+            raise ValueError("initialized tick liquidity delta is outside i128")
+        if index in seen:
+            raise ValueError("initialized tick indexes must be unique")
+        seen.add(index)
+        normalized.append(Tick(index, liquidity_net))
+    return normalized
 
 
 def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks,
                       zero_for_one, amount_in, fee_rate, coverage_tick):
     """Walk initialized ticks; refuse any input that exceeds loaded array coverage."""
-    for value, name in ((sqrt_price_x64, "sqrt price"), (liquidity, "liquidity"),
-                        (amount_in, "input amount")):
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError(name + " must be a positive integer")
-    if not 0 <= fee_rate < FEE_DENOMINATOR:
+    sqrt_price_x64 = _integer(sqrt_price_x64, "square-root price", minimum=1)
+    liquidity = _integer(liquidity, "liquidity", minimum=1)
+    amount_in = _integer(amount_in, "input amount", minimum=1, maximum=U64_MAX)
+    if isinstance(fee_rate, bool) or not isinstance(fee_rate, int) or not 0 <= fee_rate < FEE_DENOMINATOR:
         raise ValueError("CLMM trade fee rate is invalid")
-    if isinstance(tick_current, bool) or not isinstance(tick_current, int):
+    if isinstance(tick_current, bool) or not isinstance(tick_current, int) or not MIN_TICK <= tick_current <= MAX_TICK:
         raise ValueError("current tick is invalid")
+    if isinstance(coverage_tick, bool) or not isinstance(coverage_tick, int) or not MIN_TICK <= coverage_tick <= MAX_TICK:
+        raise ValueError("tick-array coverage boundary is invalid")
+    if not isinstance(zero_for_one, bool):
+        raise ValueError("swap direction must be boolean")
+    if zero_for_one and coverage_tick > tick_current:
+        raise ValueError("zero-for-one coverage boundary is on the wrong side of the current tick")
+    if not zero_for_one and coverage_tick <= tick_current:
+        raise ValueError("one-for-zero coverage boundary is on the wrong side of the current tick")
 
     ordered = sorted(
-        (item if isinstance(item, Tick) else Tick(int(item[0]), int(item[1]))
-         for item in initialized_ticks),
+        _normalize_ticks(initialized_ticks),
         key=lambda item: item.index,
         reverse=zero_for_one,
     )
@@ -120,11 +218,8 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
 
         available_net = remaining * (FEE_DENOMINATOR - fee_rate) // FEE_DENOMINATOR
         needed_net = amount_in_to_target(zero_for_one, current_liquidity, current_sqrt, target_sqrt)
-        if available_net >= needed_net:
-            gross = ceil_div(needed_net * FEE_DENOMINATOR,
-                             FEE_DENOMINATOR - fee_rate) if needed_net else 0
-            if gross > remaining:
-                raise ValueError("fee rounding exceeds remaining input")
+        gross = _mul_div_ceil(needed_net, FEE_DENOMINATOR, FEE_DENOMINATOR - fee_rate) if needed_net else 0
+        if gross <= remaining:
             total_fee += gross - needed_net
             total_out += amount_out_for_move(
                 zero_for_one, current_liquidity, current_sqrt, target_sqrt
@@ -133,6 +228,8 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
             current_sqrt = target_sqrt
             if is_initialized:
                 current_liquidity += -liquidity_net if zero_for_one else liquidity_net
+                if current_liquidity > U128_MAX:
+                    raise ValueError("initialized tick increases active liquidity beyond u128")
                 crossed += 1
                 if current_liquidity <= 0:
                     raise ValueError("initialized tick removes all active liquidity")
@@ -143,6 +240,9 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
         else:
             net_input = available_net
             total_fee += remaining - net_input
+            if net_input == 0:
+                remaining = 0
+                break
             next_sqrt = next_sqrt_price_from_input(
                 zero_for_one, current_liquidity, current_sqrt, net_input
             )
@@ -162,8 +262,8 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
     if total_out <= 0:
         raise ValueError("CLMM quote rounds to zero output")
     return {
-        "out_amount": total_out,
-        "fee_amount": total_fee,
+        "out_amount": min(total_out, U64_MAX),
+        "fee_amount": min(total_fee, U64_MAX),
         "sqrt_price_after_x64": current_sqrt,
         "liquidity_after": current_liquidity,
         "tick_crossings": crossed,
