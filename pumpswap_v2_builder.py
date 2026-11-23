@@ -12,6 +12,7 @@ import time
 import solana_onchain as chain
 from raydium_cpmm_builder import (
     _compile_legacy_message,
+    _priority_fee_micro_lamports,
     _decode_user_token_account,
     _pubkey,
     _u64,
@@ -319,6 +320,8 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid_height,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
         "execution": "LOCKED",
