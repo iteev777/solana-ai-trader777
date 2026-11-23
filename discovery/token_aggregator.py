@@ -9,6 +9,7 @@ from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_dexscreener
 from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coingecko, scan_defillama
+import database
 
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
@@ -38,6 +39,92 @@ def _provider_family(source):
     return value.split("_", 1)[0] if value else "unknown"
 
 
+def _ensure_health_tables():
+    with database.connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_source_health (
+                source TEXT PRIMARY KEY,
+                provider_family TEXT NOT NULL,
+                total_runs INTEGER NOT NULL DEFAULT 0,
+                successes INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_success_at REAL,
+                last_error_at REAL,
+                last_count INTEGER NOT NULL DEFAULT 0,
+                last_ok INTEGER NOT NULL DEFAULT 0 CHECK(last_ok IN (0, 1)),
+                last_error TEXT,
+                latency_ms REAL NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_scan_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                last_scan_at REAL,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                source_count INTEGER NOT NULL DEFAULT 0,
+                independent_provider_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+
+def _persist_source_stat(stat):
+    try:
+        _ensure_health_tables()
+        with database.connect() as connection:
+            connection.execute("""
+                INSERT INTO discovery_source_health (
+                    source, provider_family, total_runs, successes, failures,
+                    consecutive_failures, last_success_at, last_error_at,
+                    last_count, last_ok, last_error, latency_ms, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source) DO UPDATE SET
+                    provider_family = excluded.provider_family,
+                    total_runs = excluded.total_runs,
+                    successes = excluded.successes,
+                    failures = excluded.failures,
+                    consecutive_failures = excluded.consecutive_failures,
+                    last_success_at = excluded.last_success_at,
+                    last_error_at = excluded.last_error_at,
+                    last_count = excluded.last_count,
+                    last_ok = excluded.last_ok,
+                    last_error = excluded.last_error,
+                    latency_ms = excluded.latency_ms,
+                    updated_at = excluded.updated_at
+            """, (
+                stat["name"], stat["provider_family"], stat["total_runs"],
+                stat["successes"], stat["failures"], stat["consecutive_failures"],
+                stat["last_success_at"], stat["last_error_at"], stat["count"],
+                1 if stat["ok"] else 0, stat["error"], stat["latency_ms"],
+                stat["completed_at"],
+            ))
+    except Exception as error:
+        print("DISCOVERY HEALTH PERSISTENCE ERROR:", repr(error), flush=True)
+
+
+def _persist_scan_state(last_scan_at, token_count):
+    try:
+        _ensure_health_tables()
+        with database.connect() as connection:
+            connection.execute("""
+                INSERT INTO discovery_scan_state (
+                    id, last_scan_at, token_count, source_count,
+                    independent_provider_count
+                ) VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    last_scan_at = excluded.last_scan_at,
+                    token_count = excluded.token_count,
+                    source_count = excluded.source_count,
+                    independent_provider_count = excluded.independent_provider_count
+            """, (
+                last_scan_at, token_count, len(SCANNERS),
+                len(set(_provider_family(name) for name, _ in SCANNERS)),
+            ))
+    except Exception as error:
+        print("DISCOVERY SCAN STATE PERSISTENCE ERROR:", repr(error), flush=True)
+
+
 def _source_result(name, ok, count, started, error=None):
     completed = time.time()
     elapsed_ms = round(max(0.0, time.perf_counter() - started) * 1000, 2)
@@ -54,7 +141,7 @@ def _source_result(name, ok, count, started, error=None):
         history["failures"] += 1
         history["consecutive_failures"] += 1
         history["last_error_at"] = completed
-    return {
+    stat = {
         "name": name,
         "provider_family": _provider_family(name),
         "count": count,
@@ -64,6 +151,8 @@ def _source_result(name, ok, count, started, error=None):
         "completed_at": completed,
         **history,
     }
+    _persist_source_stat(stat)
+    return stat
 
 
 def _missing_value(value):
@@ -128,14 +217,32 @@ def normalize_token(token):
 
 
 def get_discovery_status():
+    sources = [dict(value) for value in _last_source_stats.values()]
+    last_scan_at = _last_scan_at
+    if not sources or last_scan_at is None:
+        try:
+            _ensure_health_tables()
+            with database.connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM discovery_source_health ORDER BY source"
+                ).fetchall()
+                state = connection.execute(
+                    "SELECT last_scan_at FROM discovery_scan_state WHERE id = 1"
+                ).fetchone()
+            if not sources:
+                sources = [dict(row) for row in rows]
+            if last_scan_at is None and state is not None:
+                last_scan_at = state["last_scan_at"]
+        except Exception as error:
+            print("DISCOVERY HEALTH READ ERROR:", repr(error), flush=True)
     return {
         "source_count": len(SCANNERS),
         "independent_provider_count": len(set(_provider_family(name) for name, _ in SCANNERS)),
-        "sources": [dict(value) for value in _last_source_stats.values()],
-        "last_scan_at": _last_scan_at,
-        "last_scan_age_seconds": max(0, round(time.time() - _last_scan_at, 1)) if _last_scan_at else None,
+        "sources": sources,
+        "last_scan_at": last_scan_at,
+        "last_scan_age_seconds": max(0, round(time.time() - last_scan_at, 1)) if last_scan_at else None,
         "max_results": MAX_RESULTS,
-        "health_model": "per-feed-success-failure-latency-in-memory",
+        "health_model": "persistent-sqlite-per-feed-success-failure-latency",
     }
 
 
@@ -206,6 +313,7 @@ def collect_tokens():
             ))
         _last_source_stats = source_stats
         _last_scan_at = current_time
+        _persist_scan_state(current_time, len(results))
         print("TROJAN V2 TOKEN AGGREGATOR | SOURCES:", len(SCANNERS), "| UNIQUE:", len(results), flush=True)
         for name, _scanner in SCANNERS:
             stat = source_stats[name]
