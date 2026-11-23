@@ -119,6 +119,27 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertFalse(result["safe"])
 
+    def test_reference_raw_risk_score_ceiling_is_applied(self):
+        result = analyze_rugcheck_report(safe_report(score=10_001, score_normalised=5))
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["raw_score"], 10_001)
+        self.assertIn("RugCheck raw risk score too high", result["reasons"])
+
+    def test_raw_risk_score_at_reference_ceiling_is_not_rejected_by_strict_comparison(self):
+        result = analyze_rugcheck_report(safe_report(score=10_000, score_normalised=5))
+        self.assertEqual(result["status"], "PASS")
+
+    def test_raw_score_can_supply_risk_data_when_normalized_score_is_absent(self):
+        result = analyze_rugcheck_report(safe_report(score=5, score_normalised=None))
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["score"], None)
+        self.assertEqual(result["raw_score"], 5)
+
+    def test_fractional_or_negative_raw_score_fails_unknown(self):
+        for score in (-1, 1.5):
+            result = analyze_rugcheck_report(safe_report(score=score, score_normalised=5))
+            self.assertEqual(result["status"], "UNKNOWN")
+
     def test_negative_or_overflowing_normalized_score_fails_unknown(self):
         for score in (-1, 101):
             result = analyze_rugcheck_report(safe_report(score_normalised=score))
