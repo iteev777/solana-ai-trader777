@@ -168,5 +168,11 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
                 quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint="wrong")
 
 
+    def test_router_status_lists_meteora_damm_v2_adapter(self):
+        import route_comparison
+        status = route_comparison.get_router_status()
+        self.assertIn("Meteora DAMM v2", status["direct_pool"]["quote_adapters"])
+
+
 if __name__ == "__main__":
     unittest.main()
