@@ -1,8 +1,10 @@
 """Read-only Raydium CLMM exact-input quote adapter.
 
 The adapter reads the pool, config, vaults, mints and initialized tick arrays
-from one confirmed RPC context. It refuses unmodelled fee modes, Token-2022,
-bitmap-extension ranges and any trade that exceeds loaded tick-array coverage.
+from one confirmed RPC context. It supports the audited Token-2022 transfer-fee
+extension subset with conservative input/output fee treatment. Unmodelled fee
+modes, unsupported extensions and trades beyond loaded tick-array coverage
+remain fail-closed.
 """
 import math
 import time
