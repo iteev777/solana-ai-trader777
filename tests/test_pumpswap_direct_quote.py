@@ -227,5 +227,67 @@ class PumpSwapDirectQuoteTests(unittest.TestCase):
                 chain.quote_pumpswap_pool(self.pool, self.quote_mint, 1000, max_snapshot_age=2.0)
 
 
+
+    def test_buy_leaves_the_program_required_one_raw_unit_rounding_buffer(self):
+        result = self.quote()
+        self.assertEqual(result["unspent_input_amount"], 1)
+        self.assertEqual(result["total_fee_amount"], 124)
+
+    def test_third_party_pool_does_not_charge_creator_fee(self):
+        raw = bytearray(self.pool_data)
+        raw[211:243] = bytes(32)
+        accounts = list(self.accounts)
+        accounts[0] = dict(accounts[0], data=bytes(raw))
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": bytes(raw)
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
+            result = chain.quote_pumpswap_pool(self.pool, self.quote_mint, 10_000)
+        self.assertEqual(result["fee_rates_bps"], [2, 93])
+        self.assertEqual(result["creator_fee_amount"], 0)
+        self.assertEqual(result["total_fee_bps"], 95)
+
+    def test_global_config_flat_fee_can_be_more_conservative_than_fee_program_table(self):
+        accounts = list(self.accounts)
+        global_data = bytearray(self.global_data)
+        global_data[40:48] = (200).to_bytes(8, "little")
+        global_data[48:56] = (100).to_bytes(8, "little")
+        global_data[313:321] = (50).to_bytes(8, "little")
+        accounts[1] = dict(accounts[1], data=bytes(global_data))
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": self.pool_data
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
+            result = chain.quote_pumpswap_pool(self.pool, self.quote_mint, 10_000)
+        self.assertEqual(result["fee_rates_bps"], [200, 100, 50])
+        self.assertEqual(result["total_fee_bps"], 350)
+
+    def test_sell_payout_is_capped_by_real_quote_vault_not_virtual_reserve(self):
+        raw = bytearray(self.pool_data)
+        raw[245:261] = (5_000_000).to_bytes(16, "little", signed=True)
+        accounts = list(self.accounts)
+        accounts[0] = dict(accounts[0], data=bytes(raw))
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": bytes(raw)
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
+            result = chain.quote_pumpswap_pool(self.pool, self.base_mint, 1_000_000)
+        self.assertEqual(result["effective_quote_reserves"], 7_000_000)
+        self.assertEqual(result["output_amount_gross"], 2_000_000)
+        self.assertLess(result["out_amount"], 2_000_000)
+
+    def test_mayhem_pool_is_refused(self):
+        raw = bytearray(self.pool_data)
+        raw[243] = 1
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": bytes(raw)
+        }):
+            with self.assertRaisesRegex(ValueError, "mayhem-mode"):
+                chain.quote_pumpswap_pool(self.pool, self.quote_mint, 1000)
+
+    def test_truncated_pool_layout_is_refused(self):
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["pumpswap"], "data": self.pool_data[:244]
+        }):
+            with self.assertRaisesRegex(ValueError, "truncated"):
+                chain.quote_pumpswap_pool(self.pool, self.quote_mint, 1000)
+
 if __name__ == "__main__":
     unittest.main()
