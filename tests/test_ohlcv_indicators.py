@@ -52,6 +52,7 @@ class OhlcvIndicatorFreshnessTests(unittest.TestCase):
         get_history.assert_called_once_with(
             "Pool111", "1m", limit=indicators.MAX_HISTORY_CANDLES
         )
+        self.assertIn("timeframes", result, msg="OHLCV fetch failed: " + repr(result))
         self.assertTrue(result["timeframes"]["1d"]["ready"])
         self.assertTrue(result["timeframes"]["12h"]["ready"])
 
