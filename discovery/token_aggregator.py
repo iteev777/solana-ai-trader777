@@ -1,6 +1,7 @@
 """Concurrent multi-source Solana token discovery and source health telemetry."""
 import os
 import time
+import json
 import math
 import re
 import threading
@@ -173,6 +174,86 @@ def _persist_source_stat(stat):
     except Exception as error:
         print("DISCOVERY HEALTH PERSISTENCE ERROR:", repr(error), flush=True)
 
+
+def _persist_discovered_candidates(tokens):
+    """Persist the deduplicated discovery output independently of the live queue."""
+    if not tokens:
+        return 0
+    now = time.time()
+    try:
+        with database.connect() as connection:
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS discovery_candidates (
+                    token_address TEXT PRIMARY KEY,
+                    chain_id TEXT NOT NULL,
+                    name TEXT,
+                    symbol TEXT,
+                    decimals INTEGER,
+                    discovery_sources TEXT NOT NULL,
+                    discovery_timestamp REAL NOT NULL,
+                    first_seen_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    discovery_count INTEGER NOT NULL DEFAULT 1,
+                    payload_json TEXT NOT NULL
+                )
+            """)
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_discovery_candidates_last_seen ON discovery_candidates(last_seen_at)")
+            for token in tokens:
+                mint = token["tokenAddress"]
+                row = connection.execute(
+                    "SELECT discovery_sources, first_seen_at, discovery_count, payload_json FROM discovery_candidates WHERE token_address = ?",
+                    (mint,),
+                ).fetchone()
+                sources = list(token.get("discovery_sources", []))
+                first_seen = now
+                count = 1
+                payload = dict(token)
+                if row is not None:
+                    try:
+                        old_sources = json.loads(row["discovery_sources"] or "[]")
+                    except (TypeError, ValueError):
+                        old_sources = []
+                    for source in old_sources if isinstance(old_sources, list) else []:
+                        if isinstance(source, str) and source not in sources:
+                            sources.append(source)
+                    first_seen = float(row["first_seen_at"] or now)
+                    count = int(row["discovery_count"] or 0) + 1
+                    try:
+                        old_payload = json.loads(row["payload_json"] or "{}")
+                    except (TypeError, ValueError):
+                        old_payload = {}
+                    if isinstance(old_payload, dict):
+                        for key, value in old_payload.items():
+                            if key not in payload or _missing_value(payload.get(key)):
+                                payload[key] = value
+                payload["discovery_sources"] = sources
+                connection.execute("""
+                    INSERT INTO discovery_candidates (
+                        token_address, chain_id, name, symbol, decimals,
+                        discovery_sources, discovery_timestamp, first_seen_at,
+                        last_seen_at, discovery_count, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(token_address) DO UPDATE SET
+                        chain_id = excluded.chain_id,
+                        name = COALESCE(NULLIF(excluded.name, 'Unknown'), discovery_candidates.name),
+                        symbol = COALESCE(NULLIF(excluded.symbol, 'Unknown'), discovery_candidates.symbol),
+                        decimals = COALESCE(excluded.decimals, discovery_candidates.decimals),
+                        discovery_sources = excluded.discovery_sources,
+                        discovery_timestamp = excluded.discovery_timestamp,
+                        last_seen_at = excluded.last_seen_at,
+                        discovery_count = excluded.discovery_count,
+                        payload_json = excluded.payload_json
+                """, (
+                    mint, token.get("chainId", "solana"), token.get("name"),
+                    token.get("symbol"), token.get("decimals"),
+                    json.dumps(sources, separators=(",", ":")),
+                    float(token.get("discovery_timestamp") or now), first_seen,
+                    now, count, json.dumps(payload, separators=(",", ":"), default=str),
+                ))
+        return len(tokens)
+    except Exception as error:
+        print("DISCOVERY CANDIDATE PERSISTENCE ERROR:", repr(error), flush=True)
+        return 0
 
 def _persist_scan_state(last_scan_at, token_count):
     try:
@@ -407,6 +488,8 @@ def collect_tokens():
             token["discovery_timestamp"],
         ), reverse=True)
         results = results[:MAX_RESULTS]
+        persisted_candidates = _persist_discovered_candidates(results)
+        print("DISCOVERY CANDIDATES PERSISTED:", persisted_candidates, flush=True)
         for name, _scanner in SCANNERS:
             source_stats.setdefault(name, _source_result(
                 name, False, 0, time.perf_counter(), "SOURCE_NOT_EXECUTED"
