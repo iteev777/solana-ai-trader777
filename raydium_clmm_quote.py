@@ -233,6 +233,8 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "minimum_out_amount": minimum_out,
         "fee_mint": input_mint,
         "fee_amount": quote["fee_amount"],
+        "trade_fee_amount": quote["fee_amount"],
+        "total_fee_amount": quote["fee_amount"],
         "fee_rate": fee_rate,
         "price_impact_percent": round(impact, 6),
         "tick_crossings": quote["tick_crossings"],
