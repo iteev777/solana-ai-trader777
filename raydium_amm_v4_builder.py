@@ -10,7 +10,7 @@ import struct
 import time
 
 import solana_onchain as chain
-from raydium_cpmm_builder import _compile_legacy_message, _decode_user_token_account
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports, _decode_user_token_account
 
 PROGRAM_ID = chain.PROGRAMS["raydium_amm_v4"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
@@ -186,6 +186,8 @@ def build_raydium_amm_v4_swap(quote, wallet, user_input_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid,
         "authority_bump": bump,
         "compute_units": COMPUTE_UNITS,
