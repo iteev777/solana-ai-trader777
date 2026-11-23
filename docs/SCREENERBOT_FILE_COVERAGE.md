@@ -905,7 +905,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/connectivity/raptor.rs` | PENDING |  |
 | `src/chains/solana/constants.rs` | PENDING |  |
 | `src/chains/solana/error.rs` | PENDING |  |
-| `src/chains/solana/filtering.rs` | PENDING |  |
+| `src/chains/solana/filtering.rs` | MAPPED | `filter_pipeline.py`, `token_security.py`, `blacklist.py` | Mint/freeze authority and concentration signals partly map; known authority cache, full creator/update-authority integration and mandatory decimals resolver remain gaps. |
 | `src/chains/solana/layout.rs` | PENDING |  |
 | `src/chains/solana/mod.rs` | PENDING |  |
 | `src/chains/solana/pools/analyzer.rs` | PENDING |  |
@@ -1155,22 +1155,22 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/features/mod.rs` | PENDING |  |
 | `src/features/types.rs` | PENDING |  |
 | `src/filtering/background.rs` | PENDING |  |
-| `src/filtering/engine.rs` | PENDING |  |
+| `src/filtering/engine.rs` | MAPPED | `filter_pipeline.py`, `main.py`, `database.py` | Trojan has ordered local filters with first non-PASS result; now short-circuits. Reference also owns filtering snapshots, persisted outcomes, per-token state and source-stage orchestration; store parity remains pending. |
 | `src/filtering/engine_tests.rs` | PENDING |  |
 | `src/filtering/error.rs` | PENDING |  |
 | `src/filtering/mod.rs` | PENDING |  |
 | `src/filtering/sources/bounds.rs` | PENDING |  |
 | `src/filtering/sources/dexscreener.rs` | PENDING |  |
 | `src/filtering/sources/geckoterminal.rs` | PENDING |  |
-| `src/filtering/sources/llm_analysis.rs` | PENDING |  |
-| `src/filtering/sources/market.rs` | PENDING |  |
-| `src/filtering/sources/meta.rs` | PENDING |  |
+| `src/filtering/sources/llm_analysis.rs` | IMPLEMENT | No equivalent verified. `ai_analyzer.py` is deterministic heuristic scoring, not an LLM provider/filter stage. | Trojan lacks the reference optional LLM filter stage with timeout, confidence threshold, provider fallback and structured rejection. Implement an opt-in disabled-by-default adapter after core filtering audit; do not mislabel heuristic AI score as LLM. |
+| `src/filtering/sources/market.rs` | MAPPED | `filter_pipeline.py`, `market_data.py`, `pool_analysis.py` | Shared market sanity and liquidity/valuation checks map. Provider-specific DexScreener/GeckoTerminal defaults and full market-stage rejection parity remain open. |
+| `src/filtering/sources/meta.rs` | MAPPED | `filter_pipeline.py`, `token_security.py`, `main.py` | Symbol/name/metadata checks map; missing mandatory cached decimals resolution and complete metadata cooldown integration remain gaps. |
 | `src/filtering/sources/mod.rs` | PENDING |  |
 | `src/filtering/sources/rejection.rs` | PENDING |  |
 | `src/filtering/sources/rejection/tests.rs` | PENDING |  |
-| `src/filtering/sources/rugcheck.rs` | PENDING |  |
-| `src/filtering/sources/symbols.rs` | PENDING |  |
-| `src/filtering/stage.rs` | PENDING |  |
+| `src/filtering/sources/rugcheck.rs` | MAPPED | `rugcheck.py`, `main.py`, `blacklist.py` | RugCheck is mandatory in Trojan pre-strategy security after local filter pipeline rather than a first-class filter stage; source report checks and blacklist matching are split across modules. |
+| `src/filtering/sources/symbols.rs` | MAPPED | `filter_pipeline.py` | Empty/numeric symbol handling maps; Trojan uses optional single-character policy and provider fallback. |
+| `src/filtering/stage.rs` | MAPPED | `filter_pipeline.py` | Trojan's ten-stage local pipeline maps broad responsibilities but currently keeps WAIT as a distinct state and has no per-chain stage applicability model; first-failure execution now lazy. |
 | `src/filtering/store.rs` | PENDING |  |
 | `src/filtering/store_helpers.rs` | PENDING |  |
 | `src/filtering/store_helpers_tests.rs` | PENDING |  |
