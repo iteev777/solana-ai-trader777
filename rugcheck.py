@@ -224,7 +224,7 @@ def analyze_rugcheck_report(data):
     # Optional minimum unique-holder gate. A configured floor cannot pass on
     # missing, zero-placeholder, negative, or fractional provider data.
     minimum_holders = int(_risk_threshold(
-        "TROJAN_RUGCHECK_MIN_HOLDERS", 0.0, 0.0, 100000000.0
+        "TROJAN_RUGCHECK_MIN_HOLDERS", 150.0, 0.0, 100000000.0
     ))
     total_holders_raw = get_number(data.get("totalHolders"))
     total_holders_valid = (
@@ -275,10 +275,10 @@ def analyze_rugcheck_report(data):
     top_holder_pct = max(holder_percentages) if holder_percentages else None
     top10_pct = min(100.0, sum(holder_percentages[:10])) if holder_percentages else None
     if top_holder_pct is not None:
-        if top_holder_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT", 50.0):
+        if top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT", 30.0):
             high_risks += 1
             reasons.append("Extreme largest-holder concentration")
-        elif top_holder_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 30.0):
+        elif top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 30.0):
             medium_risks += 1
             reasons.append("Elevated largest-holder concentration")
     if top10_pct is not None:
@@ -300,17 +300,17 @@ def analyze_rugcheck_report(data):
         insider_total_pct = sum(item["pct"] for item in insiders_top10)
 
     if top_three_pct is not None:
-        maximum_top_three = _risk_threshold("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 85.0)
+        maximum_top_three = _risk_threshold("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 50.0)
         if top_three_pct > maximum_top_three:
             high_risks += 1
             reasons.append("Top three holder concentration exceeds configured maximum")
 
     if top10_insider_count is not None:
         maximum_insiders = int(_risk_threshold(
-            "TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 10.0, 0.0, 10.0
+            "TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 2.0, 0.0, 10.0
         ))
         maximum_insider_pct = _risk_threshold(
-            "TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 100.0
+            "TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 20.0
         )
         if top10_insider_count > maximum_insiders:
             high_risks += 1
@@ -325,7 +325,7 @@ def analyze_rugcheck_report(data):
     if insiders is not None and total_holders is not None and total_holders > 0:
         graph_insider_share_pct = min(100.0, max(0.0, insiders / total_holders * 100.0))
         maximum_graph_share = _risk_threshold(
-            "TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 100.0
+            "TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 5.0
         )
         if graph_insider_share_pct > maximum_graph_share:
             high_risks += 1
@@ -342,18 +342,20 @@ def analyze_rugcheck_report(data):
     is_pump_token = "pump" in token_type
     legacy_pump_lock = _risk_threshold("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
     pump_lock_required = _risk_threshold(
-        "TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT", legacy_pump_lock
+        "TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT", legacy_pump_lock if legacy_pump_lock > 0 else 50.0
     )
     regular_lock_required = _risk_threshold(
-        "TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT", 0.0
+        "TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT", 50.0
     )
     minimum_lp_lock = pump_lock_required if is_pump_token else regular_lock_required
     if minimum_lp_lock > 0:
         token_label = "Pump" if is_pump_token else "Regular"
-        if lp_lock_pct is None:
+        if lp_lock_pct is None and is_pump_token:
+            # ScreenerBot requires explicit LP-lock evidence for Pump.fun, but
+            # treats a missing regular-token lock field as not applicable.
             unknown_risks += 1
-            reasons.append(token_label + " token LP lock data required but unavailable")
-        elif lp_lock_pct < minimum_lp_lock:
+            reasons.append("Pump token LP lock data required but unavailable")
+        elif lp_lock_pct is not None and lp_lock_pct < minimum_lp_lock:
             high_risks += 1
             reasons.append(token_label + " token LP lock is below configured minimum")
 
@@ -362,7 +364,7 @@ def analyze_rugcheck_report(data):
     if creator_pct is None:
         creator_pct = _safe_ratio(creator_balance, token_supply)
     if creator_pct is not None:
-        if creator_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_CREATOR_PCT", 20.0):
+        if creator_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_CREATOR_PCT", 10.0):
             high_risks += 1
             reasons.append("Creator holds a critical share of supply")
         elif creator_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_CREATOR_PCT", 10.0):
@@ -414,7 +416,7 @@ def analyze_rugcheck_report(data):
             if block_transfer_fee_tokens:
                 high_risks += 1
                 reasons.append("Token-2022 transfer-fee tokens are blocked by configuration")
-            elif transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 10.0):
+            elif transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 5.0):
                 high_risks += 1
                 reasons.append("Transfer fee exceeds the configured critical threshold")
             else:
