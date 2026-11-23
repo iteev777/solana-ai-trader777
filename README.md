@@ -349,3 +349,10 @@ Paper entry and exit paths reject non-finite or non-positive prices before reach
 ## Advanced paper exit protection
 
 Trailing protection can use peak-profit tiers through `TROJAN_TRAILING_BANDS_JSON`, for example `[{"activation_pct":10,"distance_pct":5},{"activation_pct":20,"distance_pct":3}]`. Thresholds must increase and trailing distances may only stay equal or tighten as peak profit rises. The selected tier is based on the persisted peak since entry; trailing-profit exits only fire while the current mark remains above entry. An optional time-loss rule uses `TROJAN_TIME_LOSS_EXIT_SECONDS` (0 disables it) and `TROJAN_TIME_LOSS_THRESHOLD_PCT` (default -10%). Existing fixed stop, take-profit, break-even, stagnation and max-hold rules remain available.
+
+## Pump.fun legacy bonding-curve direct quote
+
+The direct quote router also supports legacy SOL-paired Pump.fun bonding curves. It reads the curve, Pump Global configuration, Pump Fees FeeConfig and token mint at one confirmed RPC slot. It selects the on-chain market-cap fee tier using the curve's virtual reserves and token supply, applies protocol/creator fee rounding, prices buys and sells against virtual reserves, and checks real token/SOL reserves before returning a quote.
+
+This adapter intentionally refuses completed curves, trades that would cross into synthetic migration, Token-2022 mints, mayhem/cashback/holder-reward modes, custom quote mints and custom creator-fee curves. Those require separate settlement or extension logic. It is read-only and never creates, signs or broadcasts a swap.
+
