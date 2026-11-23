@@ -6,6 +6,7 @@ the official account order and empty RemainingAccountsInfo, then requires an
 unsigned RPC simulation. It never signs or broadcasts.
 """
 import base64
+import hashlib
 import struct
 
 import solana_onchain as chain
@@ -201,23 +202,25 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
     if pool_acc.get("owner") != DLMM_PROGRAM_ID:
         raise ValueError("DLMM pool owner changed during transaction snapshot")
     state = dlmm_quote._decode_pair(pool_acc.get("data"), chain)
-    for field in (
-        "base_factor", "filter_period", "decay_period", "reduction_factor",
-        "variable_fee_control", "max_volatility_accumulator", "min_bin_id",
-        "max_bin_id", "protocol_share", "base_fee_power_factor", "function_type",
-        "collect_fee_mode", "active_id", "bin_step", "status", "mint_x",
-        "mint_y", "reserve_x", "reserve_y", "oracle",
-    ):
-        if state[field] != first[field]:
-            raise ValueError("Meteora DLMM LbPair changed during transaction preparation")
+    if hashlib.sha256(pool_acc["data"]).hexdigest() != fresh.get("pool_state_sha256"):
+        raise ValueError("Meteora DLMM pool state changed after the fresh quote")
     if slot < fresh.get("slot", 0) or slot - fresh.get("slot", 0) > max_quote_slot_lag:
         raise ValueError("Fresh DLMM quote is stale relative to transaction snapshot")
     if any(a.get("owner") != chain.TOKEN_PROGRAM for a in (mint_x, mint_y, reserve_x, reserve_y)):
         raise ValueError("Native DLMM builder supports legacy SPL Token mints and reserves only")
+    for mint_account, label in ((mint_x, "Token X mint"), (mint_y, "Token Y mint")):
+        mint_data = mint_account.get("data", b"")
+        if len(mint_data) != 82 or mint_data[45] != 1:
+            raise ValueError(label + " has an invalid or uninitialized legacy mint layout")
     if chain._key(reserve_x.get("data", b""), 32) != pool or chain._key(reserve_y.get("data", b""), 32) != pool:
         raise ValueError("DLMM reserve authority does not match the LbPair")
     chain._token_amount(reserve_x, state["mint_x"])
     chain._token_amount(reserve_y, state["mint_y"])
+    expected_oracle = chain._find_program_address(
+        [b"oracle", chain._b58decode(pool)], DLMM_PROGRAM_ID
+    )[0]
+    if state["oracle"] != expected_oracle:
+        raise ValueError("DLMM oracle address is not the canonical pool PDA")
     if oracle_acc.get("owner") != DLMM_PROGRAM_ID:
         raise ValueError("DLMM oracle account owner is invalid")
     oracle_raw = oracle_acc.get("data", b"")
@@ -228,6 +231,8 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
             raise ValueError("DLMM bitmap extension is missing or has invalid owner")
         if len(bitmap_acc.get("data", b"")) < 40 or chain._key(bitmap_acc["data"], 8) != pool:
             raise ValueError("DLMM bitmap extension does not belong to this LbPair")
+        if hashlib.sha256(bitmap_acc["data"]).hexdigest() != fresh.get("bitmap_extension_sha256"):
+            raise ValueError("DLMM bitmap extension changed after the fresh quote")
     elif bitmap_acc is not None:
         raise ValueError("DLMM bitmap extension appeared after the quote snapshot")
 
@@ -236,9 +241,16 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
     input_balance = balance_x if input_is_x else balance_y
     if input_balance < amount:
         raise ValueError("Wallet input token account has insufficient balance")
-    for address, index, account in zip(addresses, indices, accounts[9:]):
+    expected_array_hashes = fresh.get("loaded_bin_array_sha256")
+    if not isinstance(expected_array_hashes, list) or len(expected_array_hashes) != len(addresses):
+        raise ValueError("Fresh DLMM quote is missing bin-array fingerprints")
+    for address, index, account, expected_hash in zip(
+        addresses, indices, accounts[9:], expected_array_hashes
+    ):
         if account is None:
             raise ValueError("A quoted DLMM bin array disappeared before transaction preparation")
+        if hashlib.sha256(account["data"]).hexdigest() != expected_hash:
+            raise ValueError("DLMM bin array changed after the fresh quote")
         decoded = dlmm_quote._decode_bin_array(
             account, pool, index, state, chain
         )
