@@ -192,7 +192,11 @@ def evaluate_trade(
         trade_size,
         strategy=strategy,
         main_positions=main_positions,
-        sniper_positions=sniper_positions
+        sniper_positions=sniper_positions,
+        token_address=(
+            token.get("address") or token.get("mint") or token.get("mint_address")
+        ),
+        mode="paper",
     )
 
     if not allowed:
