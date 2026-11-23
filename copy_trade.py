@@ -207,7 +207,8 @@ def _process_wallet_signature(wallet, signature):
             "economic_sol_delta": event.get("economic_sol_delta"),
             "quote_delta": event.get("quote_delta"),
             "invoked_programs": event.get("invoked_programs", [])
-        })
+        }),
+        asset_deltas=event.get("asset_deltas", []),
     )
     if inserted:
         _status["events_seen"] += 1
