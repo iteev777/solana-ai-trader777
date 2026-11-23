@@ -21,6 +21,14 @@ MAX_SNAPSHOT_AGE_SECONDS = 5.0
 CLOCK_SYSVAR = "SysvarC1ock11111111111111111111111111111111"
 
 
+def _u32(raw, offset):
+    return int.from_bytes(raw[offset:offset + 4], "little", signed=False)
+
+
+def _i64(raw, offset):
+    return int.from_bytes(raw[offset:offset + 8], "little", signed=True)
+
+
 def _ceil_div(n, d):
     if n < 0 or d <= 0:
         raise ValueError("invalid DLMM ceil division operands")
@@ -36,18 +44,18 @@ def _decode_pair(raw, chain):
         "filter_period": chain._u16(raw, 10),
         "decay_period": chain._u16(raw, 12),
         "reduction_factor": chain._u16(raw, 14),
-        "variable_fee_control": chain._u32(raw, 16),
-        "max_volatility_accumulator": chain._u32(raw, 20),
+        "variable_fee_control": _u32(raw, 16),
+        "max_volatility_accumulator": _u32(raw, 20),
         "min_bin_id": chain._i32(raw, 24),
         "max_bin_id": chain._i32(raw, 28),
         "protocol_share": chain._u16(raw, 32),
         "base_fee_power_factor": raw[34],
         "function_type": raw[35],
         "collect_fee_mode": raw[36],
-        "volatility_accumulator": chain._u32(raw, 40),
-        "volatility_reference": chain._u32(raw, 44),
+        "volatility_accumulator": _u32(raw, 40),
+        "volatility_reference": _u32(raw, 44),
         "index_reference": chain._i32(raw, 48),
-        "last_update_timestamp": chain._i64(raw, 56),
+        "last_update_timestamp": _i64(raw, 56),
         "active_id": chain._i32(raw, 76),
         "bin_step": chain._u16(raw, 80),
         "status": raw[82],
@@ -367,7 +375,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     clock_data = clock_acc.get("data", b"")
     if len(clock_data) < 40:
         raise ValueError("Meteora DLMM Clock sysvar is truncated")
-    now = chain._i64(clock_data, 32)
+    now = _i64(clock_data, 32)
     _update_references(state, now)
 
     bins = []
