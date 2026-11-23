@@ -96,7 +96,7 @@ class TokenSecurityTests(unittest.TestCase):
             {"value": {"amount": "100000000", "decimals": 6}},
             {"value": [
                 {"address": "11111111111111111111111111111111", "amount": "30000000"},
-                {"address": "11111111111111111111111111111112", "amount": "20000000"},
+                {"address": "11111111111111111111111111111111", "amount": "20000000"},
             ]},
             {"value": [{"data": {"parsed": {"info": {"owner": "owner-a"}}}}]},
         ]
