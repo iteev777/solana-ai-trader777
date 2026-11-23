@@ -4,6 +4,7 @@ All evaluations are deterministic and read-only. Missing inputs fail closed with
 an explicit reason; no candle, position, or market values are synthesized.
 """
 import math
+import os
 import time
 from datetime import datetime, timezone
 
@@ -120,10 +121,59 @@ def validate_condition(node):
     return True
 
 
+def _indicator_freshness(name, context, indicators):
+    """Require fresh, explicitly ready OHLCV-derived indicators for technical rules."""
+    direct_metrics = {
+        "DrawdownFromPeak": ("drawdown_from_peak_pct", "pullback_from_high_pct"),
+        "PullbackFromHigh": ("pullback_from_high_pct", "drawdown_from_peak_pct"),
+    }
+    if name in direct_metrics and any(
+        _metric(context, field) is not None for field in direct_metrics[name]
+    ):
+        return True, None
+
+    indicator_conditions = {
+        "BollingerBands", "CandleSize", "ConsecutiveCandles", "MaCross",
+        "PriceBreakout", "PriceToMa", "Rsi", "VolatilityRange",
+        "VolumeSpike", "Vwap", "DrawdownFromPeak", "PullbackFromHigh",
+    }
+    if name not in indicator_conditions:
+        return True, None
+
+    if indicators.get("ready") is not True:
+        return False, "indicator series unavailable or not ready"
+    timestamp = _num(indicators.get("timestamp"))
+    if timestamp is None or timestamp <= 0:
+        return False, "indicator timestamp is missing"
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000.0
+
+    try:
+        maximum_age = float(os.getenv(
+            "TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS", "180"
+        ))
+    except (TypeError, ValueError, OverflowError):
+        maximum_age = 180.0
+    if not math.isfinite(maximum_age) or not 30.0 <= maximum_age <= 3600.0:
+        maximum_age = 180.0
+
+    evaluated_at = _num(context.get("evaluated_at"))
+    now = evaluated_at if evaluated_at is not None else time.time()
+    age = now - timestamp
+    if age < -5.0:
+        return False, "indicator timestamp is in the future"
+    if age > maximum_age:
+        return False, "indicator series is stale"
+    return True, None
+
+
 def evaluate_condition(node, context):
     validate_condition(node)
     name, params = node["condition"], node["params"]
     indicators = context.get("indicators") if isinstance(context.get("indicators"), dict) else {}
+    fresh, freshness_reason = _indicator_freshness(name, context, indicators)
+    if not fresh:
+        return False, [name + ": " + freshness_reason]
     token = context.get("token") if isinstance(context.get("token"), dict) else {}
     liquidity = _metric(context, "liquidity_usd", "liquidity.usd")
     current_price = _metric(context, "price_usd", "priceUsd")
@@ -224,7 +274,8 @@ def evaluate_condition(node, context):
             created = _metric(context, "pairCreatedAt", "token.pairCreatedAt")
             if created is not None:
                 created = created / 1000 if created > 10_000_000_000 else created
-                age = max(0, (time.time() - created) / 60)
+                evaluated_at = _num(context.get("evaluated_at")) or time.time()
+                age = max(0, (evaluated_at - created) / 60)
         result = _compare(age, params.get("comparison", "ABOVE"), _num(params.get("minutes", 60)))
         detail = "token age minutes"
     elif name == "TransactionVelocity":

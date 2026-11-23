@@ -406,3 +406,7 @@ The read-only Raydium CLMM adapter reads the pool state, AmmConfig, vaults, lega
 Paper entries, DCA adds, partial exits and full exits apply a conservative price slippage estimate in addition to the existing paper fee accounting. Configure `TROJAN_PAPER_SLIPPAGE_BPS` (default 25 bps, bounded to 0–300 bps). For the initial entry, the applied buy slippage is the larger of this setting and the approved Jupiter route's reported price impact. Sell fills use the configured or persisted exit allowance. Fill results expose the market mark, effective fill price, slippage basis points and model name. This is a deterministic paper estimate, not a quote-settled execution simulator; no live transaction is sent.
 
 
+
+## Strategy indicator freshness
+
+Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, candle structure, ATR/volatility, volume spike, VWAP and indicator-derived pullbacks) now require an explicitly ready OHLCV indicator series with a valid timestamp. The default maximum age is 180 seconds, configurable from 30 to 3600 seconds with `TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS`. Missing, stale or future-dated indicator snapshots fail closed with an auditable condition reason. Market-only and direct position metrics do not require an OHLCV timestamp. Token age and time-of-day conditions use the same evaluation timestamp.
