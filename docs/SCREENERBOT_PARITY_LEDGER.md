@@ -182,3 +182,11 @@ The repositories are not considered parity-complete until every row and every fi
 - Commit headlines: `feat(strategy): add per-condition OHLCV timeframe selection`; `test(strategy): cover selected timeframe indicators and missing data`; `fix(strategy): read selected timeframe metrics consistently`.
 - The first selected-timeframe test revealed that `_context()`'s top-level 1m convenience values took precedence over nested selected-frame values. The implementation now overrides those fields with the selected frame before evaluation. Full validation passed on `b107d5fb5660c313eb927b23e7745b237340cb4f` (run `45250105990`); unit test run `45250113714` passed, with 949 tests in the preceding strategy test revision.
 - Strategy timeframe selection is implemented but the full strategy subsystem remains partial due the remaining gaps above.
+
+
+## Strategy concurrency limit (2026-11-23)
+
+- `strategy_rules.py` now bounds simultaneous rule-tree evaluations with a process-local bounded semaphore. The wait for a slot consumes the same evaluation deadline; if capacity is unavailable before the deadline, the result fails closed instead of running unbounded. Default capacity is 10, configurable within 1–100 using `TROJAN_STRATEGY_MAX_CONCURRENT_EVALUATIONS`.
+- `strategy_catalog.py` exposes the maximum concurrent evaluation count alongside timeout, rule depth, and group-width policy. Added a saturation test that holds the only slot and verifies the evaluation returns a fail-closed timeout.
+- Commit headlines: `feat(strategy): bound concurrent rule evaluations`; `feat(strategy): expose evaluation concurrency limit`; `test(strategy): cover evaluation concurrency saturation`.
+- Full validation passed on `b1a0ad592e4fb397cc274a37b7b36daf91704b76` (Actions run `45250669336`): 953 unit tests passed, Python modules compiled, live execution remained hard-locked, dashboard smoke checks passed, and paper-only safety checks passed. The strategy engine remains partial because rule fingerprint caching, disabled-node explanations, condition applicability and other gaps remain open.
