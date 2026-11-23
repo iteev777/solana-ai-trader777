@@ -6,7 +6,7 @@ adaptive_learning.py	production	unreviewed
 ai_analyzer.py	production	unreviewed
 api_client.py	production	unreviewed
 blacklist.py	production	unreviewed
-candidate_quality.py	production	unreviewed
+candidate_quality.py	production	reviewed
 clmm_quote_math.py	production	unreviewed
 copy_event_parser.py	production	unreviewed
 copy_freshness.py	production	unreviewed

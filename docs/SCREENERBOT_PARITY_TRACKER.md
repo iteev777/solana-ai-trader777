@@ -21,21 +21,23 @@ status in this review.
 | `sniper_scanner.py` | `src/chains/solana/pools/discovery.rs`, `src/tokens/discovery.rs` | No PumpPortal discovery subscription was found at the pinned reference. Its pool discovery validates public keys before handing descriptors to the analyzer and stops with the service; Trojan receives token launch events instead, with a bounded queue and reconnect loop. Listener shutdown and metrics remain gaps. | `a74ebe4` Validate PumpPortal candidates before reserving queue space. Reuse the REST discovery mint gate, preserve deduplication and retry on queue overflow, and omit untrusted metadata and exception text from logs. | Added mocked WebSocket callback coverage for invalid addresses, duplicates and full-queue redelivery. |
 | `discovery/__init__.py` | Python package marker; no direct Rust counterpart | The file contains only a comment. It has no functions, imports, API calls or initialization behavior. | No code change required. | Static inspection. |
 
+| `candidate_quality.py` | `src/tokens/priorities.rs`, `src/filtering/sources/market.rs` | Reference prioritizes refresh by lifecycle state and applies provider-specific filtering after resolving the market feed. Trojan scores discovery candidates before admission. State-based refresh remains for market worker review. | `0a5d132` Harden candidate ranking and isolate quality status. Treat invalid timestamps as unknown, rank tied scores by distinct source count, tolerate malformed enrichment keys, and isolate the published counters. | All 577 tests passed. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Nine of 60 production
+path in this branch, including review artifacts. Ten of 60 production
 Python files have completed this review. The last completed file is
-`discovery/__init__.py`. Resume at `candidate_quality.py` for candidate validation and ranking.
+`candidate_quality.py`. Resume at `token_security.py` for mint and account validation.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Fifteen source files are reviewed and 1,996 remain
+are listed as well. Seventeen source files are reviewed and 1,994 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 575 tests passed, including the process-level paper/dashboard and live
+All 577 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

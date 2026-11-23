@@ -1153,7 +1153,7 @@ src/filtering/sources/bounds.rs	source	unreviewed	Pending review
 src/filtering/sources/dexscreener.rs	source	unreviewed	Pending review
 src/filtering/sources/geckoterminal.rs	source	unreviewed	Pending review
 src/filtering/sources/llm_analysis.rs	source	unreviewed	Pending review
-src/filtering/sources/market.rs	source	unreviewed	Pending review
+src/filtering/sources/market.rs	source	reviewed	candidate_quality.py ranks partial data before admission. Reference dispatches filters to the resolved market provider; filter_pipeline.py comparison remains open.
 src/filtering/sources/meta.rs	source	unreviewed	Pending review
 src/filtering/sources/mod.rs	source	unreviewed	Pending review
 src/filtering/sources/rejection.rs	source	unreviewed	Pending review
@@ -1526,7 +1526,7 @@ src/tokens/pool_data/mod.rs	source	unreviewed	Pending review
 src/tokens/pool_data/operations.rs	source	unreviewed	Pending review
 src/tokens/pool_data/server.rs	source	unreviewed	Pending review
 src/tokens/pool_data/utils.rs	source	unreviewed	Pending review
-src/tokens/priorities.rs	source	unreviewed	Pending review
+src/tokens/priorities.rs	source	reviewed	candidate_quality.py ranks discovery by evidence. The reference schedules market refresh by lifecycle priority. Refresh parity remains open.
 src/tokens/retention.rs	source	unreviewed	Pending review
 src/tokens/schema.rs	source	unreviewed	Pending review
 src/tokens/search.rs	source	unreviewed	Pending review
