@@ -1784,9 +1784,17 @@ def monitor_positions():
 
         try:
 
+            price_timestamp = next((
+                pair.get(key) for key in (
+                    "priceUpdatedAt", "price_updated_at", "updatedAt",
+                    "updated_at", "timestamp", "lastUpdated", "last_updated",
+                )
+                if pair.get(key) is not None
+            ), None)
             result = paper.update_position(
                 address,
-                price
+                price,
+                price_timestamp=price_timestamp,
             )
 
             record_sale(address, result)

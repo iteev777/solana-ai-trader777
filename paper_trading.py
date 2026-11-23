@@ -1,9 +1,9 @@
 import threading
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import database
-from position_policy import get_dca_steps, get_exit_steps
+from position_policy import get_dca_policy, get_exit_steps
 import exit_policy
 import paper_fill_model
 
@@ -40,6 +40,7 @@ DCA_MAX_ADDS = 1
 VALID_STRATEGIES = ("main", "sniper")
 
 _lock = threading.RLock()
+_dca_in_flight = set()
 
 
 
@@ -212,6 +213,10 @@ def open_position(
         if balance < position_size * (1 + database.PAPER_FEE_RATE):
             return "Insufficient balance including estimated entry fee"
 
+        # Preserve the original fill and first ticket size as immutable DCA bases.
+        position_metadata["first_entry_price"] = entry_price
+        position_metadata["first_investment"] = position_size
+
         result = database.open_position_atomic(
             mode=MODE,
             token_address=token_address,
@@ -339,7 +344,7 @@ def emergency_sell(token_address, current_price):
 # STOP LOSS / TAKE PROFIT
 # ==========================================
 
-def update_position(token_address, current_price):
+def update_position(token_address, current_price, price_timestamp=None):
     if _force_stop_active():
         return "FORCE STOP ACTIVE"
 
@@ -361,7 +366,8 @@ def update_position(token_address, current_price):
 
         # Parse every configured policy before mutating position state.
         try:
-            dca_steps = get_dca_steps()
+            dca_policy = get_dca_policy()
+            dca_steps = dca_policy["steps"]
             exit_config = exit_policy.get_exit_policy()
             exit_steps = get_exit_steps() if PARTIAL_TAKE_PROFIT_ENABLED else []
         except (TypeError, ValueError, OverflowError) as policy_error:
@@ -383,35 +389,56 @@ def update_position(token_address, current_price):
                 MODE, token_address, metadata
             )
 
-        # Configurable DCA tiers. Every tier is one-shot, ordered, and
-        # blocked at/beyond the hard stop. The default remains disabled.
+        # DCA is a separate, fail-closed spend decision. It requires a real
+        # provider price timestamp; a local polling time is never substituted.
         try:
-            dca_count = max(0, int(metadata.get("dca_count", 0) or 0))
-        except (TypeError, ValueError, OverflowError):
-            dca_count = 0
-        if dca_count < len(dca_steps) and change > -(exit_config["stop_loss_pct"] / 100.0):
-            step = dca_steps[dca_count]
-            if change <= -(step["drop_pct"] / 100.0):
-                try:
-                    dca_fill_price, dca_slippage_bps = paper_fill_model.buy_fill_price(current_price)
-                except ValueError:
-                    return "Invalid paper DCA fill price"
-                result = database.add_position_investment_atomic(
-                    MODE, token_address, dca_fill_price, step["add_usd"],
-                    metadata={
-                        "dca_count": dca_count + 1,
-                        "paper_dca_slippage_bps": dca_slippage_bps,
-                        "paper_fill_model": "CONSERVATIVE_MARKET_SLIPPAGE",
-                    }
+            dca_count = metadata.get("dca_count", 0)
+            if isinstance(dca_count, bool) or not isinstance(dca_count, int) or dca_count < 0:
+                dca_count = len(dca_steps)
+            if dca_policy["enabled"] and dca_count < len(dca_steps) and token_address not in _dca_in_flight:
+                from position_policy import evaluate_dca_step
+                dca_evaluation = evaluate_dca_step(
+                    position=position,
+                    current_price=current_price,
+                    price_timestamp=price_timestamp,
+                    step=dca_steps[dca_count],
+                    policy=dca_policy,
+                    stop_loss_pct=exit_config["stop_loss_pct"],
                 )
-                if isinstance(result, dict):
-                    result["market_price"] = current_price
-                    result["effective_fill_price"] = dca_fill_price
-                    result["slippage_bps"] = dca_slippage_bps
-                    result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
-                    refresh_account()
-                    print("PAPER DCA TIER:", token_address, "|", result, flush=True)
-                    return result
+                if dca_evaluation["allowed"]:
+                    import risk_manager
+                    requested_add = dca_evaluation["amount_usd"]
+                    dca_amount = min(
+                        requested_add,
+                        risk_manager.MAX_TRADE_SIZE,
+                        round(balance * risk_manager.MAX_TRADE_BALANCE_FRACTION, 2),
+                    )
+                    if dca_amount >= risk_manager.MIN_TRADE_SIZE:
+                        dca_fill_price, dca_slippage_bps = paper_fill_model.buy_fill_price(current_price)
+                        _dca_in_flight.add(token_address)
+                        try:
+                            result = database.add_position_investment_atomic(
+                                MODE, token_address, dca_fill_price, dca_amount,
+                                metadata={
+                                    "dca_count": dca_count + 1,
+                                    "last_dca_at": time.time(),
+                                    "paper_dca_slippage_bps": dca_slippage_bps,
+                                    "paper_fill_model": "CONSERVATIVE_MARKET_SLIPPAGE",
+                                }
+                            )
+                        finally:
+                            _dca_in_flight.discard(token_address)
+                        if isinstance(result, dict):
+                            result["market_price"] = current_price
+                            result["effective_fill_price"] = dca_fill_price
+                            result["slippage_bps"] = dca_slippage_bps
+                            result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
+                            result["dca_gate"] = dca_evaluation
+                            refresh_account()
+                            print("PAPER DCA TIER:", token_address, "|", result, flush=True)
+                            return result
+        except (TypeError, ValueError, OverflowError) as dca_error:
+            print("PAPER DCA REFUSED:", token_address, "|", repr(dca_error), flush=True)
 
         # Configurable multi-step exit ladder. Each fraction applies to
         # the remaining position, so successive sells cannot over-close it.
