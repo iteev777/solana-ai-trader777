@@ -146,7 +146,7 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
 
     def test_stale_recovered_wallet_event_is_recorded_but_never_copied_or_alerted(self):
         now = time.time()
-        event = self._event(now, now - 120)
+        event = self._event(now, now - 600)
         fake_main = types.SimpleNamespace(queue_copy_signal=unittest.mock.Mock())
         with patch.object(copy_trade, "_fetch_wallet_transaction", return_value=event), \
              patch.object(copy_trade.database, "record_copy_trade_event", return_value=True) as record, \
