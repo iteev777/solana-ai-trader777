@@ -151,6 +151,13 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
                     self.quote, self.wallet, self.user_in, self.user_out
                 )
 
+
+    def test_rejects_vault_not_owned_by_canonical_pool_authority(self):
+        accounts = dict(self.account_map)
+        accounts[self.vault_a] = token_account(self.mint_a, key(46), 1000)
+        with self.assertRaisesRegex(ValueError, "vault token authority"):
+            self.call_builder(account_map=accounts)
+
     def test_rejects_input_account_owned_by_another_wallet(self):
         accounts = dict(self.account_map)
         accounts[self.user_in] = token_account(self.mint_a, key(30), 1000)
