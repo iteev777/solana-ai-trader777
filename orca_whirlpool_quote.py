@@ -1,8 +1,9 @@
 """Read-only exact-input quotes for classic Orca Whirlpool pools.
 
-The adapter uses static TickArray accounts and the pool's base fee. Adaptive-fee
-oracles, DynamicTickArray layouts and Token-2022 mints fail closed until their
-fee and transfer semantics are independently modelled.
+The adapter uses static TickArray accounts and the pool's base fee. It supports
+the audited Token-2022 transfer-fee extension subset with conservative input
+and output fee treatment. Adaptive-fee oracles, DynamicTickArray layouts and
+unsupported Token-2022 extensions remain fail-closed.
 """
 import math
 import time
