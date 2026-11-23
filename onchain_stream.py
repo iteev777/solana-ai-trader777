@@ -37,7 +37,15 @@ _dirty_pools = set()
 _batch_refreshing = False
 _batch_status = {"last_refresh_pools": 0, "last_priced_pools": 0,
                  "last_failed_pools": 0, "last_skipped_pools": 0,
-                 "last_rpc_batches": 0, "last_accounts_requested": 0}
+                 "last_rpc_batches": 0, "last_accounts_requested": 0,
+                 "last_position_refresh_ms": 0.0, "last_candidate_refresh_ms": 0.0,
+                 "last_total_refresh_ms": 0.0,
+                 "last_position_pools": 0, "last_position_priced_pools": 0,
+                 "last_position_failed_pools": 0, "last_position_rpc_batches": 0,
+                 "last_candidate_pools": 0, "last_candidate_priced_pools": 0,
+                 "last_candidate_failed_pools": 0, "last_candidate_rpc_batches": 0,
+                 "last_position_pools_per_second": 0.0,
+                 "last_candidate_pools_per_second": 0.0}
 
 
 def _rpc_ws_url():
@@ -231,29 +239,72 @@ def partition_refresh_priority(position_keys, candidate_keys, requested_keys=Non
 
 
 def _refresh_many(position_keys, candidate_keys=None, prune_unwatched=False):
-    """Refresh open positions to completion before spending RPC capacity on candidates."""
+    """Refresh open positions first and expose per-class runtime measurements."""
     global _batch_refreshing
     started = time.perf_counter()
     try:
         import pool_account_fetcher
         positions, candidates = partition_refresh_priority(position_keys, candidate_keys or [])
-        passes = []
-        if positions:
-            passes.append((positions, False))
-        if candidates:
-            passes.append((candidates, False))
         totals = {"last_refresh_pools": 0, "last_priced_pools": 0,
                   "last_failed_pools": 0, "last_skipped_pools": 0,
                   "last_rpc_batches": 0, "last_accounts_requested": 0}
-        for keys, prune in passes:
-            result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune)
+        measurements = {
+            "position": {"duration_ms": 0.0, "pools": 0, "priced": 0,
+                         "failed": 0, "rpc_batches": 0},
+            "candidate": {"duration_ms": 0.0, "pools": 0, "priced": 0,
+                          "failed": 0, "rpc_batches": 0},
+        }
+
+        # Separate passes are intentional: discovery candidates never consume
+        # RPC batch capacity until every open-position pool has been refreshed.
+        for label, keys in (("position", positions), ("candidate", candidates)):
+            if not keys:
+                continue
+            pass_started = time.perf_counter()
+            result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=False)
+            elapsed_ms = max(0.0, (time.perf_counter() - pass_started) * 1000)
+            measurements[label] = {
+                "duration_ms": round(elapsed_ms, 2),
+                "pools": int(result.get("last_refresh_pools", 0) or 0),
+                "priced": int(result.get("last_priced_pools", 0) or 0),
+                "failed": int(result.get("last_failed_pools", 0) or 0),
+                "rpc_batches": int(result.get("last_rpc_batches", 0) or 0),
+            }
             for name in totals:
                 totals[name] += int(result.get(name, 0) or 0)
+
         if prune_unwatched:
             pool_account_fetcher.prune_pool_account_cache(positions + candidates)
+
+        position = measurements["position"]
+        candidate = measurements["candidate"]
+        total_ms = max(0.0, (time.perf_counter() - started) * 1000)
+        position_rate = (
+            position["pools"] / (position["duration_ms"] / 1000)
+            if position["duration_ms"] > 0 else 0.0
+        )
+        candidate_rate = (
+            candidate["pools"] / (candidate["duration_ms"] / 1000)
+            if candidate["duration_ms"] > 0 else 0.0
+        )
         with _lock:
             _batch_status.update(totals)
-            _status["last_latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            _batch_status.update({
+                "last_position_refresh_ms": position["duration_ms"],
+                "last_candidate_refresh_ms": candidate["duration_ms"],
+                "last_total_refresh_ms": round(total_ms, 2),
+                "last_position_pools": position["pools"],
+                "last_position_priced_pools": position["priced"],
+                "last_position_failed_pools": position["failed"],
+                "last_position_rpc_batches": position["rpc_batches"],
+                "last_candidate_pools": candidate["pools"],
+                "last_candidate_priced_pools": candidate["priced"],
+                "last_candidate_failed_pools": candidate["failed"],
+                "last_candidate_rpc_batches": candidate["rpc_batches"],
+                "last_position_pools_per_second": round(position_rate, 3),
+                "last_candidate_pools_per_second": round(candidate_rate, 3),
+            })
+            _status["last_latency_ms"] = round(total_ms, 1)
             _status["last_error"] = None if totals["last_failed_pools"] == 0 else (
                 "BATCH POOL REFRESH HAD " + str(totals["last_failed_pools"]) + " FAILURES"
             )
