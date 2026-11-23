@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -398,6 +398,33 @@ def initialize_database():
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_pool_registry_updated_at
             ON pool_registry(updated_at)
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_source_health (
+                source TEXT PRIMARY KEY,
+                provider_family TEXT NOT NULL,
+                total_runs INTEGER NOT NULL DEFAULT 0,
+                successes INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_success_at REAL,
+                last_error_at REAL,
+                last_count INTEGER NOT NULL DEFAULT 0,
+                last_ok INTEGER NOT NULL DEFAULT 0 CHECK(last_ok IN (0, 1)),
+                last_error TEXT,
+                latency_ms REAL NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_scan_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                last_scan_at REAL,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                source_count INTEGER NOT NULL DEFAULT 0,
+                independent_provider_count INTEGER NOT NULL DEFAULT 0
+            )
         """)
 
         connection.execute("""
