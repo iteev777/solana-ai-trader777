@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import solana_onchain as chain
 import meteora_dlmm_quote as dlmm
+import meteora_dlmm_builder as dlmm_builder
 from meteora_dlmm_quote import quote_meteora_dlmm_pool
 
 
@@ -264,6 +265,97 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
                     self.mint_y, 10**12, token_program=chain.TOKEN_2022_PROGRAM
                 ),
             })
+
+    def test_fee_bearing_token2022_swap2_builder_uses_mint_specific_programs(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        wallet = chain._b58encode(bytes([81]) * 32)
+        input_token_account = chain._b58encode(bytes([82]) * 32)
+        output_token_account = chain._b58encode(bytes([83]) * 32)
+        fee_config = bytearray(108)
+        fee_config[80:88] = (10_000).to_bytes(8, "little")
+        fee_config[88:90] = (100).to_bytes(2, "little")
+        fee_config[98:106] = (10_000).to_bytes(8, "little")
+        fee_config[106:108] = (100).to_bytes(2, "little")
+        mint_y = bytearray(166)
+        mint_y[44] = 9
+        mint_y[45] = 1
+        mint_y[165] = MINT_ACCOUNT_TYPE
+        mint_y.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + fee_config)
+        mint_y_account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_y)}
+
+        reserve_y = self.token_account(
+            self.mint_y, 10**12, token_program=chain.TOKEN_2022_PROGRAM,
+            transfer_fee=True,
+        )
+        quote = self.quote(overrides={
+            "mint_y": mint_y_account,
+            "reserve_y": reserve_y,
+        })
+
+        def user_legacy(mint, amount):
+            raw = bytearray(165)
+            raw[:32] = chain._b58decode(mint)
+            raw[32:64] = chain._b58decode(wallet)
+            raw[64:72] = amount.to_bytes(8, "little")
+            raw[108] = 1
+            return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+
+        def user_token2022(mint, amount):
+            raw = bytearray(182)
+            raw[:32] = chain._b58decode(mint)
+            raw[32:64] = chain._b58decode(wallet)
+            raw[64:72] = amount.to_bytes(8, "little")
+            raw[108] = 1
+            raw[165] = 2
+            raw[166:168] = (2).to_bytes(2, "little")
+            raw[168:170] = (8).to_bytes(2, "little")
+            raw[178:180] = (7).to_bytes(2, "little")
+            raw[180:182] = (0).to_bytes(2, "little")
+            return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+
+        oracle = chain._b58encode(bytes([67]) * 32)
+        oracle_data = bytearray(16)
+        oracle_data[:8] = chain._discriminator("Oracle")
+        oracle_account = {"owner": chain.PROGRAMS["meteora_dlmm"], "data": bytes(oracle_data)}
+        addresses = quote["loaded_bin_array_addresses"]
+        snapshot = [
+            self.pool_account, self.reserve_x_account, reserve_y,
+            self.mint_x_account, mint_y_account, oracle_account,
+            user_legacy(self.mint_x, 10**9), user_token2022(self.mint_y, 0),
+            None,
+        ] + [self.bin_accounts[address] for address in addresses]
+        event_authority = chain._b58encode(bytes([84]) * 32)
+
+        def pda(seeds, program):
+            if seeds[0] == b"bitmap":
+                return self.bitmap, 255
+            if seeds[0] == b"oracle":
+                return oracle, 254
+            if seeds[0] == b"__event_authority":
+                return event_authority, 253
+            index = int.from_bytes(seeds[2], "little", signed=True)
+            return self.array_addresses[index], 252
+
+        with (
+            patch.object(dlmm_builder.dlmm_quote, "quote_meteora_dlmm_pool", return_value=quote),
+            patch.object(chain, "_account", return_value=self.pool_account),
+            patch.object(chain, "_find_program_address", side_effect=pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(snapshot, 123987)),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": chain._b58encode(bytes([85]) * 32),
+                "lastValidBlockHeight": 999999,
+            }}),
+        ):
+            result = dlmm_builder.build_meteora_dlmm_swap(
+                quote, wallet, input_token_account, output_token_account
+            )
+        self.assertEqual(result["token_program_input"], chain.TOKEN_PROGRAM)
+        self.assertEqual(result["token_program_output"], chain.TOKEN_2022_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(
+            result["instruction_accounts"][11:13],
+            [chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM],
+        )
 
     def test_disabled_pair_is_rejected(self):
         pair = bytearray(self.pair_data)
