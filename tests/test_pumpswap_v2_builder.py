@@ -213,13 +213,15 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         account_map = accounts
         def multiple(keys):
             return [account_map.get(k) for k in keys], 503
-        with patch.object(chain, "quote_pumpswap_pool", return_value=quote), \\
-             patch.object(chain, "_account", side_effect=lambda address: account_map[address]), \\
-             patch.object(chain, "_find_program_address", side_effect=pda), \\
-             patch.object(chain, "_multiple_accounts_with_context", side_effect=multiple), \\
-             patch.object(chain, "_rpc", return_value={"value": {
-                 "blockhash": self.blockhash, "lastValidBlockHeight": 123456
-             }}):
+        with (
+            patch.object(chain, "quote_pumpswap_pool", return_value=quote),
+            patch.object(chain, "_account", side_effect=lambda address: account_map[address]),
+            patch.object(chain, "_find_program_address", side_effect=pda),
+            patch.object(chain, "_multiple_accounts_with_context", side_effect=multiple),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": self.blockhash, "lastValidBlockHeight": 123456
+            }}),
+        ):
             result = builder.build_pumpswap_v2_swap(
                 quote, self.wallet, self.user_base, self.user_quote
             )
