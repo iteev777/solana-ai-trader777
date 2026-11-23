@@ -143,5 +143,25 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs["pool_addresses"], ["pool-a", "pool-b"])
 
 
+    def test_missing_output_mint_is_rejected(self):
+        item = self.aggregator_quotes()["quotes"]["jupiter"]
+        item.pop("output_mint")
+        with self.assertRaisesRegex(ValueError, "OUTPUT_MINT_MISMATCH"):
+            dex_engine._normalize_candidate("jupiter", item, self.input_mint, self.output_mint, time.time())
+
+    def test_missing_hop_count_is_rejected(self):
+        item = self.aggregator_quotes()["quotes"]["jupiter"]
+        item["route"] = {}
+        with self.assertRaisesRegex(ValueError, "HOP_COUNT_UNAVAILABLE"):
+            dex_engine._normalize_candidate("jupiter", item, self.input_mint, self.output_mint, time.time())
+
+    def test_non_pass_route_quality_is_rejected(self):
+        item = self.aggregator_quotes()["quotes"]["jupiter"]
+        item["quality"] = {"status": "UNKNOWN"}
+        with self.assertRaisesRegex(ValueError, "ROUTE_QUALITY_NOT_PASSED"):
+            dex_engine._normalize_candidate("jupiter", item, self.input_mint, self.output_mint, time.time())
+
+
+
 if __name__ == "__main__":
     unittest.main()
