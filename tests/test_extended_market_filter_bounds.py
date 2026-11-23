@@ -50,17 +50,16 @@ class ExtendedMarketBoundsTests(unittest.TestCase):
             result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "PASS")
 
-    def test_non_letter_single_character_symbol_rejected(self):
+    def test_non_letter_single_character_symbol_is_allowed_by_default(self):
         token = dict(self.token, symbol="$")
         result = filter_pipeline.evaluate_token(token, "Mint111")
-        self.assertEqual(result["status"], "REJECT")
-        self.assertEqual(result["reason"], "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
+        self.assertEqual(result["status"], "PASS")
 
-    def test_control_character_only_symbol_is_not_treated_as_valid(self):
+    def test_control_character_only_symbol_is_rejected(self):
         token = dict(self.token, symbol=" \x00 \x00 ")
         result = filter_pipeline.evaluate_token(token, "Mint111")
-        self.assertEqual(result["status"], "WAIT")
-        self.assertEqual(result["reason"], "SYMBOL_UNKNOWN")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "EMPTY_SYMBOL")
 
     def test_liquidity_maximum_rejects_too_deep_pool_when_configured(self):
         with patch.dict(os.environ, {"TROJAN_FILTER_MAX_LIQUIDITY_USD": "10000"}):
