@@ -20,6 +20,14 @@ class FakeWebSocket:
 
 
 class CopyWalletSubscriptionTests(unittest.TestCase):
+    def setUp(self):
+        self._old_catchup = dict(copy_trade._poll_catchup)
+        copy_trade._poll_catchup.clear()
+
+    def tearDown(self):
+        copy_trade._poll_catchup.clear()
+        copy_trade._poll_catchup.update(self._old_catchup)
+
     def test_requires_every_wallet_and_preserves_early_notifications(self):
         notification = {
             "jsonrpc": "2.0",
@@ -107,6 +115,63 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
             result = copy_trade._poll_wallet_activity(["wallet-A", "wallet-B"])
         self.assertEqual(result, {"processed": 0, "wallets": 2, "errors": 1})
         self.assertIn("wallet-A", copy_trade._status["last_poll_error"])
+
+
+    def test_signature_fetch_includes_before_and_until_cursor_bounds(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {"result": [{"signature": "sig-new", "err": None}]}
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "25"}), \
+             patch.object(copy_trade, "_rpc_url", return_value="https://rpc.example"), \
+             patch.object(copy_trade.requests, "post", return_value=Response()) as post:
+            rows = copy_trade._fetch_wallet_signatures(
+                "wallet-A", before="sig-before", until="sig-until"
+            )
+        options = post.call_args.kwargs["json"]["params"][1]
+        self.assertEqual(options["limit"], 25)
+        self.assertEqual(options["before"], "sig-before")
+        self.assertEqual(options["until"], "sig-until")
+        self.assertEqual(rows[0]["signature"], "sig-new")
+
+    def test_catchup_accumulates_pages_then_replays_oldest_first_and_commits_cursor(self):
+        first_page = [
+            {"signature": "newest", "err": None},
+            {"signature": "middle", "err": None},
+        ]
+        second_page = [{"signature": "oldest", "err": None}]
+        processed = []
+        cursor_writes = []
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "2"}), \
+             patch.object(copy_trade, "_COPY_MAX_PAGES_PER_POLL", 1), \
+             patch.object(copy_trade.database, "get_copy_watch_cursor", return_value="old-cursor"), \
+             patch.object(copy_trade.database, "set_copy_watch_cursor", side_effect=lambda wallet, sig: cursor_writes.append((wallet, sig))), \
+             patch.object(copy_trade, "_fetch_wallet_signatures", side_effect=[first_page, second_page]) as fetch, \
+             patch.object(copy_trade, "_process_wallet_signature", side_effect=lambda wallet, sig: processed.append(sig) or True):
+            first = copy_trade._poll_wallet_activity(["wallet-A"])
+            self.assertEqual(first["processed"], 0)
+            self.assertEqual(processed, [])
+            second = copy_trade._poll_wallet_activity(["wallet-A"])
+
+        self.assertEqual(second, {"processed": 3, "wallets": 1, "errors": 0})
+        self.assertEqual(processed, ["oldest", "middle", "newest"])
+        self.assertEqual(cursor_writes, [("wallet-A", "newest")])
+        self.assertEqual(fetch.call_args_list[1].kwargs, {"limit": 2, "before": "middle", "until": "old-cursor"})
+        self.assertNotIn("wallet-A", copy_trade._poll_catchup)
+
+    def test_failed_replay_does_not_advance_durable_cursor(self):
+        page = [{"signature": "newest", "err": None}]
+        writes = []
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "2"}), \
+             patch.object(copy_trade.database, "get_copy_watch_cursor", return_value="old-cursor"), \
+             patch.object(copy_trade.database, "set_copy_watch_cursor", side_effect=lambda wallet, sig: writes.append(sig)), \
+             patch.object(copy_trade, "_fetch_wallet_signatures", return_value=page), \
+             patch.object(copy_trade, "_process_wallet_signature", side_effect=RuntimeError("decode unavailable")):
+            result = copy_trade._poll_wallet_activity(["wallet-A"])
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(writes, [])
+        self.assertTrue(copy_trade._poll_catchup["wallet-A"]["complete"])
 
 if __name__ == "__main__":
     unittest.main()
