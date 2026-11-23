@@ -104,6 +104,74 @@ def scan_rugcheck():
     return list(found.values())
 
 
+
+def _scan_rugcheck_feed(source, endpoint):
+    """Fetch one RugCheck stats feed; raise on transport/HTTP/JSON/schema errors.
+
+    RugCheck's documented stats response is a list or JSON null (empty list).
+    A failed feed must remain visible to the aggregator's per-source health.
+    """
+    payload = get_json(
+        f"{RUGCHECK_BASE}/{endpoint}",
+        headers={"Accept": "application/json"},
+        timeout=TIMEOUT,
+        cache_ttl=45,
+        max_retries=1,
+    )
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise ValueError(f"{source} returned an invalid stats-list payload")
+    found = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("tokenMeta")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        token = _candidate(
+            item.get("mint") or item.get("address"),
+            source,
+            item,
+            name=item.get("name") or metadata.get("name"),
+            symbol=item.get("symbol") or metadata.get("symbol"),
+        )
+        if token:
+            mint = token["tokenAddress"]
+            if mint not in found:
+                found[mint] = token
+            else:
+                _merge_rugcheck_candidate(found[mint], token)
+    return list(found.values())
+
+
+def _merge_rugcheck_candidate(existing, incoming):
+    """Keep first useful metadata and union independent RugCheck feed labels."""
+    for key in ("name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv"):
+        current = existing.get(key)
+        value = incoming.get(key)
+        if current in (None, "", "Unknown", 0) and value not in (None, "", "Unknown", 0):
+            existing[key] = value
+    for source in incoming.get("discovery_sources", []):
+        if source not in existing["discovery_sources"]:
+            existing["discovery_sources"].append(source)
+
+
+def scan_rugcheck_new():
+    return _scan_rugcheck_feed("rugcheck_new", "new_tokens")
+
+
+def scan_rugcheck_recent():
+    return _scan_rugcheck_feed("rugcheck_recent", "recent")
+
+
+def scan_rugcheck_trending():
+    return _scan_rugcheck_feed("rugcheck_trending", "trending")
+
+
+def scan_rugcheck_verified():
+    return _scan_rugcheck_feed("rugcheck_verified", "verified")
+
+
 def scan_jupiter():
     """Jupiter recent, organic-score, traded and trending token lists."""
     feeds = (
