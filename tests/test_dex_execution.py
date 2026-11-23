@@ -115,10 +115,11 @@ class DexExecutionTests(unittest.TestCase):
         self.assertEqual(result["status"], "Success")
         self.assertTrue(result["explorer_url"].endswith("signature123"))
         self.assertNotIn("req-123", dex_execution._simulated_orders)
-        with self.assertRaisesRegex(dex_execution.ExecutionLocked, "unused recent"):
-            dex_execution.execute_signed_order(
-                self.transaction, "req-123", confirmed=True
-            )
+        with patch.object(dex_execution, "EXECUTE_ENABLED", True):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "unused recent"):
+                dex_execution.execute_signed_order(
+                    self.transaction, "req-123", confirmed=True
+                )
 
     def test_expired_simulation_approval_is_rejected(self):
         dex_execution._simulated_orders["expired"] = {
