@@ -17,7 +17,7 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
         for index in range(count):
             next_price = price * (1.001 if index % 9 else 0.998)
             rows.append([
-                1_700_000_100 + index * 60,
+                int(time.time()) - (count - index) * 60,
                 price, max(price, next_price) * 1.002,
                 min(price, next_price) * 0.998,
                 next_price, 100 + index
