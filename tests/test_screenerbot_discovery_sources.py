@@ -36,7 +36,7 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             [{"id": VALID_MINT}],
             [{"id": VALID_MINT}],
         ]
-        with patch.object(sources, "_safe_fetch", side_effect=responses):
+        with patch.object(sources, "get_json", side_effect=responses):
             result = sources.scan_jupiter()
         self.assertEqual(len(result), 1)
         self.assertEqual(
@@ -44,12 +44,43 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             {"jupiter_recent", "jupiter_organic", "jupiter_traded", "jupiter_trending"},
         )
 
+    def test_jupiter_feeds_are_separately_callable_and_preserve_decimals(self):
+        payload = [{"id": VALID_MINT, "name": "Jupiter Token", "symbol": "JUPX", "decimals": 6}]
+        cases = (
+            (sources.scan_jupiter_recent, "/recent"),
+            (sources.scan_jupiter_organic, "/toporganicscore/1h"),
+            (sources.scan_jupiter_traded, "/toptraded/1h"),
+            (sources.scan_jupiter_trending, "/toptrending/1h"),
+        )
+        for scanner, path in cases:
+            with self.subTest(path=path):
+                with patch.object(sources, "get_json", return_value=payload) as fetch:
+                    result = scanner()
+                self.assertIn(path, fetch.call_args.args[0])
+                self.assertEqual(result[0]["decimals"], 6)
+                self.assertTrue(result[0]["discovery_sources"][0].startswith("jupiter_"))
+
+    def test_jupiter_invalid_payload_propagates_for_source_health(self):
+        with patch.object(sources, "get_json", return_value={"unexpected": []}):
+            with self.assertRaisesRegex(ValueError, "invalid Jupiter"):
+                sources.scan_jupiter_recent()
+
+    def test_coingecko_failure_propagates_instead_of_being_reported_as_success(self):
+        with patch.object(sources, "get_json", side_effect=TimeoutError("CoinGecko timeout")):
+            with self.assertRaisesRegex(TimeoutError, "CoinGecko timeout"):
+                sources.scan_coingecko()
+
+    def test_defillama_failure_propagates_instead_of_being_reported_as_success(self):
+        with patch.object(sources, "get_json", side_effect=TimeoutError("DeFiLlama timeout")):
+            with self.assertRaisesRegex(TimeoutError, "DeFiLlama timeout"):
+                sources.scan_defillama()
+
     def test_coingecko_uses_solana_platform_contract_only(self):
         payload = [
             {"id": "valid", "name": "Valid", "symbol": "VAL", "platforms": {"solana": VALID_MINT}},
             {"id": "wrong", "name": "Wrong", "symbol": "BAD", "platforms": {"ethereum": "0x1234"}},
         ]
-        with patch.object(sources, "_safe_fetch", return_value=payload):
+        with patch.object(sources, "get_json", return_value=payload):
             result = sources.scan_coingecko()
         self.assertEqual([item["tokenAddress"] for item in result], [VALID_MINT])
 
@@ -59,7 +90,7 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             {"name": "Ethereum Protocol", "symbol": "EP", "chains": ["Ethereum"], "address": VALID_MINT},
             {"name": "Invalid Address", "symbol": "IA", "chains": ["Solana"], "address": "0x1234"},
         ]
-        with patch.object(sources, "_safe_fetch", return_value=payload):
+        with patch.object(sources, "get_json", return_value=payload):
             result = sources.scan_defillama()
         self.assertEqual([item["tokenAddress"] for item in result], [VALID_MINT])
 
