@@ -157,6 +157,19 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         self.assertEqual(struct.unpack("<QQ", instruction_data[8:]), (100, 80))
         self.assertEqual(result["instruction"], "sell_v2")
 
+
+    def test_rejects_pool_state_with_wrong_pda_bump(self):
+        bad = bytearray(self.pool_raw)
+        bad[8] = 1
+        accounts = dict(self.account_map)
+        accounts[self.pool] = {"owner": builder.PUMPSWAP_PROGRAM_ID, "data": bytes(bad)}
+        with patch.object(chain, "_account", side_effect=lambda address: accounts[address]), \
+             patch.object(chain, "_find_program_address", side_effect=self.find_pda):
+            with self.assertRaisesRegex(ValueError, "pool bump"):
+                builder.build_pumpswap_v2_swap(
+                    self.quote, self.wallet, self.user_base, self.user_quote
+                )
+
     def test_rejects_cashback_pool(self):
         bad = bytearray(self.pool_raw)
         bad[244] = 1
