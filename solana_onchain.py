@@ -1301,8 +1301,15 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
         raise ValueError("Pump.fun FeeConfig is not owned by the Pump Fees program")
     fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
-    if mint_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("Pump.fun Token-2022 mints are refused until transfer-fee and hook behavior is verified")
+    import token2022_inspector as token2022
+    token_program = mint_acc.get("owner")
+    if token_program not in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
+        raise ValueError("Pump.fun mint uses an unsupported token program")
+    token2022_mint = (
+        token2022.validate_swap_compatible_mint_data(mint_acc.get("data", b""))
+        if token_program == TOKEN_2022_PROGRAM else None
+    )
+    transfer_fee_config = (token2022_mint or {}).get("transfer_fee_config")
 
     token_decimals = _mint_decimals(mint_acc)
     virtual_token = curve["virtual_token_reserves"]
@@ -1349,19 +1356,24 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         total_fee = sum(fee_amounts)
         if net_quote <= 0:
             raise ValueError("Pump.fun quote input is consumed by fees")
-        output_amount = (virtual_token * net_quote) // (virtual_quote + net_quote)
-        if output_amount <= 0 or output_amount >= real_token:
+        gross_output = (virtual_token * net_quote) // (virtual_quote + net_quote)
+        if gross_output <= 0 or gross_output >= real_token:
             raise ValueError("Pump.fun buy would drain or complete the bonding curve; migration quoting is not enabled")
+        output_amount = token2022.conservative_net_amount(transfer_fee_config, gross_output)
+        if output_amount <= 0:
+            raise ValueError("Pump.fun Token-2022 output transfer fee consumes the entire token amount")
         impact_input = net_quote
         impact_output = output_amount
         spot_price = virtual_token / virtual_quote
         output_mint = token_mint
         unspent_input = amount_in - net_quote - total_fee
-        gross_output = output_amount
     else:
         if amount_in > supply:
             raise ValueError("Pump.fun sell input exceeds total token supply")
-        gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
+        received_by_curve = token2022.conservative_net_amount(transfer_fee_config, amount_in)
+        if received_by_curve <= 0:
+            raise ValueError("Pump.fun Token-2022 input transfer fee consumes the entire token amount")
+        gross_quote = (virtual_quote * received_by_curve) // (virtual_token + received_by_curve)
         if real_quote <= 0:
             raise ValueError("Pump.fun curve has no real SOL reserve for this sell")
         fee_amounts = [_fee_amount_ceil(gross_quote, rate) for rate in fee_rates]
@@ -1371,11 +1383,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
             raise ValueError("Pump.fun sell output is consumed by fees")
         if gross_quote > real_quote:
             raise ValueError("Pump.fun curve has insufficient real SOL reserves for gross sell settlement")
-        impact_input = amount_in
+        impact_input = received_by_curve
         impact_output = gross_quote
         spot_price = virtual_quote / virtual_token
         output_mint = SOL_MINT
-        unspent_input = 0
+        unspent_input = amount_in - received_by_curve
         gross_output = gross_quote
 
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
@@ -1420,6 +1432,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         "real_quote_reserves": real_quote,
         "is_mayhem_mode": curve.get("is_mayhem_mode", False),
         "token_decimals": token_decimals,
+        "token_program": token_program,
+        "token2022_input_transfer_fee": is_sell and unspent_input > 0,
+        "token2022_input_received_by_curve": amount_in - unspent_input if is_sell else None,
+        "token2022_output_transfer_fee": is_buy and output_amount < gross_output,
+        "token2022_output_gross_amount": gross_output if is_buy else None,
         "price_impact_percent": round(impact, 6),
         "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
         "execution": "DISABLED",
