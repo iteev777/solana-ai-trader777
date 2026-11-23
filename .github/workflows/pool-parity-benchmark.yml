@@ -1,14 +1,6 @@
 name: Pool RPC parity benchmark
 
 on:
-  branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - "benchmarks/**"
-      - ".github/workflows/pool-parity-benchmark.yml"
-      - "pool_account_fetcher.py"
-      - "solana_onchain.py"
-      - "rpc_transport.py"
   workflow_dispatch:
 
 permissions:
