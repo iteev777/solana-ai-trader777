@@ -19,13 +19,15 @@ MAX_SLIPPAGE_BPS = 300
 
 
 def _decode_whirlpool(raw, chain):
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 245:
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 653:
         raise ValueError("Orca Whirlpool account is truncated")
     if raw[:8] != chain._discriminator("Whirlpool"):
         raise ValueError("Orca Whirlpool discriminator is invalid")
     state = {
         "tick_spacing": chain._u16(raw, 41),
+        "fee_tier_index": chain._u16(raw, 43),
         "fee_rate": chain._u16(raw, 45),
+        "protocol_fee_rate": chain._u16(raw, 47),
         "liquidity": chain._u128(raw, 49),
         "sqrt_price_x64": chain._u128(raw, 65),
         "tick_current": chain._i32(raw, 81),
@@ -40,8 +42,12 @@ def _decode_whirlpool(raw, chain):
         raise ValueError("Orca Whirlpool pool mints must differ")
     if state["liquidity"] <= 0:
         raise ValueError("Orca Whirlpool has no active liquidity")
-    if state["fee_rate"] >= mathx.FEE_DENOMINATOR:
-        raise ValueError("Orca Whirlpool fee rate is invalid")
+    if state["fee_tier_index"] != state["tick_spacing"]:
+        raise ValueError("Orca adaptive-fee tier is not supported")
+    if state["fee_rate"] > 60_000:
+        raise ValueError("Orca Whirlpool fee rate exceeds the static fee cap")
+    if state["protocol_fee_rate"] > 2_500:
+        raise ValueError("Orca Whirlpool protocol fee rate exceeds the protocol cap")
     if not mathx.MIN_TICK <= state["tick_current"] < mathx.MAX_TICK:
         raise ValueError("Orca Whirlpool current tick is outside supported range")
     lower = mathx.sqrt_price_at_tick(state["tick_current"])
@@ -156,8 +162,9 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     if pool_acc is None or pool_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Orca Whirlpool pool account is unavailable or has an invalid owner")
     state = _decode_whirlpool(pool_acc.get("data"), chain)
-    for field in ("tick_spacing", "fee_rate", "liquidity", "sqrt_price_x64",
-                  "tick_current", "mint_a", "mint_b", "vault_a", "vault_b"):
+    for field in ("tick_spacing", "fee_tier_index", "fee_rate", "protocol_fee_rate",
+                  "liquidity", "sqrt_price_x64", "tick_current", "mint_a",
+                  "mint_b", "vault_a", "vault_b"):
         if state[field] != first[field]:
             raise ValueError("Orca Whirlpool state changed between discovery and confirmed snapshot")
 
@@ -175,14 +182,10 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
 
     oracle_acc = accounts[5]
     if oracle_acc is not None:
-        if oracle_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
-            raise ValueError("Orca Whirlpool oracle owner is invalid")
-        oracle_data = oracle_acc.get("data", b"")
-        if len(oracle_data) < 58:
-            raise ValueError("Orca Whirlpool oracle layout is unknown; adaptive fee state cannot be verified")
-        adaptive_fee_control = int.from_bytes(oracle_data[54:58], "little")
-        if adaptive_fee_control != 0:
-            raise ValueError("Orca Whirlpool adaptive-fee pools are not supported")
+        # Orca creates the Oracle PDA for adaptive-fee pools. Static fee-tier
+        # pools do not need it; refuse any present oracle instead of guessing
+        # the adaptive-fee accumulator layout or quoting a stale base fee.
+        raise ValueError("Orca Whirlpool adaptive-fee oracle is present; adaptive fees are unsupported")
 
     loaded_starts = []
     decoded_ticks = []
