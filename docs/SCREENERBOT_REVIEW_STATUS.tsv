@@ -787,10 +787,10 @@ src/agent_control/tools/trader.rs	unreviewed
 src/agent_control/tools/trading.rs	unreviewed	
 src/apis/README.md	unreviewed	
 src/apis/client.rs	unreviewed	
-src/apis/coingecko/mod.rs	unreviewed	
-src/apis/coingecko/types.rs	unreviewed	
-src/apis/defillama/mod.rs	unreviewed	
-src/apis/defillama/types.rs	unreviewed	
+src/apis/coingecko/mod.rs	reviewed	discovery/screenerbot_sources.py: Solana coins-list filtering and optional demo key match; provider runtime switch and request metrics not equivalent.
+src/apis/coingecko/types.rs	reviewed	discovery/screenerbot_sources.py: Coin name, symbol, and Solana platforms mapped; Trojan validates decoded mint size and tolerates individual malformed records.
+src/apis/defillama/mod.rs	reviewed	discovery/screenerbot_sources.py: Protocol listing and Solana selection implemented; Trojan also handles solana: prefix. Provider config and metrics remain gaps.
+src/apis/defillama/types.rs	reviewed	discovery/screenerbot_sources.py: Name, symbol, address, chains and logo used. Registry TVL, URL and ancillary fields are not mapped by Trojan discovery.
 src/apis/dexscreener/endpoints.rs	reviewed	scanner.py and discovery/dexscreener_scanner.py cover latest profiles/boosts and top boosts; pool/batch paths belong to market-data review; search, orders and chain listing not verified.
 src/apis/dexscreener/mod.rs	reviewed	api_client.py and scanner.py overlap in timeout and rate controls; dedicated endpoint buckets and tracked request metrics remain for API-client review.
 src/apis/dexscreener/types.rs	reviewed	scanner.py uses partial dictionaries and row-level mint checks; typed pool/metadata conversion belongs to market-data review.
@@ -823,8 +823,8 @@ src/apis/llm/types.rs	unreviewed
 src/apis/manager.rs	unreviewed	
 src/apis/mod.rs	unreviewed	
 src/apis/native_price.rs	unreviewed	
-src/apis/rugcheck/mod.rs	unreviewed	
-src/apis/rugcheck/types.rs	unreviewed	
+src/apis/rugcheck/mod.rs	reviewed	discovery/screenerbot_sources.py: Discovery stats endpoints match; null-list semantics implemented. Security report/client budgeting awaits rugcheck.py review.
+src/apis/rugcheck/types.rs	reviewed	discovery/screenerbot_sources.py: Recent metadata and decimals retained for candidate records; security authority/holder conversions await rugcheck.py review.
 src/apis/stats.rs	unreviewed	
 src/arguments/banner.rs	unreviewed	
 src/arguments/help.rs	unreviewed	
@@ -874,7 +874,7 @@ src/chains/solana/accounts/mod.rs	unreviewed
 src/chains/solana/accounts/signing.rs	unreviewed	
 src/chains/solana/adapter.rs	unreviewed	
 src/chains/solana/apis/jupiter/mod.rs	unreviewed	
-src/chains/solana/apis/jupiter/sources.rs	unreviewed	
+src/chains/solana/apis/jupiter/sources.rs	reviewed	discovery/screenerbot_sources.py: Four matching discovery lanes and metadata fields. Featured boards, price fallback and interactive/background budgeting remain unverified.
 src/chains/solana/apis/jupiter/tests.rs	unreviewed	
 src/chains/solana/apis/jupiter/throttle.rs	unreviewed	
 src/chains/solana/apis/jupiter/types.rs	unreviewed	
