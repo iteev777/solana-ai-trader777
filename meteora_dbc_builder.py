@@ -186,18 +186,6 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
     expected_fee_on_input = config["collect_fee_mode"] == 0 and not input_is_base
     if fresh.get("fee_on_input") != expected_fee_on_input:
         raise ValueError("Meteora DBC fee collection direction changed")
-    wallet_bytes = _key(wallet, "wallet")
-    token_program_bytes = _key(TOKEN_PROGRAM_ID, "token program")
-    input_ata, _ = chain._find_program_address(
-        [wallet_bytes, token_program_bytes, _key(input_mint, "input mint")],
-        ASSOCIATED_TOKEN_PROGRAM_ID,
-    )
-    output_ata, _ = chain._find_program_address(
-        [wallet_bytes, token_program_bytes, _key(output_mint, "output mint")],
-        ASSOCIATED_TOKEN_PROGRAM_ID,
-    )
-    if user_input_token_account != input_ata or user_output_token_account != output_ata:
-        raise ValueError("Meteora DBC wallet token accounts must be canonical associated token accounts")
     event_authority, _ = chain._find_program_address([EVENT_AUTHORITY_SEED], PROGRAM_ID)
 
     data = SWAP + struct.pack("<QQ", amount, minimum_out)
