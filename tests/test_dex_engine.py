@@ -309,6 +309,31 @@ class MultiPoolDexEngineTests(unittest.TestCase):
             "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED"
         )
 
+
+    def test_builder_without_simulator_is_not_reported_simulatable(self):
+        import dex_capabilities
+
+        real_capability = dex_capabilities._capability
+
+        def capability(module_name, function_name):
+            if function_name == "build_raydium_cpmm_swap":
+                return {"available": True, "module": module_name,
+                        "entrypoint": function_name, "status": "ENTRYPOINT_AVAILABLE"}
+            if function_name == "simulate_raydium_cpmm_transaction":
+                return {"available": False, "module": module_name,
+                        "entrypoint": function_name, "status": "UNAVAILABLE_ENTRYPOINT_MISSING"}
+            return real_capability(module_name, function_name)
+
+        with patch("dex_capabilities._capability", side_effect=capability):
+            report = dex_capabilities.get_dex_capabilities(["raydium_cpmm"])
+
+        raydium = report["protocols"]["raydium_cpmm"]
+        self.assertTrue(raydium["transaction_builder"]["available"])
+        self.assertFalse(raydium["simulation"]["available"])
+        self.assertEqual(raydium["simulation"]["status"],
+                         "UNAVAILABLE_ENTRYPOINT_MISSING")
+        self.assertFalse(raydium["live_execution"])
+
     def test_unknown_protocol_defaults_to_no_execution_capability(self):
         import dex_capabilities
 
