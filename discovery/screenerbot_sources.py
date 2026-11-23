@@ -54,6 +54,7 @@ def _candidate(mint, source, item=None, name=None, symbol=None):
         ("icon", "icon"), ("logoURI", "icon"), ("logo", "icon"),
         ("usdPrice", "priceUsd"), ("liquidity", "liquidity_usd"),
         ("mcap", "marketCap"), ("fdv", "fdv"),
+        ("decimals", "decimals"),
     ):
         value = item.get(source_key)
         if value is not None and target_key not in result:
@@ -126,8 +127,14 @@ def _scan_rugcheck_feed(source, endpoint):
     for item in payload:
         if not isinstance(item, dict):
             continue
-        metadata = item.get("tokenMeta")
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = item.get("tokenMeta")
         metadata = metadata if isinstance(metadata, dict) else {}
+        # ScreenerBot's recent feed requires its metadata object; entries
+        # without it are not discovery candidates.
+        if source == "rugcheck_recent" and not metadata:
+            continue
         token = _candidate(
             item.get("mint") or item.get("address"),
             source,
