@@ -303,12 +303,14 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
             "innerInstructions": False,
         },
     ])
-    value = (simulation or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(simulation, dict) or not isinstance(simulation.get("value"), dict):
         raise NativeExecutionRejected("Signed transaction simulation returned a malformed result")
-    if value.get("err") is not None:
-        raise NativeExecutionRejected("Signed transaction simulation failed: " + str(value.get("err"))[:200])
-    if time.monotonic() > approval["expires_at"]:
+    value = simulation["value"]
+    if "err" not in value:
+        raise NativeExecutionRejected("Signed transaction simulation response is missing the error field")
+    if value["err"] is not None:
+        raise NativeExecutionRejected("Signed transaction simulation failed: " + str(value["err"])[:200])
+    if time.time() >= approval["expires_at"]:
         raise NativeExecutionRejected("Native transaction approval expired during signed simulation")
     try:
         final_height = chain._rpc("getBlockHeight", [{"commitment": "confirmed"}])
@@ -318,6 +320,8 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
         raise NativeExecutionRejected("RPC returned an invalid final block height")
     if final_height > approval["last_valid_block_height"]:
         raise NativeExecutionRejected("Approved transaction blockhash expired during signed simulation")
+    if time.time() >= approval["expires_at"]:
+        raise NativeExecutionRejected("Native transaction approval expired before broadcast")
 
     expected_signature = chain._b58encode(signature)
     try:
