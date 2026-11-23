@@ -157,7 +157,6 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         pool_address, vault_a, vault_b, first["mint_a"], first["mint_b"],
         oracle_address,
     ] + tick_addresses
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Orca Whirlpool confirmed snapshot has an incomplete account list")
@@ -211,8 +210,10 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         if oracle_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
             raise ValueError("Orca Whirlpool oracle owner is invalid")
         oracle_data = oracle_acc.get("data", b"")
-        if len(oracle_data) < 58:
-            raise ValueError("Orca Whirlpool oracle layout is unknown; adaptive fee state cannot be verified")
+        if (not isinstance(oracle_data, (bytes, bytearray))
+                or len(oracle_data) < 58
+                or oracle_data[:8] != chain._discriminator("Oracle")):
+            raise ValueError("Orca Whirlpool oracle discriminator/layout is invalid; adaptive fee state cannot be verified")
         adaptive_fee_control = int.from_bytes(oracle_data[54:58], "little")
         if adaptive_fee_control != 0:
             raise ValueError("Orca Whirlpool adaptive-fee pools are not supported")
@@ -267,7 +268,12 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Orca Whirlpool price impact is invalid")
-    age = time.time() - snapshot_started
+    block_time = chain._rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Orca Whirlpool confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Orca Whirlpool confirmed snapshot is stale")
 
