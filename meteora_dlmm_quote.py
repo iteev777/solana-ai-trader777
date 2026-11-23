@@ -126,6 +126,39 @@ def _fee_rate(state, active_bin_id):
     return min(base + variable, MAX_FEE_RATE), volatility
 
 
+def _bin_price(bin_id, bin_step):
+    """Derive Q64.64 DLMM price from bin id, not the lazily stored bin price."""
+    if abs(bin_id) >= 0x80000 or not 0 < bin_step <= 65535:
+        raise ValueError("Meteora DLMM bin price exponent is unsupported")
+    one = 1 << 64
+    max_u128 = (1 << 128) - 1
+    base = one + ((bin_step << 64) // BASIS_POINT_MAX)
+    invert = bin_id < 0
+    exp = abs(bin_id)
+    squared = base
+    result = one
+    if squared >= one:
+        squared = max_u128 // squared
+        invert = not invert
+    bit = 1
+    remaining = exp
+    while remaining:
+        if exp & bit:
+            product = result * squared
+            if product > max_u128:
+                raise ValueError("Meteora DLMM bin price overflow")
+            result = product >> 64
+        product = squared * squared
+        if product > max_u128:
+            raise ValueError("Meteora DLMM bin price overflow")
+        squared = product >> 64
+        remaining &= ~bit
+        bit <<= 1
+    if result <= 0:
+        raise ValueError("Meteora DLMM bin price underflow")
+    return max_u128 // result if invert else result
+
+
 def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id):
     active_index = active_id // BINS_PER_ARRAY
     direction = -1 if zero_for_one else 1
@@ -162,8 +195,10 @@ def _decode_bin_array(account, pool_address, expected_index, state, chain):
         amount_x = chain._u64(raw, offset)
         amount_y = chain._u64(raw, offset + 8)
         price = chain._u128(raw, offset + 16)
-        if (amount_x or amount_y) and price <= 0:
-            raise ValueError("Meteora DLMM non-empty bin has an invalid price")
+        # The on-chain price field is lazy and may legitimately be zero.
+        # Recompute it from the bin id, matching the reference venue.
+        if amount_x or amount_y:
+            price = _bin_price(bin_id, state["bin_step"])
         bins.append((bin_id, amount_x, amount_y, price))
     return bins
 
@@ -394,6 +429,10 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         decoded = _decode_bin_array(account, pool_address, array_index, state, chain)
         bins.extend(decoded)
         loaded_indices.append(array_index)
+    # Never bridge an absent array: the real programme uses bitmap traversal,
+    # which this bounded read-only adapter deliberately does not implement.
+    if len(loaded_indices) != len(set(loaded_indices)):
+        raise ValueError("Meteora DLMM duplicate bin-array index")
     if not loaded_indices or loaded_indices[0] != array_indices[0]:
         raise ValueError("Meteora DLMM active bin array is not initialized")
 
