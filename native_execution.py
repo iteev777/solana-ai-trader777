@@ -193,6 +193,7 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
     if final_height > approval["last_valid_block_height"]:
         raise NativeExecutionRejected("Approved transaction blockhash expired during signed simulation")
 
+    expected_signature = chain._b58encode(signature)
     try:
         signature_result = chain._rpc("sendTransaction", [
             signed_transaction,
@@ -204,11 +205,15 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
             },
         ])
     except Exception as error:
-        raise NativeExecutionRejected("Native transaction broadcast failed: " + str(error)[:200])
+        raise NativeExecutionRejected(
+            "Broadcast outcome is unknown; check signature " + expected_signature
+            + " before requesting another order. RPC error: " + str(error)[:160]
+        )
 
     if not isinstance(signature_result, str) or not signature_result:
-        raise NativeExecutionRejected("RPC did not return a transaction signature")
-    expected_signature = chain._b58encode(signature)
+        raise NativeExecutionRejected(
+            "RPC returned no signature; check externally signed signature " + expected_signature
+        )
     if signature_result != expected_signature:
         raise NativeExecutionRejected("RPC returned a signature that does not match the externally signed transaction")
     return {
