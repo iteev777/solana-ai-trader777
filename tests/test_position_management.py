@@ -3,8 +3,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import paper_trading
-
 import database
 
 
@@ -59,6 +57,8 @@ class PositionManagementTests(unittest.TestCase):
 
 
     def test_final_original_share_ladder_tier_uses_full_close_path(self):
+        import paper_trading
+
         position = {
             "entry_price": 1.0,
             "opened_at": "2026-01-01T00:00:00+00:00",
