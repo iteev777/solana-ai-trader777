@@ -57,7 +57,8 @@ requirements.txt	other	unreviewed
 risk_manager.py	production	unreviewed
 route_comparison.py	production	unreviewed
 rpc_transport.py	production	unreviewed
-rugcheck.py	production	unreviewed
+rugcheck.py	production	reviewed
+rugcheck_risk_band.py	production	reviewed
 scanner.py	production	reviewed
 service_health.py	production	unreviewed
 sniper_scanner.py	production	reviewed

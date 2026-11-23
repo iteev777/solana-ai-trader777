@@ -25,21 +25,24 @@ status in this review.
 
 | `token_security.py` | `src/chains/solana/assets/mint.rs` | Reference reads exact supply, decimals and authorities from one typed mint lookup. Trojan reads parsed RPC and also reports holder concentration. Holder snapshots remain separate reads. | `a889b66` Read exact supply from the SPL mint snapshot. Validate input length and parsed account kind, preserve raw supply and retain the lookup fallback for responses without embedded supply. | All 578 tests passed. |
 
+| `rugcheck.py` | `src/tokens/security/rugcheck.rs` | Trojan uses a bounded in-memory cache and rejects unsafe/incomplete reports. Reference also persists reports and has optional shared caching. Persistent and shared caches remain open. | `d0490d8` Reconcile competing authority values conservatively and match creator public keys case-sensitively. Integrate normalized risk bands into report output. | 580 tests passed. |
+| `rugcheck_risk_band.py` (new) | `src/tokens/security/risk_band.rs` | Explicit bands were missing. The independent Python module validates provider scores and supplies low, medium and high reporting labels. | `d0490d8` Integrated through the existing RugCheck analysis entry point. Existing admission thresholds are retained. | Boundary and invalid-input tests pass through the report entry point. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Eleven of 60 production
+path in this branch, including review artifacts. Thirteen of 61 production
 Python files have completed this review. The last completed file is
-`token_security.py`. Resume at `rugcheck.py` for provider-side risk evaluation.
+`rugcheck.py` and its new dependency `rugcheck_risk_band.py`. Resume at `filter_pipeline.py` for pre-entry risk gates.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Eighteen source files are reviewed and 1,993 remain
+are listed as well. Twenty source files are reviewed and 1,991 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 578 tests passed, including the process-level paper/dashboard and live
+All 580 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

@@ -1531,8 +1531,8 @@ src/tokens/retention.rs	source	unreviewed	Pending review
 src/tokens/schema.rs	source	unreviewed	Pending review
 src/tokens/search.rs	source	unreviewed	Pending review
 src/tokens/security/mod.rs	source	unreviewed	Pending review
-src/tokens/security/risk_band.rs	source	unreviewed	Pending review
-src/tokens/security/rugcheck.rs	source	unreviewed	Pending review
+src/tokens/security/risk_band.rs	source	reviewed	rugcheck_risk_band.py: validated normalized score and equivalent reporting bands; used by Trojan RugCheck analysis.
+src/tokens/security/rugcheck.rs	source	reviewed	rugcheck.py: both normalize report fields and cache per mint. Reference additionally persists and can warm through a shared server; Trojan retains fail-closed admission without stale-report fallback.
 src/tokens/security/rugcheck_server.rs	source	unreviewed	Pending review
 src/tokens/security/rugcheck_tests.rs	source	unreviewed	Pending review
 src/tokens/service.rs	source	unreviewed	Pending review
