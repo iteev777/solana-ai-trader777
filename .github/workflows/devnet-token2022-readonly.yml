@@ -2,10 +2,6 @@ name: Solana Devnet Token-2022 read-only preflight
 
 on:
   workflow_dispatch:
-  branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - .github/workflows/devnet-token2022-readonly.yml
 
 permissions:
   contents: read
