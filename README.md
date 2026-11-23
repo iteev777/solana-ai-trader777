@@ -2,6 +2,11 @@
 
 A multi-source Solana token scanner with a dip-reversal entry model, multi-timeframe technical analysis, owner-verified on-chain pricing, and rapid paper-position management.
 
+
+
+### DEX order and wallet execution adapter
+
+See [DEX_EXECUTION.md](DEX_EXECUTION.md) for the non-custodial Jupiter Swap API V2 order flow, wallet-signing handoff, and execution safety gates. Execution is disabled by default.
 ## Current operating mode
 
 - **Paper trading only.** Real-money execution remains locked.
