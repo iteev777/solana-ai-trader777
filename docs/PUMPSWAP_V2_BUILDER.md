@@ -38,8 +38,10 @@ official PumpSwap IDL. The builder does not use a hand-invented account list.
   live GlobalConfig recipient list. The builder does not create ATAs.
 - A missing user volume accumulator is permitted because the on-chain
   instruction initializes it if needed; an existing accumulator is validated.
-- No native signing or broadcast endpoint exists. The server never receives
-  private keys. Live trading remains locked.
+- The server never signs or receives private keys. A separate default-off,
+  single-use external-signature broadcast gate is documented in
+  `docs/NATIVE_EXECUTION.md`; it requires `TROJAN_NATIVE_EXECUTE_ENABLED=true`
+  and explicit confirmation. Live trading remains locked by default.
 - A successful simulation is not a guarantee of later inclusion or execution;
   pool state may change after simulation and on-chain min-out remains the final
   price guard.
