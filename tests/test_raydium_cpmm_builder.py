@@ -118,6 +118,12 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         self.assertFalse(result["live_trading_ready"])
         self.assertEqual(result["quote_slot_lag"], 3)
 
+    def test_rejects_token_2022_mint_until_extension_aware_support_exists(self):
+        accounts = dict(self.account_map)
+        accounts[self.mint_a] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(166)}
+        with self.assertRaisesRegex(ValueError, "legacy SPL Token"):
+            self.call_builder(account_map=accounts)
+
     def test_rejects_quote_from_another_protocol(self):
         quote = dict(self.quote, protocol="raydium_clmm")
         with self.assertRaisesRegex(ValueError, "not a confirmed Raydium CPMM"):
