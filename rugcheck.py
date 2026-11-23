@@ -608,7 +608,7 @@ def _persist_report(token_address, result):
 
 
 def _get_cached_report(token_address, now):
-    cached = _get_cached_report(token_address, time.time())
+    cached = _cached_report(token_address, time.monotonic())
     if cached is not None:
         return cached
     persisted = _load_persisted_report(token_address, now)
@@ -645,7 +645,7 @@ def get_rugcheck_report(token_address):
         return None
 
     token_address = token_address.strip()
-    cached = _cached_report(token_address, time.monotonic())
+    cached = _get_cached_report(token_address, time.time())
     if cached is not None:
         return cached
 
@@ -671,7 +671,7 @@ def get_rugcheck_report(token_address):
         try:
             # Share the same host-wide 60/minute limiter, 429 cooldown,
             # retry policy and request telemetry as the discovery feeds.
-                        data = get_json(
+            data = get_json(
                 url,
                 headers={"Accept": "application/json"},
                 timeout=REQUEST_TIMEOUT,
