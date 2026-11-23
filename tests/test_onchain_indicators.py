@@ -246,8 +246,9 @@ class OnchainDecoderTests(unittest.TestCase):
         self.assertEqual(result["virtual_quote_reserves"], 20_000)
         self.assertEqual(result["price_mode"], "pump_curve")
         raw[48] = 1
-        with self.assertRaises(ValueError):
-            _decode_pool("pumpfun_legacy", bytes(raw))
+        completed = _decode_pool("pumpfun_legacy", bytes(raw))
+        self.assertTrue(completed["complete"])
+        self.assertEqual(completed["status"], "complete")
 
     def test_moonit_curve_account_layout(self):
         raw = bytearray(409)
