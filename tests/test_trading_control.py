@@ -59,7 +59,7 @@ class TradingControlTests(unittest.TestCase):
             strategy="main",
         )
         self.assertTrue(allowed)
-        self.assertIsNone(reason)
+        self.assertEqual(reason, "TRADE APPROVED")
 
 
 if __name__ == "__main__":
