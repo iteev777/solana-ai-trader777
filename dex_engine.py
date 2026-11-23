@@ -110,6 +110,14 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
     if age > MAX_QUOTE_AGE_SECONDS:
         raise ValueError("QUOTE_STALE")
 
+    latency_raw = item.get("latency_ms", item.get("quote_latency_ms"))
+    if latency_raw is None:
+        latency = None
+    else:
+        latency = _finite(latency_raw, "latency_ms")
+        if latency < 0 or latency > 120_000:
+            raise ValueError("LATENCY_OUTSIDE_LIMIT")
+
     network_cost = _uint(
         network_fee_output_amount if network_fee_output_amount is not None else 0,
         "network_fee_output_amount", allow_zero=True
@@ -131,7 +139,7 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
         "network_fee_priced": network_fee_output_amount is not None,
         "price_impact_percent": impact,
         "quote_age_seconds": round(age, 3),
-        "latency_ms": item.get("latency_ms", item.get("quote_latency_ms")),
+        "latency_ms": latency,
         "hops": hops,
         "route": route,
         "slot": item.get("slot"),
@@ -229,6 +237,10 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         str(key): _uint(value, "network fee", allow_zero=True)
         for key, value in network_fee_output_amounts.items()
     }
+    allowed_fee_keys = {"jupiter", "raptor"}
+    if any(not (key in allowed_fee_keys or key.startswith("direct:") and len(key) > 7)
+           for key in fee_estimates):
+        raise ValueError("Unknown network fee provider key")
     auto_discovery = pool_addresses is None
     pools = (
         discover_pool_addresses(input_mint, output_mint)
