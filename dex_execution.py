@@ -56,7 +56,7 @@ def _base58_pubkey(value, name):
     except ValueError:
         raise ValueError(name + " is not a valid base58 public key")
     raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    decoded = b"\\x00" * (len(value.strip()) - len(value.strip().lstrip("1"))) + raw
+    decoded = b"\x00" * (len(value.strip()) - len(value.strip().lstrip("1"))) + raw
     if len(decoded) != 32:
         raise ValueError(name + " must decode to a 32-byte Solana public key")
     return value.strip()
