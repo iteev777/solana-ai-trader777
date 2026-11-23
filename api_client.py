@@ -544,7 +544,7 @@ def _get_json_impl(
             return data
 
 
-def _record_api_stat(host, endpoint, *, success=None, elapsed_ms=0.0, error=None, cache_hit=False):
+def _record_api_stat(host, endpoint, *, success=None, elapsed_ms=0.0, error=None, cache_hit=False, cache_miss=False):
     key = (host, endpoint)
     with state_lock:
         stat = _api_stats.setdefault(key, {
@@ -563,7 +563,8 @@ def _record_api_stat(host, endpoint, *, success=None, elapsed_ms=0.0, error=None
             stat["cache_hits"] += 1
             return
         stat["total_requests"] += 1
-        stat["cache_misses"] += 1
+        if cache_miss:
+            stat["cache_misses"] += 1
         stat["last_request_time"] = time.time()
         total = stat["total_requests"]
         stat["average_response_time_ms"] += (
@@ -613,12 +614,14 @@ def get_json(
             host, endpoint, success=False,
             elapsed_ms=(time.perf_counter() - started) * 1000,
             error=error,
+            cache_miss=cache_ttl > 0,
         )
         raise
 
     _record_api_stat(
         host, endpoint, success=True,
         elapsed_ms=(time.perf_counter() - started) * 1000,
+        cache_miss=cache_ttl > 0,
     )
     return result
 
