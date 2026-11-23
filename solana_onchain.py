@@ -650,9 +650,10 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         )
         fee_amounts = [_fee_amount_ceil(gross_quote_out, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
-        gross_output_amount = gross_quote_out - total_fee
+        output_token_transfer_gross = gross_quote_out - total_fee
+        gross_output_amount = gross_quote_out
         output_amount = token2022.conservative_net_amount(
-            (output_transfer_config or {}).get("transfer_fee_config"), gross_output_amount
+            (output_transfer_config or {}).get("transfer_fee_config"), output_token_transfer_gross
         )
         impact_basis_input = received_by_pool
         impact_output_amount = gross_quote_out
@@ -687,8 +688,8 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "token_program_output": token_program_base if is_buy else token_program_quote,
         "token2022_input_transfer_fee": received_by_pool < amount_in,
         "token2022_input_received_by_pool": received_by_pool,
-        "token2022_output_transfer_fee": output_amount < gross_output_amount,
-        "token2022_output_gross_amount": gross_output_amount,
+        "token2022_output_transfer_fee": output_amount < (gross_output_amount if is_buy else output_token_transfer_gross),
+        "token2022_output_gross_amount": gross_output_amount if is_buy else output_token_transfer_gross,
         "fee_policy": "CONSERVATIVE_MAX_CONFIGURED_ONCHAIN_SCHEDULE",
         "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
