@@ -159,6 +159,22 @@ def decode_transfer_fee_config(raw):
     return None
 
 
+
+
+def select_transfer_fee_schedule(config, epoch):
+    """Select the active Token-2022 transfer fee schedule for a chain epoch."""
+    if not isinstance(config, dict) or not isinstance(config.get("older"), dict) or not isinstance(config.get("newer"), dict):
+        raise ValueError("A decoded older/newer transfer-fee configuration is required")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+        raise ValueError("Current epoch must be a non-negative integer")
+    older = config["older"]
+    newer = config["newer"]
+    activation_epoch = newer.get("epoch")
+    if isinstance(activation_epoch, bool) or not isinstance(activation_epoch, int) or activation_epoch < 0:
+        raise ValueError("Newer transfer-fee activation epoch is invalid")
+    return dict(newer if epoch >= activation_epoch else older)
+
+
 def transfer_fee_for_amount(schedule, amount):
     """Return the Token-2022 transfer fee, rounded up and capped."""
     if not isinstance(schedule, dict):
