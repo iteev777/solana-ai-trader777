@@ -1654,10 +1654,10 @@ src/trader/paper/types/tests.rs	source	unreviewed	Pending review
 src/trader/policy.rs	source	unreviewed	Pending review
 src/trader/safety/blacklist.rs	source	reviewed	blacklist.py uses authoritative DB and typed keys. Emergency exit policy awaits exit-module review.
 src/trader/safety/cooldown.rs	source	unreviewed	Pending review
-src/trader/safety/limits.rs	source	unreviewed	Pending review
+src/trader/safety/limits.rs	source	reviewed	risk_manager.py validates strategy and total capacity. Reference derives counts from state and has a separate pending-mint check.
 src/trader/safety/loss_limit.rs	source	unreviewed	Pending review
 src/trader/safety/mod.rs	source	unreviewed	Pending review
-src/trader/safety/risk.rs	source	unreviewed	Pending review
+src/trader/safety/risk.rs	source	reviewed	risk_manager.py validates price calculations and configured stops. Reference emergency exits are handled by an evaluator; exit policy comparison remains open.
 src/trader/stats/breakdowns.rs	source	unreviewed	Pending review
 src/trader/stats/breakdowns_tests.rs	source	unreviewed	Pending review
 src/trader/stats/mod.rs	source	unreviewed	Pending review

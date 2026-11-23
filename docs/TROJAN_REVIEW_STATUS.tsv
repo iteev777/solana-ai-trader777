@@ -54,7 +54,7 @@ protocol_quotes.py	production	unreviewed
 protocol_validation.py	production	unreviewed
 raydium_clmm_quote.py	production	unreviewed
 requirements.txt	other	unreviewed
-risk_manager.py	production	unreviewed
+risk_manager.py	production	reviewed
 route_comparison.py	production	unreviewed
 rpc_transport.py	production	unreviewed
 rugcheck.py	production	reviewed
