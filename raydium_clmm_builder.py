@@ -1,9 +1,10 @@
 """Unsigned native Raydium CLMM swap builder.
 
 Builds the SWAP_V2 exact-input instruction from a fresh confirmed tick quote.
-Only legacy SPL Token mints are accepted by the paired quote adapter today;
-Token-2022 mints remain explicitly unsupported. Bitmap-extension tick arrays
-are loaded from the same pool bitmap model as the quote adapter.
+Supports legacy SPL Token and the audited Token-2022 transfer-fee extension
+subset, with mint-specific token-program accounts and extension-aware token
+account validation. Unsupported extensions and unmodelled fee modes remain
+fail-closed. Bitmap-extension tick arrays use the quote adapter's pool model.
 No signing or broadcasting is performed.
 """
 import base64
