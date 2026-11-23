@@ -49,6 +49,29 @@ class StrategyRulesTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("unavailable", reason)
 
+    def test_not_does_not_turn_missing_data_into_approval(self):
+        config = '{"main":{"not":[{"field":"volume_m5","op":"gte","value":100}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reason)
+
+    def test_any_group_can_pass_when_another_branch_has_unknown_data(self):
+        config = '{"main":{"any":[{"field":"volume_m5","op":"gte","value":100},{"field":"score","op":"gte","value":70}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, _ = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertTrue(passed)
+
+    def test_all_group_does_not_hide_unknown_data_behind_true_sibling(self):
+        config = '{"main":{"all":[{"field":"volume_m5","op":"gte","value":100},{"field":"score","op":"gte","value":70}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reason)
+
     def test_invalid_config_fails_closed(self):
         with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": "{broken"}, clear=False):
             passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
