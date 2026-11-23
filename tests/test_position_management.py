@@ -1,6 +1,9 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import paper_trading
 
 import database
 
@@ -53,6 +56,34 @@ class PositionManagementTests(unittest.TestCase):
         summary = database.get_filtering_summary()
         self.assertEqual(summary["decisions"]["REJECT"], 1)
         self.assertEqual(database.get_recent_filter_events(1)[0]["reason"], "Buy pressure too weak")
+
+
+    def test_final_original_share_ladder_tier_uses_full_close_path(self):
+        position = {
+            "entry_price": 1.0,
+            "opened_at": "2026-01-01T00:00:00+00:00",
+            "metadata": {"peak_price": 1.0},
+            "strategy": "main",
+        }
+        exit_config = {"stop_loss_pct": 9.0}
+        with (
+            patch.object(paper_trading, "_force_stop_active", return_value=False),
+            patch.object(paper_trading, "refresh_account", return_value={}),
+            patch.object(paper_trading, "positions", {"MINT_FINAL": position}),
+            patch.object(paper_trading, "get_dca_policy", return_value={"enabled": False}),
+            patch.object(paper_trading, "get_dca_steps", return_value=[]),
+            patch.object(paper_trading.exit_policy, "get_exit_policy", return_value=exit_config),
+            patch.object(
+                paper_trading, "get_exit_steps",
+                return_value=[{"profit_pct": 10.0, "sell_fraction": 1.0}],
+            ),
+            patch.object(paper_trading, "close_position", return_value={"result": "CLOSED"}) as close,
+            patch.object(database, "update_position_metadata"),
+        ):
+            result = paper_trading.update_position("MINT_FINAL", 1.10)
+
+        self.assertEqual(result, {"result": "CLOSED"})
+        close.assert_called_once_with("MINT_FINAL", 1.10, "EXIT LADDER TIER 1")
 
 
 if __name__ == "__main__":
