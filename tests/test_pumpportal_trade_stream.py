@@ -89,7 +89,7 @@ class PumpPortalTradeStreamTests(unittest.TestCase):
 
     def test_stop_listener_closes_socket_and_joins_worker(self):
         thread = Mock()
-        thread.is_alive.side_effect = [True, False]
+        thread.is_alive.return_value = False
         ws = Mock()
         with sniper_scanner.listener_lock:
             sniper_scanner._listener_thread = thread
