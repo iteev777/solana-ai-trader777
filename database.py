@@ -1807,7 +1807,7 @@ def restore_database(backup_name, backup_dir=None):
         raise FileNotFoundError("Selected database backup does not exist or is empty")
 
     # Verify the candidate before touching the active database.
-    candidate = sqlite3.connect("file:" + source_path.replace("?", "%3f") + "?mode=ro", uri=True, timeout=30)
+    candidate = sqlite3.connect(source_path, timeout=30)
     try:
         integrity = candidate.execute("PRAGMA integrity_check").fetchone()
         version = candidate.execute(
