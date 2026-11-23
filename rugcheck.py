@@ -147,10 +147,23 @@ def _lp_lock_percentage(risks):
     return None
 
 
+def get_security_risk_band(normalized_score):
+    """Return the shared ScreenerBot-compatible band for a 0-100 risk score."""
+    score = get_number(normalized_score)
+    if score is None or not score.is_integer() or not 0 <= score <= 100:
+        return None
+    if score <= 30:
+        return "low"
+    if score <= 60:
+        return "medium"
+    return "high"
+
+
 def analyze_rugcheck_report(data):
     """Normalize RugCheck risk signals into one auditable, fail-closed decision."""
     empty = {
         "status": "UNKNOWN", "safe": False, "score": None, "raw_score": None,
+        "risk_band": None,
         "risk_count": 0, "high_risks": 0, "medium_risks": 0,
         "low_risks": 0, "unknown_risks": 0,
         "mint_authority": "UNKNOWN", "freeze_authority": "UNKNOWN",
@@ -556,6 +569,7 @@ def analyze_rugcheck_report(data):
         "status": status,
         "safe": status == "PASS",
         "score": normalized_score,
+        "risk_band": get_security_risk_band(normalized_score),
         "raw_score": raw_score,
         "risk_count": len(risks),
         "high_risks": high_risks,
