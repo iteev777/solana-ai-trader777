@@ -208,7 +208,9 @@ def _evaluate(node, context, path="root"):
     return ("true", []) if passed else ("false", [field + " failed (" + str(actual) + " " + description + ")"])
 
 
-def _validate_node(node, path="root"):
+def _validate_node(node, path="root", depth=1):
+    if depth > 4:
+        raise ValueError(path + ": rule tree exceeds maximum depth of 4")
     if not isinstance(node, dict):
         raise ValueError(path + ": rule must be an object")
     groups = [key for key in ("all", "any", "not") if key in node]
@@ -222,7 +224,7 @@ def _validate_node(node, path="root"):
         if key == "not" and len(children) != 1:
             raise ValueError(path + ": not requires one rule")
         for index, child in enumerate(children):
-            _validate_node(child, path + "." + key + "[" + str(index) + "]")
+            _validate_node(child, path + "." + key + "[" + str(index) + "]", depth + 1)
         return
     if "condition" in node:
         if path.count("[") > 30:
