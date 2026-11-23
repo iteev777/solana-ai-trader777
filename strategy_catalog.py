@@ -39,5 +39,14 @@ def get_strategy_catalog():
         "timeframes": ["1m", "5m", "15m", "1h", "4h", "12h", "1d"],
         "logic": ["all", "any", "not"],
         "paper_validation_recommended": True,
+        "indicator_freshness": {
+            "enabled": True,
+            "max_age_seconds": max(30.0, min(
+                float(__import__("os").getenv("TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS", "180")),
+                3600.0,
+            )),
+            "missing_timestamp": "reject",
+            "future_timestamp": "reject",
+        },
         "live_execution": "locked",
     }
