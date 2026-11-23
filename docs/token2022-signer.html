@@ -50,6 +50,7 @@ function verifyToken2022Ata(data,mint,payer){
  if(!raw.subarray(0,32).equals(mint.toBuffer()))throw Error("ATA:n mint-osoite ei täsmää.");
  if(!raw.subarray(32,64).equals(payer.toBuffer()))throw Error("ATA:n omistaja ei täsmää lompakkoon.");
  if(raw[108]!==1)throw Error("ATA ei ole alustettu.");
+ if(raw.readUInt32LE(72)!==0||raw.readUInt32LE(129)!==0)throw Error("ATA:lla ei saa olla delegate- tai close authority -oikeutta.");
  if(raw[165]!==2)throw Error("Token-2022 ATA account-type -merkki on virheellinen.");
  const extensions=new Map();
  let offset=166;
