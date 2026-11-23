@@ -94,16 +94,27 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
 
     slippage = quote.get("slippage_bps", 100)
     fresh = quote_orca_whirlpool_pool(pool, input_mint, amount, slippage, output_mint)
-    if (fresh.get("pool_id") != pool or fresh.get("input_mint") != input_mint
-            or fresh.get("output_mint") != output_mint or fresh.get("input_amount") != amount
-            or fresh.get("slot", 0) < quote_slot):
-        raise ValueError("Fresh Orca quote does not validate the requested pool, pair and amount")
+    if (
+        not isinstance(fresh, dict)
+        or fresh.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_TICK_SNAPSHOT"
+        or fresh.get("pool_id") != pool
+        or fresh.get("input_mint") != input_mint
+        or fresh.get("output_mint") != output_mint
+        or fresh.get("input_amount") != amount
+    ):
+        raise ValueError("Fresh Orca quote does not validate status, pool, pair and amount")
+    fresh_slot = fresh.get("slot")
+    if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot or fresh_slot <= 0:
+        raise ValueError("Fresh Orca quote has an invalid or older confirmed slot")
     for field in ("token_program_input", "token_program_output"):
         if quote.get(field) != fresh.get(field):
             raise ValueError("Orca token program state changed since the supplied quote")
+    fresh_out = fresh.get("out_amount")
     minimum_out = fresh.get("minimum_out_amount")
-    if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= 2**64 - 1:
-        raise ValueError("Fresh Orca quote minimum output is invalid")
+    if isinstance(fresh_out, bool) or not isinstance(fresh_out, int) or not 0 < fresh_out <= 2**64 - 1:
+        raise ValueError("Fresh Orca quote output is invalid")
+    if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= fresh_out:
+        raise ValueError("Fresh Orca minimum output is invalid or exceeds the quoted output")
 
     discovered = chain._account(pool)
     if discovered.get("owner") != ORCA_PROGRAM_ID:
