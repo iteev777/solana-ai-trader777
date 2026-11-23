@@ -96,7 +96,7 @@ def register_native_approval(unsigned_transaction, protocol, last_valid_block_he
     if protocol == "devnet_system_transfer":
         if os.getenv("TROJAN_DEVNET_E2E_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
             raise NativeExecutionRejected("Devnet test protocol is disabled")
-    elif protocol not in ("raydium_cpmm", "raydium_clmm", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "pumpswap", "orca_whirlpool", "meteora_dlmm"):
+    elif protocol not in ("raydium_cpmm", "raydium_clmm", "meteora_dbc", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "pumpswap", "orca_whirlpool", "meteora_dlmm"):
         raise NativeExecutionRejected("Unsupported native transaction protocol")
     if isinstance(last_valid_block_height, bool) or not isinstance(last_valid_block_height, int) or last_valid_block_height <= 0:
         raise NativeExecutionRejected("Valid block height is required")
