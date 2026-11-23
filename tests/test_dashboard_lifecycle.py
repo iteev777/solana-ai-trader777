@@ -12,7 +12,7 @@ class DashboardLifecycleTests(unittest.TestCase):
     def test_stop_dashboard_shuts_server_and_joins_thread(self):
         server = Mock()
         thread = Mock()
-        thread.is_alive.side_effect = [True, False]
+        thread.is_alive.return_value = False
         dashboard._server = server
         dashboard._server_thread = thread
 
