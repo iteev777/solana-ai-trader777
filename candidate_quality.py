@@ -1,14 +1,32 @@
 """Independent multi-stage Solana candidate scoring for Trojan V2.
 
 Scores are prioritisation signals, not buy instructions. Missing market data is
-never fabricated and never treated as proof of safety. The discovery pipeline
-keeps candidates with incomplete data in a watch tier so fast/new tokens are
-not silently discarded.
+never fabricated and never treated as proof of safety. Provider feeds are
+collapsed into independent source families so several endpoints from one
+provider cannot masquerade as independent corroboration.
 """
 import math
 import time
 
 _last_quality_status = {"candidate_count": 0, "tiers": {"strong": 0, "watch": 0, "weak": 0, "reject": 0}, "gating_enabled": False}
+
+# A source label describes a feed, not necessarily an independent provider.
+# Keep the raw feed list for audit, but score corroboration by provider family.
+_SOURCE_FAMILIES = {
+    "gecko": "geckoterminal",
+    "geckoterminal": "geckoterminal",
+    "dex": "dexscreener",
+    "dexscreener": "dexscreener",
+    "birdeye": "birdeye",
+    "pumpportal": "pumpportal",
+    "pumpfun": "pumpfun",
+    "rugcheck": "rugcheck",
+    "jupiter": "jupiter",
+    "coingecko": "coingecko",
+    "defillama": "defillama",
+    "helius": "helius",
+    "solana_rpc": "solana_rpc",
+}
 
 
 def _number(value):
@@ -44,6 +62,18 @@ def _metric(market, token, key, *fallbacks):
     return _number(value)
 
 
+def _source_family(source):
+    value = str(source or "").strip().lower().replace("-", "_")
+    if not value:
+        return None
+    # Longest prefix wins; feed suffixes (new_pools, trending, etc.) are not
+    # counted as separate providers.
+    for prefix, family in sorted(_SOURCE_FAMILIES.items(), key=lambda pair: -len(pair[0])):
+        if value == prefix or value.startswith(prefix + "_"):
+            return family
+    return value.split("_", 1)[0]
+
+
 def score_candidate(token):
     token = token if isinstance(token, dict) else {}
     market = token.get("market_data")
@@ -68,16 +98,36 @@ def score_candidate(token):
     price = _metric(market, token, "priceUsd", "price_usd")
 
     created = _metric(market, token, "pairCreatedAt", "created_at_ms")
-    age_min = max(0.0, (time.time() * 1000 - created) / 60000) if created else None
-    sources = token.get("discovery_sources")
-    sources = list(dict.fromkeys(s.strip().lower() for s in sources if isinstance(s, str) and s.strip())) if isinstance(sources, list) else []
+    now = time.time()
+    age_min = (now * 1000 - created) / 60000 if created is not None else None
+    raw_sources = token.get("discovery_sources")
+    sources = list(dict.fromkeys(
+        s.strip().lower() for s in raw_sources
+        if isinstance(s, str) and s.strip()
+    )) if isinstance(raw_sources, list) else []
+    families = sorted(set(filter(None, (_source_family(s) for s in sources))))
     reasons, hard_flags = [], []
     score = 0.0
 
-    # Market depth: 25 points. Unknown values are explicitly marked, not zeroed.
+    # Reject impossible market values rather than rewarding/penalising them as
+    # ordinary low activity. Missing values remain unknown, not zero.
+    for name, value in (
+        ("LIQUIDITY", liquidity), ("VOLUME_5M", vol5), ("VOLUME_1H", vol1h),
+        ("VOLUME_6H", vol6h), ("VOLUME_24H", vol24),
+        ("BUYS_5M", buys5), ("SELLS_5M", sells5),
+        ("BUYS_1H", buys1h), ("SELLS_1H", sells1h),
+    ):
+        if value is not None and value < 0:
+            hard_flags.append("INVALID_" + name)
+    for name, value in (("BUYS_5M", buys5), ("SELLS_5M", sells5),
+                        ("BUYS_1H", buys1h), ("SELLS_1H", sells1h)):
+        if value is not None and int(value) != value:
+            hard_flags.append("NON_INTEGER_" + name)
+
+    # Market depth: 25 points.
     if liquidity is None:
         reasons.append("LIQUIDITY_UNKNOWN")
-    elif liquidity <= 0:
+    elif liquidity == 0:
         hard_flags.append("ZERO_LIQUIDITY")
     elif liquidity < 1500:
         score += 2
@@ -89,7 +139,7 @@ def score_candidate(token):
     else:
         score += 25
 
-    # Volume profile: 25 points, using multiple windows where available.
+    # Volume profile: 25 points, using independent windows.
     known_volumes = [v for v in (vol5, vol1h, vol6h, vol24) if v is not None]
     if not known_volumes:
         reasons.append("VOLUME_UNKNOWN")
@@ -105,7 +155,7 @@ def score_candidate(token):
         if vol24 is not None:
             score += 4 if vol24 >= 100000 else 2 if vol24 > 0 else 0
 
-    # Transaction flow and sell pressure: 20 points.
+    # Transaction flow and sell pressure.
     ratios = []
     for buys, sells in ((buys5, sells5), (buys1h, sells1h)):
         if buys is not None and sells is not None and buys >= 0 and sells >= 0 and buys + sells > 0:
@@ -121,14 +171,20 @@ def score_candidate(token):
         ratio = None
         reasons.append("TRANSACTION_FLOW_UNKNOWN")
 
-    # Source agreement: 10 points. One source is not treated as consensus.
-    score += 10 if len(sources) >= 4 else 7 if len(sources) >= 2 else 3 if sources else 0
-    if not sources:
+    # Independent provider agreement: multiple feeds from the same vendor
+    # count once. A single provider is never treated as consensus.
+    family_count = len(families)
+    score += 10 if family_count >= 4 else 7 if family_count >= 2 else 3 if family_count == 1 else 0
+    if not families:
         reasons.append("SOURCE_PROVENANCE_UNKNOWN")
+    elif family_count == 1:
+        reasons.append("SINGLE_PROVIDER_ONLY")
 
-    # Age: 10 points. Freshness is useful, but extremely new pools get less trust.
+    # Age: very new pools are not given the same trust as established pools.
     if age_min is None:
         reasons.append("TOKEN_AGE_UNKNOWN")
+    elif age_min < -1:
+        hard_flags.append("FUTURE_POOL_TIMESTAMP")
     elif age_min < 2:
         score += 4
         reasons.append("VERY_NEW_POOL")
@@ -139,7 +195,7 @@ def score_candidate(token):
     else:
         score += 4
 
-    # Momentum and anti-chase: 10 points.
+    # Momentum and anti-chase.
     if change5 is None:
         reasons.append("SHORT_TERM_MOMENTUM_UNKNOWN")
     elif change5 < -15:
@@ -160,7 +216,7 @@ def score_candidate(token):
 
     if price is not None and price <= 0:
         hard_flags.append("INVALID_PRICE")
-    if fdv is not None and fdv < 0 or mcap is not None and mcap < 0:
+    if (fdv is not None and fdv < 0) or (mcap is not None and mcap < 0):
         hard_flags.append("INVALID_VALUATION")
 
     score = round(min(100.0, max(0.0, score)), 2)
@@ -177,7 +233,9 @@ def score_candidate(token):
             "liquidity_usd": liquidity, "volume_5m_usd": vol5,
             "volume_1h_usd": vol1h, "volume_6h_usd": vol6h,
             "volume_24h_usd": vol24, "buy_ratio": round(ratio, 4) if ratio is not None else None,
-            "source_count": len(sources), "age_minutes": round(age_min, 2) if age_min is not None else None,
+            "source_count": len(sources), "independent_source_count": family_count,
+            "source_families": families, "raw_sources": sources,
+            "age_minutes": round(age_min, 2) if age_min is not None else None,
             "price_change_5m": change5, "price_change_1h": change1h,
             "price_change_6h": change6h, "price_change_24h": change24,
             "fdv_usd": fdv, "market_cap_usd": mcap,
@@ -197,14 +255,13 @@ def rank_candidates(tokens, market_data_by_mint=None):
         address = item.get("tokenAddress") or item.get("address") or item.get("mint")
         if not isinstance(item.get("market_data"), dict) and isinstance(market_data_by_mint.get(address), dict):
             item["market_data"] = market_data_by_mint[address]
-        report = score_candidate(item)
-        item["candidate_quality"] = report
+        item["candidate_quality"] = score_candidate(item)
         ranked.append(item)
     tier_order = {"strong": 0, "watch": 1, "weak": 2, "reject": 3}
     ranked.sort(key=lambda item: (
         tier_order.get(item["candidate_quality"]["tier"], 4),
         -item["candidate_quality"]["score"],
-        -len(item.get("discovery_sources", [])) if isinstance(item.get("discovery_sources"), list) else 0,
+        -item["candidate_quality"]["inputs"]["independent_source_count"],
         str(item.get("tokenAddress", "")),
     ))
     _last_quality_status = get_quality_status(ranked)
