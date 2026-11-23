@@ -2,6 +2,9 @@ name: Trojan V2 full validation
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/dex-jupiter-noncustodial-execution-current
 
 permissions:
   contents: read
