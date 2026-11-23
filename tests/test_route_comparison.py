@@ -72,6 +72,47 @@ class RouteComparisonTests(unittest.TestCase):
         self.assertEqual(result["quotes"]["direct_pool"]["slot"], 777)
 
 
+
+    def test_pumpswap_fee_breakdown_and_fee_mint_are_exposed(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "pumpswap_direct", "protocol": "pumpswap",
+            "output_mint": "out", "fee_mint": "quote",
+            "out_amount": 1200, "minimum_out_amount": 1180,
+            "price_impact_percent": 0.2, "slot": 777, "pool_id": "pool",
+            "lp_fee_amount": 2, "protocol_fee_amount": 92,
+            "creator_fee_amount": 30, "total_fee_amount": 124,
+        }
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
+        quote = result["quotes"]["direct_pool"]
+        self.assertEqual(result["best_provider"], "pumpswap_direct")
+        self.assertEqual(quote["fee_mint"], "quote")
+        self.assertEqual(quote["fee_amounts"]["lp"], 2)
+        self.assertEqual(quote["fee_amounts"]["protocol"], 92)
+        self.assertEqual(quote["fee_amounts"]["creator"], 30)
+        self.assertEqual(quote["fee_amounts"]["total"], 124)
+
+    def test_router_status_lists_pumpswap_as_a_direct_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("PumpSwap", status["direct_pool"]["quote_adapters"])
+
+
     def test_direct_quote_with_wrong_output_mint_is_not_compared(self):
         jupiter = {
             "provider": "jupiter", "out_amount": 1000,
