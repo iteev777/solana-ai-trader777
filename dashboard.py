@@ -670,6 +670,7 @@ def api_dex_order():
             payload.get("amount"),
             payload.get("taker"),
             payload.get("slippage_bps"),
+            simulate=payload.get("simulate", True) is True,
         )
         return jsonify(order)
     except ValueError as error:
