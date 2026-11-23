@@ -192,7 +192,7 @@ def _fetch_wallet_signatures(wallet, limit=None, before=None, until=None):
 
 
 def _process_wallet_signature(wallet, signature):
-    """Persist a deduplicated wallet event; only fresh events can reach paper-copy."""
+    """Persist a deduplicated wallet event; keep cursor retryable under backpressure."""
     event = _fetch_wallet_transaction(signature, wallet)
     if not isinstance(event, dict):
         # A structurally valid transaction that cannot be classified is a
@@ -219,6 +219,19 @@ def _process_wallet_signature(wallet, signature):
         if inserted:
             _status["stale_events_observed"] += 1
         return True
+    if inserted:
+        send_alert(
+            "COPY WATCH " + event["action"]
+            + "\\nWallet: " + wallet
+            + "\\nMint: " + event["token_mint"]
+            + "\\nToken delta: " + str(round(event["token_delta"], 6))
+            + "\\nSOL delta: " + (
+                str(round(event["sol_delta"], 6))
+                if event["sol_delta"] is not None else "n/a"
+            )
+            + "\\nClassification: " + event.get("classification_reason", "unknown")
+            + "\\nSignature: " + signature
+        )
     if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
         try:
             import main
@@ -230,20 +243,6 @@ def _process_wallet_signature(wallet, signature):
         except Exception as copy_error:
             _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
             raise RuntimeError("paper copy dispatch is pending: " + str(copy_error)[:120]) from copy_error
-    if not inserted:
-        return True
-    send_alert(
-        "COPY WATCH " + event["action"]
-        + "\nWallet: " + wallet
-        + "\nMint: " + event["token_mint"]
-        + "\nToken delta: " + str(round(event["token_delta"], 6))
-        + "\nSOL delta: " + (
-            str(round(event["sol_delta"], 6))
-            if event["sol_delta"] is not None else "n/a"
-        )
-        + "\nClassification: " + event.get("classification_reason", "unknown")
-        + "\nSignature: " + signature
-    )
     return True
 
 
