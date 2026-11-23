@@ -111,7 +111,7 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
     total_out = total_fee = crossed = 0
 
     for tick_index, liquidity_net, target_sqrt, is_initialized in steps:
-        if (zero_for_one and target_sqrt >= current_sqrt) or (
+        if (zero_for_one and target_sqrt > current_sqrt) or (
             not zero_for_one and target_sqrt <= current_sqrt
         ):
             continue
