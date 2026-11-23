@@ -1752,7 +1752,8 @@ def monitor_positions():
 
             liquidity_status = check_liquidity(
                 address,
-                liquidity
+                liquidity,
+                pool_address=pair.get("pairAddress"),
             )
 
             if liquidity_status == "COLLAPSE":
