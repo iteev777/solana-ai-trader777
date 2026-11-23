@@ -62,6 +62,14 @@ class PersistentBlacklistTests(unittest.TestCase):
             ("token", SYSTEM), ("unknown", SYSTEM), ("pool", "")
         ]), [])
 
+    def test_malformed_rows_and_duplicates_do_not_hide_a_match(self):
+        blacklist.add_entry("token", SYSTEM, "blocked")
+        matches = blacklist.match_entries([
+            None, ("token",), ("token", "1" * 45),
+            ("token", SYSTEM), ["token", SYSTEM],
+        ])
+        self.assertEqual([row["entry_value"] for row in matches], [SYSTEM])
+
     def test_token_account_and_authority_blacklist_matches_security_report(self):
         blacklist.add_entry("account", SYSTEM, "known hostile authority")
         report = {
