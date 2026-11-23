@@ -62,6 +62,12 @@ types. Known extensions are labeled with their protocol implications, including
 transfer fees, confidential transfers, permanent delegates, transfer hooks,
 non-transferability, pausable mints, and scaled UI amounts.
 
+A related `POST /api/token2022-account-inspect` endpoint accepts an
+`account` public key and reports the Token-2022 token-account base fields,
+raw balance, initialized/frozen state, and account-side TLV extensions. Both
+inspection endpoints are diagnostic only; they do not imply that the account
+can be used by any current native swap builder.
+
 **Inspection is not Token-2022 swap support.** The response explicitly keeps
 `swap_eligibility` blocked and `execution_enabled` false. Native builders and
 wallet preflight still require the legacy SPL Token program. Transfer-fee
