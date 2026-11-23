@@ -881,6 +881,28 @@ def api_wallet_preflight():
         return jsonify({"error": "Wallet preflight failed", "detail": str(error)[:180]}), 502
 
 
+@app.post("/api/ata-order")
+def api_ata_order():
+    """Build and simulate an unsigned legacy SPL ATA creation order."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from ata_manager import create_ata_order
+        result = create_ata_order(
+            payload.get("wallet"),
+            payload.get("mint"),
+            payload.get("min_sol_reserve_lamports"),
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "ATA order preparation failed", "detail": str(error)[:180]}), 502
+
+
 @app.get("/api/native-execution-status")
 def api_native_execution_status():
     from native_execution import get_native_execution_status
