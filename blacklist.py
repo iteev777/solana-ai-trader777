@@ -57,3 +57,16 @@ def match_entries(entries):
         except ValueError:
             continue
     return database.match_blacklist_entries(normalized)
+
+
+def match_token_security_accounts(report):
+    if not isinstance(report, dict):
+        return []
+    entries = []
+    details = report.get("largest_token_account_details")
+    if isinstance(details, list):
+        for detail in details:
+            if isinstance(detail, dict):
+                entries.append(("account", detail.get("address")))
+                entries.append(("account", detail.get("authority")))
+    return match_entries(entries)
