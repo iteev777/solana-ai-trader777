@@ -722,10 +722,15 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium CPMM pool address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
-    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
-        raise ValueError("Input amount must be a positive integer")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if (isinstance(max_snapshot_age, bool)
+            or not isinstance(max_snapshot_age, (int, float))
+            or not math.isfinite(float(max_snapshot_age))
+            or max_snapshot_age <= 0):
+        raise ValueError("Maximum snapshot age must be positive and finite")
 
     discovered = _account(pool_address)
     if discovered.get("owner") != PROGRAMS["raydium_cpmm"]:
@@ -736,14 +741,20 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         first["base_mint"], first["quote_mint"]
     ]
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Raydium CPMM snapshot must include a positive confirmed slot")
     pool_acc, config_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
     if any(item is None for item in accounts):
         raise ValueError("Raydium CPMM snapshot is missing one or more accounts")
     if pool_acc["owner"] != PROGRAMS["raydium_cpmm"]:
         raise ValueError("Raydium CPMM pool owner changed during snapshot")
     decoded = _decode_pool("raydium_cpmm", pool_acc["data"])
-    if decoded["amm_config"] != first["amm_config"] or decoded["vault_base"] != first["vault_base"] or decoded["vault_quote"] != first["vault_quote"]:
-        raise ValueError("Raydium CPMM pool accounts changed during snapshot")
+    for field in (
+        "amm_config", "vault_base", "vault_quote", "base_mint", "quote_mint",
+        "token_program_base", "token_program_quote",
+    ):
+        if decoded.get(field) != first.get(field):
+            raise ValueError("Raydium CPMM pool relationships changed during snapshot")
     if config_acc["owner"] != PROGRAMS["raydium_cpmm"]:
         raise ValueError("AmmConfig is not owned by the Raydium CPMM program")
     config = _decode_raydium_amm_config(config_acc["data"])
@@ -843,12 +854,19 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
     if output_amount <= 0 or output_amount >= reserve_out:
         raise ValueError("Raydium CPMM quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    if minimum_out <= 0:
+        raise ValueError("Raydium CPMM minimum output rounds to zero")
     impact = 1.0 - ((reserve_out - raw_output) / (reserve_in + net_input)) / (reserve_out / reserve_in)
     if not math.isfinite(impact) or impact < 0:
         raise ValueError("Raydium CPMM price impact is invalid")
-    age = time.time() - now
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Raydium CPMM confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Raydium CPMM snapshot is stale")
+        raise ValueError("Raydium CPMM confirmed snapshot is stale")
 
     return {
         "provider": "raydium_cpmm_direct",
