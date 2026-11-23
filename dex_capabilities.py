@@ -28,6 +28,7 @@ NATIVE_BUILDERS = {
     "fluxbeam_amm": ("fluxbeam_builder", "build_fluxbeam_swap", "simulate_fluxbeam_transaction"),
     "moonit_amm": ("moonit_builder", "build_moonit_swap", "simulate_moonit_transaction"),
     "pumpfun_legacy": ("pumpfun_legacy_builder", "build_pumpfun_legacy_swap", "simulate_pumpfun_legacy_transaction"),
+    "meteora_damm_v2": ("meteora_damm_v2_builder", "build_meteora_damm_v2_swap", "simulate_meteora_damm_v2_transaction"),
     "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap", "simulate_pumpswap_v2_transaction"),
     "orca_whirlpool": ("orca_whirlpool_builder", "build_orca_whirlpool_swap", "simulate_orca_whirlpool_transaction"),
     "meteora_dlmm": ("meteora_dlmm_builder", "build_meteora_dlmm_swap", "simulate_meteora_dlmm_transaction"),
