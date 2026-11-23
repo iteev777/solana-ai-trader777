@@ -2034,15 +2034,15 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/webserver/routes/updates/handlers.rs` | PENDING |  |
 | `src/webserver/routes/updates/mod.rs` | PENDING |  |
 | `src/webserver/routes/updates/types.rs` | PENDING |  |
-| `src/webserver/routes/wallet/handlers.rs` | PENDING |  |
+| `src/webserver/routes/wallet/handlers.rs` | MAPPED | `dashboard.py` (`/api/wallet-balance`, `/api/wallet-preflight`, `/api/ata-order`) | Trojan exposes a read-only public-wallet SOL + SPL/Token-2022 snapshot with a 15-second cache, plus explicit wallet preflight and unsigned ATA order endpoints. Reference serves a unified live wallet snapshot with token metadata enrichment and refresh/cache controls. Trojan's direct-RPC portfolio endpoint is only a partial equivalent; metadata pricing/cache and explicit refresh parity remain open. |
 | `src/webserver/routes/wallet/handlers_tests.rs` | PENDING |  |
 | `src/webserver/routes/wallet/mod.rs` | PENDING |  |
 | `src/webserver/routes/wallet/types.rs` | PENDING |  |
-| `src/webserver/routes/wallets/handlers.rs` | PENDING |  |
+| `src/webserver/routes/wallets/handlers.rs` | NOT-APPLICABLE | No custodial multi-wallet manager by design; `dashboard.py` exposes one configured public wallet and copy-watch addresses | Reference manages encrypted wallet records, main-wallet selection, export, replacement, backup and restart blockers. Trojan intentionally does not store or export private keys and delegates transaction signing to the user's external wallet. Do not recreate server-side key custody; revisit only if a secure external-wallet connection UX is in scope. |
 | `src/webserver/routes/wallets/handlers_tests.rs` | PENDING |  |
 | `src/webserver/routes/wallets/mod.rs` | PENDING |  |
 | `src/webserver/routes/wallets/types.rs` | PENDING |  |
-| `src/webserver/routes/wallets/watch.rs` | PENDING |  |
+| `src/webserver/routes/wallets/watch.rs` | MAPPED | `copy_trade.py`, `dashboard.py`, `database.py` | Trojan supports configured watch wallets, durable cursors, signature polling/WebSocket subscriptions, status and paper-copy queue. Reference exposes CRUD, enable/disable, high-activity approval/provider-usage acknowledgement and per-target status; Trojan currently lacks equivalent per-target enable state and explicit high-activity approval workflow. |
 | `src/webserver/server.rs` | PENDING |  |
 | `src/webserver/session.rs` | PENDING |  |
 | `src/webserver/snapshot/collectors.rs` | PENDING |  |
