@@ -150,6 +150,7 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         pair = bytearray(self.pair_data)
         pair[16:20] = (100000).to_bytes(4, "little")
         self.pair_data = bytes(pair)
+        self.pool_account = {"owner": chain.PROGRAMS["meteora_dlmm"], "data": self.pair_data}
         active = self.bin_accounts[self.array_addresses[1]]["data"]
         raw = bytearray(active)
         offset = 56 + 30 * 144
