@@ -428,12 +428,14 @@ def simulate_raydium_cpmm_transaction(transaction_base64):
             "innerInstructions": False,
         },
     ])
-    value = (result or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
         raise ValueError("Solana RPC returned a malformed simulation result")
-    error = value.get("err")
-    logs = value.get("logs")
-    if logs is not None and not isinstance(logs, list):
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Solana RPC simulation response is missing the error field")
+    error = value["err"]
+    logs = value.get("logs") or []
+    if not isinstance(logs, list):
         raise ValueError("Solana RPC returned malformed simulation logs")
     return {
         "status": "PASS" if error is None else "REJECT",
