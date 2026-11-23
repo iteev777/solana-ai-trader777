@@ -9,12 +9,20 @@ import requests
 
 
 def _detail(error):
-    return (str(error) or type(error).__name__)[:220]
+    message = str(error) or type(error).__name__
+    response = getattr(error, "response", None)
+    body = getattr(response, "text", None)
+    if isinstance(body, str) and body.strip():
+        message += ": " + body.strip()
+    return message[:220]
 
 
 def _retry_after(response):
     headers = getattr(response, "headers", None)
-    raw = headers.get("Retry-After") if isinstance(headers, dict) else None
+    try:
+        raw = headers.get("Retry-After") if headers is not None else None
+    except Exception:
+        raw = None
     if raw is None:
         return None
     try:
