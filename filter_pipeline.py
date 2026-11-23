@@ -601,10 +601,14 @@ def evaluate_token(token, mint, strategy="main"):
     # Keep stage execution lazy: the first WAIT/REJECT must prevent all later
     # stages from running, matching the ordered reference profile.
     stages = (
+        # ScreenerBot's canonical profile performs age validation in its metadata
+        # stage, before on-chain and market-data gates. Keep that ordering so a
+        # newly-created pool is classified consistently even when market data is
+        # temporarily unavailable.
         lambda: _metadata_stage(token, mint),
+        lambda: _age_stage(token),
         lambda: _onchain_stage(token),
         lambda: _market_stage(token, strategy),
-        lambda: _age_stage(token),
         lambda: _valuation_stage(token),
         lambda: _pool_metrics_stage(token),
         lambda: _activity_stage(token),
