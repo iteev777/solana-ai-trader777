@@ -165,7 +165,7 @@ def _scan_rugcheck_feed(source, endpoint):
 
 def _merge_rugcheck_candidate(existing, incoming):
     """Keep first useful metadata and union independent RugCheck feed labels."""
-    for key in ("name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv"):
+    for key in ("name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv", "decimals"):
         current = existing.get(key)
         value = incoming.get(key)
         if current in (None, "", "Unknown", 0) and value not in (None, "", "Unknown", 0):
