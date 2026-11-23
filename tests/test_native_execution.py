@@ -216,6 +216,40 @@ class NativeExecutionTests(unittest.TestCase):
                     self.signed, "nonexistent-request", confirmed=True
                 )
 
+    def test_devnet_protocol_is_disabled_unless_explicitly_enabled(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "false"}):
+            with self.assertRaisesRegex(ValueError, "Devnet test protocol is disabled"):
+                native.register_native_approval(
+                    self.unsigned, "devnet_system_transfer", 200,
+                    {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+                )
+
+    def test_devnet_approval_uses_shared_single_use_signature_verification(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "true"}):
+            approval = native.register_native_approval(
+                self.unsigned, "devnet_system_transfer", 200,
+                {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["protocol"], "devnet_system_transfer")
+        self.assertEqual(consumed["signature"], self.signature)
+        self.assertEqual(consumed["message_sha256"], approval["message_sha256"])
+        with self.assertRaisesRegex(ValueError, "missing, expired or already consumed"):
+            native.consume_native_approval(self.signed, approval["request_id"])
+
+    def test_devnet_test_protocol_cannot_enter_native_live_execution_path(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "true"}):
+            approval = native.register_native_approval(
+                self.unsigned, "devnet_system_transfer", 200,
+                {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+        with patch.object(native, "_enabled", return_value=True):
+            with self.assertRaisesRegex(ValueError, "cannot enter the native live execution path"):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+        self.assertTrue(native.NATIVE_BROADCAST_HARD_LOCK)
+
     def test_status_reports_live_execution_locked_by_default(self):
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
             status = native.get_native_execution_status()
