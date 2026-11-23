@@ -89,13 +89,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `paper_fill_model.py` | Ei vielä kartoitettu | PENDING |  |
-| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/trader/evaluators/exit_rules.rs`, `src/positions/operations/dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | DCA paper add käyttää fresh-price/cooldown/min-hold/basis/size/in-flight -gateja ja atomic database-operaatiota. Exit ladder käyttää jäljellä olevan position osuutta; lisätty reitti viimeisen 100 % osuuden atomiseen full close -operaatioon. Täysi lifecycle-, safety-exit-, live reconciliation- ja copy-position-omistajuuspariteetti avoin; uudet testit odottavat CI:tä. |
+| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/trader/evaluators/exit_rules.rs`, `src/positions/operations/dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | DCA paper add käyttää fresh-price/cooldown/min-hold/basis/size/in-flight -gateja ja atomic database-operaatiota. Exit ladder normalisoi alkuperäisen position osuudet; viimeinen 100 % jäljellä oleva osuus käyttää atomic full close -polkua. Koodimuutos commit `8146985`; täyden polun testi `c7e5161`; 1 029 testiä hyväksytty (run `45257483040`) ja full validation onnistui (run `45257482979`). Täysi lifecycle-, safety-exit-, live reconciliation- ja copy-position-omistajuuspariteetti avoin. |
 | `playground_token2022_ata.ts` | Ei vielä kartoitettu | PENDING |  |
 | `pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin ja säilyttää legacy `add_usd`; exit ladder normalisoi nyt ScreenerBot-tyylisen alkuperäisen position `sell_pct`-osuuden jäljellä olevan position osuudeksi, sallien viimeisen täyden sulun. Uudet exit ladder -testit odottavat CI:tä. |
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin ja säilyttää legacy `add_usd`; exit ladder hyväksyy nyt joko legacy `sell_fraction` (remaining basis) tai reference-tyylisen `sell_pct` (original basis), ei sekoita niitä ja torjuu yli 100 % allokaation. Koodimuutos commit `ee9b6f9`; testit `9bbb982`; 1 029 testiä hyväksytty (run `45257483040`) ja full validation onnistui (run `45257482979`). |
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -192,7 +192,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_snapshot_integrity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_watch_parity.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_position_management.py` | `tests/trader_dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | Atomic DCA/partial/full close accounting test reviewed; lisätty testi, että viimeinen original-share exit-ladder tier käyttää full-close polkua. CI odottaa; laajempi lifecycle parity avoin. |
+| `tests/test_position_management.py` | `tests/trader_dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | Atomic DCA/partial/full close accounting sekä final original-share exit-ladder tierin full-close reitti testattu; 1 029 testiä hyväksytty (run `45257483040`), full validation run `45257482979` hyväksytty. Laajempi lifecycle parity avoin. |
 | `tests/test_pre_strategy_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
@@ -241,6 +241,6 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_transaction_deltas.py` | `src/chains/solana/transactions/deltas.rs` tests | TESTED | Covers raw mint deltas, native SOL, fee payer attribution, ATA-rent correction, failed/ambiguous transactions and serialization; full validation `45256464329` (1,020 tests). |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
 | `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
-| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs`, `tests/trader_dca.rs` | PARTIAL | DCA gate testit sekä uudet exit ladder -testit kattavat legacy-fractionin, alkuperäisen position osuuden normalisoinnin, 100 % lopputason, ylijakautumisen ja sizing-basis-mixauksen. CI odottaa. |
+| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs`, `tests/trader_dca.rs` | TESTED | DCA gate testit sekä exit ladder -testit kattavat legacy-fractionin, alkuperäisen position osuuden normalisoinnin, 100 % lopputason, ylijakautumisen ja sizing-basis-mixauksen. 1 029 testiä hyväksytty (run `45257483040`), full validation `45257482979`. |
 | `quote_errors.py` | `src/swaps/error.rs` | PARTIAL | Compared typed quote-error vocabulary and retry policy. Trojan distinguishes timeout/rate-limit/no-route/not-tradable/router rejection/unavailable, but some classes still depend on provider text and registry/no-router/not-offered/severity/permanent-verdict variants are absent. |
 | `tests/test_quote_errors.py` | `src/swaps/error.rs` tests | TESTED | Covers timeout, rate-limit, no-route vs not-tradable, invalid quote, server failure and route-comparison propagation; included in 998-test validation. |
