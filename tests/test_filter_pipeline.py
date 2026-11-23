@@ -23,7 +23,7 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(
             [row["stage"] for row in result["decisions"]],
-            ["metadata", "market", "age", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
+            ["metadata", "onchain", "market", "age", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
         )
 
     def test_numeric_symbol_is_rejected(self):
@@ -32,12 +32,48 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECT")
         self.assertEqual(result["reason"], "NUMERIC_SYMBOL")
 
-    def test_missing_symbol_waits_instead_of_being_fabricated(self):
+    def test_missing_symbol_is_rejected_like_screenerbot_symbol_stage(self):
         token = dict(self.token)
         token.pop("symbol")
         result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "EMPTY_SYMBOL")
+
+    def test_empty_symbol_can_be_configured_to_wait(self):
+        token = dict(self.token, symbol="   ")
+        with patch.dict(os.environ, {"TROJAN_FILTER_REJECT_EMPTY_SYMBOLS": "false"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "WAIT")
         self.assertEqual(result["reason"], "SYMBOL_UNKNOWN")
+
+    def test_single_character_ascii_letter_is_not_rejected_by_default(self):
+        token = dict(self.token, symbol="A")
+        self.assertEqual(filter_pipeline.evaluate_token(token, "Mint111")["status"], "PASS")
+
+    def test_non_letter_single_character_can_be_rejected_when_enabled(self):
+        token = dict(self.token, symbol="!")
+        with patch.dict(os.environ, {"TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
+
+    def test_immutable_metadata_with_active_freeze_authority_is_rejected(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_known_scam_authority_flag_is_rejected(self):
+        token = dict(self.token, known_scam_authority=True)
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "KNOWN_SCAM_AUTHORITY")
+
+    def test_onchain_filter_can_be_disabled_explicitly(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "false"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
 
     def test_zero_liquidity_rejected_but_missing_liquidity_waits(self):
         zero = dict(self.token, liquidity={"usd": 0})
