@@ -79,6 +79,8 @@ class CopyEventParserTests(unittest.TestCase):
         self.assertEqual(event["classification_reason"], "TOKEN_IN_QUOTE_OUT")
         self.assertEqual(event["token_delta"], 250.0)
         self.assertEqual(event["quote_delta"], -10.0)
+        self.assertEqual(len(event["asset_deltas"]), 2)
+        self.assertEqual({row["mint"] for row in event["asset_deltas"]}, {USDC, MINT})
 
     def test_classifies_sell_from_opposing_wallet_deltas(self):
         tx = transaction(
