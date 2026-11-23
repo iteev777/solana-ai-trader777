@@ -10,7 +10,7 @@ import hashlib
 import struct
 
 import solana_onchain as chain
-from raydium_cpmm_builder import _compile_legacy_message
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 import meteora_dlmm_quote as dlmm_quote
 
 DLMM_PROGRAM_ID = chain.PROGRAMS["meteora_dlmm"]
@@ -269,7 +269,9 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         "bitmap_extension": bitmap_address if bitmap_present else None,
         "account_keys": account_keys, "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
-        "transaction_version": "legacy", "last_valid_block_height": last_valid,
+        "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(), "last_valid_block_height": last_valid,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
         "execution": "LOCKED", "signing": "DISABLED_ON_SERVER",
         "broadcast": "DISABLED", "live_trading_ready": False,
