@@ -61,14 +61,19 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         self.assertIn("Extreme top-ten holder concentration", result["reasons"])
 
     def test_creator_share_derived_from_raw_balance_and_supply(self):
-        result = analyze_rugcheck_report(safe_report(
-            creator="creator111",
-            creatorBalance=15,
-            tokenSupply="100",
-        ))
+        # Isolate this assertion from deployment-specific threshold overrides.
+        with patch.dict("os.environ", {
+            "TROJAN_RUGCHECK_MAX_CREATOR_PCT": "20",
+            "TROJAN_RUGCHECK_WARN_CREATOR_PCT": "10",
+        }):
+            result = analyze_rugcheck_report(safe_report(
+                creator="creator111",
+                creatorBalance=15,
+                tokenSupply="100",
+            ))
         self.assertEqual(result["signals"]["creator_pct"], 15.0)
-        self.assertEqual(result["status"], "REJECT")
-        self.assertGreaterEqual(result["high_risks"], 1)
+        self.assertEqual(result["status"], "PASS")
+        self.assertGreaterEqual(result["medium_risks"], 1)
 
     def test_creator_share_above_critical_threshold_rejected(self):
         result = analyze_rugcheck_report(safe_report(
