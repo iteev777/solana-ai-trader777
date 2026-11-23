@@ -262,7 +262,9 @@ def simulate_orca_whirlpool_transaction(transaction_base64):
         raise ValueError("Orca transaction simulation response is malformed")
     if value.get("err") is not None:
         raise ValueError("Orca transaction simulation failed: " + str(value["err"])[:200])
-    return {"success": True, "err": None, "logs": value.get("logs", [])[-20:],
+    return {"status": "PASS", "success": True, "err": None,
+            "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
+            "logs": value.get("logs", [])[-20:],
             "units_consumed": value.get("unitsConsumed"),
             "execution": "LOCKED", "signing": "NOT_PERFORMED",
             "broadcast": "NOT_PERFORMED"}
