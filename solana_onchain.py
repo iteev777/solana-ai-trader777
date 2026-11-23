@@ -1335,6 +1335,12 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100, out
         )
     if protocol == "pumpswap":
         return quote_pumpswap_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol == "raydium_clmm":
+        from raydium_clmm_quote import quote_raydium_clmm_pool
+        return quote_raydium_clmm_pool(
+            pool_address, input_mint, amount_in, slippage_bps,
+            output_mint=output_mint,
+        )
     if protocol == "raydium_cpmm":
         return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_amm_v4":
