@@ -282,9 +282,17 @@ def aggregate_candles(candles, interval_seconds):
     ]
 
 
+# Match ScreenerBot's seven public chart/analysis timeframes. All views
+# are derived from the same validated 1m source series; coarse frames remain
+# explicitly not-ready when the available history is too short.
 TIMEFRAMES = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
-    "30m": 1800, "1h": 3600, "4h": 14400
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "12h": 43200,
+    "1d": 86400,
 }
 
 
