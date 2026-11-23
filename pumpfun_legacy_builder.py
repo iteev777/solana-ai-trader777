@@ -197,10 +197,14 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
             raise ValueError("Pump.fun curve state changed since the supplied quote")
 
     global_address, _ = chain._find_program_address([GLOBAL_SEED], PROGRAM_ID)
+    if global_address != chain.PUMP_GLOBAL_CONFIG:
+        raise ValueError("Pump.fun Global PDA does not match the canonical address")
     fee_config_address, _ = chain._find_program_address(
         [FEE_CONFIG_SEED, _pubkey(PROGRAM_ID, "Pump.fun program")],
         FEE_PROGRAM_ID,
     )
+    if fee_config_address != chain.PUMP_FEE_CONFIG:
+        raise ValueError("Pump.fun FeeConfig PDA does not match the canonical address")
     curve_token_account, _ = chain._find_program_address(
         [_pubkey(pool, "bonding curve"), _pubkey(TOKEN_PROGRAM_ID, "token program"),
          _pubkey(token_mint, "token mint")],
@@ -240,6 +244,13 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
     current = chain._decode_pool("pumpfun_legacy", pool_acc.get("data", b""))
     if current.get("complete") or current.get("creator") != creator:
         raise ValueError("Pump.fun curve completed or creator changed during transaction preparation")
+    for field in ("virtual_token_reserves", "virtual_quote_reserves",
+                  "real_token_reserves", "real_quote_reserves",
+                  "token_total_supply", "creator", "is_mayhem_mode",
+                  "is_cashback_coin", "is_holder_reward", "quote_mint",
+                  "creator_fee_bps"):
+        if current.get(field) != first.get(field):
+            raise ValueError("Pump.fun curve state changed during transaction preparation")
     if slot < fresh_slot or slot - fresh_slot > max_quote_slot_lag:
         raise ValueError("Fresh Pump.fun quote is stale relative to transaction snapshot")
     if mint_acc.get("owner") != TOKEN_PROGRAM_ID:
