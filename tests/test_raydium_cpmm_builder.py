@@ -42,6 +42,7 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             "input_mint": self.mint_a,
             "output_mint": self.mint_b,
             "input_amount": 100,
+            "out_amount": 100,
             "minimum_out_amount": 80,
             "slot": 500,
         }
@@ -121,6 +122,15 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         quote = dict(self.quote, protocol="raydium_clmm")
         with self.assertRaisesRegex(ValueError, "not a confirmed Raydium CPMM"):
             self.call_builder(quote)
+
+
+    def test_rejects_fresh_quote_minimum_above_output(self):
+        invalid = dict(self.quote, minimum_out_amount=101)
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=invalid):
+            with self.assertRaisesRegex(ValueError, "exceeds its quoted output"):
+                builder.build_raydium_cpmm_swap(
+                    self.quote, self.wallet, self.user_in, self.user_out
+                )
 
     def test_rejects_stale_quote_slot(self):
         with patch.object(chain, "quote_raydium_cpmm_pool", return_value=self.quote), \
