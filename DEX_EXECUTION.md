@@ -65,9 +65,11 @@ X-Trojan-Confirm-Live: 1
 - This adapter uses Jupiter's meta-aggregator order path. Native
   Raydium CPMM and PumpSwap V2 builders are documented in
   `docs/RAYDIUM_CPMM_BUILDER.md` and `docs/PUMPSWAP_V2_BUILDER.md`.
-  Both build and simulate unsigned legacy transactions only; neither has a
-  native signing or broadcast endpoint. Builders for other DEX protocols
-  remain follow-up work.
+  Both prepare and simulate unsigned legacy transactions. The server never
+  signs; a separate single-use external-signature broadcast endpoint is gated
+  by `TROJAN_NATIVE_EXECUTE_ENABLED` (default false) and explicit confirmation.
+  See `docs/NATIVE_EXECUTION.md`. Builders for other DEX protocols remain
+  follow-up work.
 
 ## Environment
 
