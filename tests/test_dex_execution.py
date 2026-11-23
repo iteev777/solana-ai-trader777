@@ -79,55 +79,37 @@ class DexExecutionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "does not match"):
                 self._create_order()
 
-    def test_execute_is_locked_by_default(self):
+    def test_execute_is_hard_locked_by_default(self):
         with patch.object(dex_execution, "EXECUTE_ENABLED", False):
-            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "disabled"):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "hard-locked"):
                 dex_execution.execute_signed_order(self.transaction, "req-123", confirmed=True)
 
-    def test_execute_requires_explicit_confirmation(self):
+    def test_confirmation_and_environment_cannot_unlock_execution(self):
         with patch.object(dex_execution, "EXECUTE_ENABLED", True):
-            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "confirmation"):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "hard-locked"):
                 dex_execution.execute_signed_order(self.transaction, "req-123", confirmed=False)
 
-    def test_execute_posts_only_signed_transaction_and_request_id(self):
-        captured = {}
-
-        def fake_post(url, json, headers, timeout):
-            captured.update({"url": url, "json": json})
-            return FakeResponse({
-                "status": "Success", "signature": "signature123",
-                "code": 0, "outputAmountResult": "2500",
-            })
-
+    def test_execute_never_posts_even_with_signed_simulated_order(self):
         dex_execution._simulated_orders["req-123"] = {
             "simulation_status": "PASS", "created_at": time.time()
         }
         with patch.object(dex_execution, "EXECUTE_ENABLED", True), patch.object(
-            dex_execution.requests, "post", side_effect=fake_post
-        ):
-            result = dex_execution.execute_signed_order(
-                self.transaction, "req-123", confirmed=True
-            )
-
-        self.assertEqual(captured["json"], {
-            "signedTransaction": self.transaction, "requestId": "req-123"
-        })
-        self.assertEqual(result["status"], "Success")
-        self.assertTrue(result["explorer_url"].endswith("signature123"))
-        self.assertNotIn("req-123", dex_execution._simulated_orders)
-        with patch.object(dex_execution, "EXECUTE_ENABLED", True):
-            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "unused recent"):
+            dex_execution.requests, "post"
+        ) as post:
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "hard-locked"):
                 dex_execution.execute_signed_order(
                     self.transaction, "req-123", confirmed=True
                 )
+        post.assert_not_called()
+        self.assertIn("req-123", dex_execution._simulated_orders)
 
-    def test_expired_simulation_approval_is_rejected(self):
+    def test_expired_simulation_approval_cannot_unlock_hard_lock(self):
         dex_execution._simulated_orders["expired"] = {
             "simulation_status": "PASS",
             "created_at": time.time() - dex_execution.ORDER_TTL_SECONDS - 1,
         }
         with patch.object(dex_execution, "EXECUTE_ENABLED", True):
-            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "expired"):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "hard-locked"):
                 dex_execution.execute_signed_order(
                     self.transaction, "expired", confirmed=True
                 )
@@ -245,11 +227,9 @@ class DexExecutionTests(unittest.TestCase):
         self.assertEqual(result["simulation"]["status"], "FAIL")
         self.assertFalse(result["execution_eligible"])
 
-    def test_execute_rejects_order_without_successful_simulation(self):
+    def test_execute_hard_lock_precedes_simulation_approval_validation(self):
         with patch.object(dex_execution, "EXECUTE_ENABLED", True):
-            with self.assertRaisesRegex(
-                dex_execution.ExecutionLocked, "successful unsigned simulation"
-            ):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "hard-locked"):
                 dex_execution.execute_signed_order(
                     self.transaction, "not-simulated", confirmed=True
                 )
