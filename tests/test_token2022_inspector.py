@@ -284,7 +284,7 @@ class Token2022InspectorTests(unittest.TestCase):
 
         bad = bytearray(raw)
         bad[168:170] = (1).to_bytes(2, "little")
-        bad.extend(b"\\x00")
+        bad.extend(bytes([0]))
         with self.assertRaisesRegex(ValueError, "ImmutableOwner extension length"):
             inspector.validate_token2022_account_data(
                 {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(bad)}, mint, owner
@@ -300,7 +300,7 @@ class Token2022InspectorTests(unittest.TestCase):
         raw[165] = inspector.TOKEN_ACCOUNT_TYPE
         raw[166:168] = (2).to_bytes(2, "little")
         raw[168:170] = (7).to_bytes(2, "little")
-        with self.assertRaisesRegex(ValueError, "TransferFeeAmount extension length"):
+        with self.assertRaisesRegex(ValueError, "invalid TRANSFER_FEE_AMOUNT extension length"):
             inspector.validate_token2022_account_data(
                 {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}, mint, owner
             )
