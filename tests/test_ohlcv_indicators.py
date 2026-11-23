@@ -1,3 +1,4 @@
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -44,6 +45,7 @@ class OhlcvIndicatorFreshnessTests(unittest.TestCase):
         with patch.object(indicators, "_last_fetch", 0.0), \
              patch.object(indicators, "_last_prune", time.monotonic()), \
              patch.object(indicators, "_cache", {}), \
+             patch.object(indicators, "_fetch_lock", threading.Lock()), \
              patch.object(indicators, "get_json", return_value=payload), \
              patch("database.save_market_candles", return_value=len(raw)), \
              patch("database.get_market_candles", return_value=history) as get_history:
@@ -53,6 +55,7 @@ class OhlcvIndicatorFreshnessTests(unittest.TestCase):
             "Pool111", "1m", limit=indicators.MAX_HISTORY_CANDLES
         )
         self.assertIn("timeframes", result, msg="OHLCV fetch failed: " + repr(result))
+        self.assertIn("timeframes", result, repr(result))
         self.assertTrue(result["timeframes"]["1d"]["ready"])
         self.assertTrue(result["timeframes"]["12h"]["ready"])
 
