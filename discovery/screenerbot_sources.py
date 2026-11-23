@@ -4,9 +4,9 @@ All feeds are read-only. Provider failures are isolated so one unavailable
 source never prevents the remaining discovery sources from running.
 """
 import os
-import re
 
 from api_client import get_json
+from solana_onchain import _b58decode
 
 JUPITER_BASE = "https://lite-api.jup.ag/tokens/v2"
 RUGCHECK_BASE = "https://api.rugcheck.xyz/v1/stats"
@@ -14,14 +14,19 @@ COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/list"
 DEFILLAMA_URL = "https://api.llama.fi/protocols"
 
 TIMEOUT = 18
-BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+_FETCH_FAILED = object()
 
 
 def _is_solana_mint(value):
     if not isinstance(value, str):
         return False
     value = value.strip()
-    return bool(BASE58_RE.fullmatch(value))
+    if not 32 <= len(value) <= 44:
+        return False
+    try:
+        return len(_b58decode(value)) == 32
+    except ValueError:
+        return False
 
 
 def _items(payload):
@@ -50,6 +55,9 @@ def _candidate(mint, source, item=None, name=None, symbol=None):
         "symbol": symbol or item.get("symbol") or "Unknown",
         "discovery_sources": [source],
     }
+    decimals = item.get("decimals")
+    if type(decimals) is int and 0 <= decimals <= 255:
+        result["decimals"] = decimals
     for source_key, target_key in (
         ("icon", "icon"), ("logoURI", "icon"), ("logo", "icon"),
         ("usdPrice", "priceUsd"), ("liquidity", "liquidity_usd"),
@@ -68,8 +76,22 @@ def _safe_fetch(source, url, *, params=None, headers=None, ttl=60):
             cache_ttl=ttl, max_retries=1
         )
     except Exception as error:
-        print("DISCOVERY SOURCE ERROR:", source, repr(error), flush=True)
-        return None
+        print("DISCOVERY SOURCE ERROR:", source, type(error).__name__, flush=True)
+        return _FETCH_FAILED
+
+
+def _merge_candidate(found, token):
+    mint = token["tokenAddress"]
+    if mint not in found:
+        found[mint] = token
+        return
+    existing = found[mint]
+    source = token["discovery_sources"][0]
+    if source not in existing["discovery_sources"]:
+        existing["discovery_sources"].append(source)
+    for key, value in token.items():
+        if key != "discovery_sources" and existing.get(key) in (None, "", "Unknown"):
+            existing[key] = value
 
 
 def scan_rugcheck():
@@ -84,14 +106,16 @@ def scan_rugcheck():
     available = False
     for source, endpoint in feeds:
         payload = _safe_fetch(source, f"{RUGCHECK_BASE}/{endpoint}", ttl=45)
-        items = _items(payload)
+        items = [] if payload is None else _items(payload)
         if items is None:
             continue
         available = True
         for item in items:
             if not isinstance(item, dict):
                 continue
-            metadata = item.get("tokenMeta")
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = item.get("tokenMeta")
             metadata = metadata if isinstance(metadata, dict) else {}
             token = _candidate(
                 item.get("mint") or item.get("address"),
@@ -100,11 +124,7 @@ def scan_rugcheck():
                 symbol=item.get("symbol") or metadata.get("symbol"),
             )
             if token:
-                mint = token["tokenAddress"]
-                if mint not in found:
-                    found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
+                _merge_candidate(found, token)
     if not available:
         raise RuntimeError("RUGCHECK: all discovery feeds unavailable")
     print("RUGCHECK DISCOVERY TOKENS:", len(found), flush=True)
@@ -135,11 +155,7 @@ def scan_jupiter():
                 source, item
             )
             if token:
-                mint = token["tokenAddress"]
-                if mint not in found:
-                    found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
+                _merge_candidate(found, token)
     if not available:
         raise RuntimeError("JUPITER: all discovery feeds unavailable")
     print("JUPITER DISCOVERY TOKENS:", len(found), flush=True)
