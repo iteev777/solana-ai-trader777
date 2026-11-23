@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import ata_close_manager
 import solana_onchain as chain
+import token2022_inspector
 
 
 def key(byte):
