@@ -24,6 +24,55 @@ def tlv(extension_type, value=b""):
 
 
 class Token2022InspectorTests(unittest.TestCase):
+    def test_decodes_both_epoch_transfer_fee_schedules(self):
+        config = bytearray(108)
+        config[72:80] = (10).to_bytes(8, "little")
+        config[80:88] = (500).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[90:98] = (20).to_bytes(8, "little")
+        config[98:106] = (900).to_bytes(8, "little")
+        config[106:108] = (250).to_bytes(2, "little")
+        result = inspector.decode_transfer_fee_config(
+            mint_data(tlv(1, bytes(config)))
+        )
+        self.assertEqual(result["older"], {
+            "epoch": 10, "maximum_fee": 500, "basis_points": 100,
+        })
+        self.assertEqual(result["newer"], {
+            "epoch": 20, "maximum_fee": 900, "basis_points": 250,
+        })
+        self.assertTrue(result["epoch_selection_required"])
+
+    def test_transfer_fee_rounds_up_and_respects_maximum(self):
+        schedule = {"basis_points": 100, "maximum_fee": 50}
+        self.assertEqual(inspector.transfer_fee_for_amount(schedule, 1), 1)
+        self.assertEqual(inspector.transfer_fee_for_amount(schedule, 10_000), 50)
+        self.assertEqual(
+            inspector.transfer_fee_for_amount(
+                {"basis_points": 100, "maximum_fee": 1_000}, 10_000
+            ), 100
+        )
+
+    def test_transfer_fee_rejects_invalid_schedule_and_boolean_amount(self):
+        with self.assertRaisesRegex(ValueError, "basis points"):
+            inspector.transfer_fee_for_amount(
+                {"basis_points": 10_001, "maximum_fee": 100}, 1_000
+            )
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            inspector.transfer_fee_for_amount(
+                {"basis_points": 100, "maximum_fee": 100}, True
+            )
+
+    def test_transfer_fee_config_rejects_wrong_extension_length(self):
+        with self.assertRaisesRegex(ValueError, "108 bytes"):
+            inspector.decode_transfer_fee_config(mint_data(tlv(1, bytes(107))))
+
+    def test_transfer_fee_config_rejects_basis_points_over_10000(self):
+        config = bytearray(108)
+        config[88:90] = (10_001).to_bytes(2, "little")
+        with self.assertRaisesRegex(ValueError, "basis points"):
+            inspector.decode_transfer_fee_config(mint_data(tlv(1, bytes(config))))
+
     def test_parses_transfer_fee_and_permanent_delegate_extensions(self):
         raw = mint_data(tlv(1, bytes(108)) + tlv(12, bytes(32)))
         found = inspector.parse_tlv_extensions(raw, inspector.MINT_ACCOUNT_TYPE)
