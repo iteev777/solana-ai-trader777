@@ -13,12 +13,15 @@ import websocket
 import database
 from telegram_alerts import send_alert
 from copy_event_parser import parse_wallet_transaction
+import copy_freshness
 
 _lock = threading.Lock()
 _thread = None
 _status = {
     "running": False, "configured": False, "wallet_count": 0,
-    "last_event": None, "last_error": None, "events_seen": 0
+    "last_event": None, "last_error": None, "events_seen": 0,
+    "polls": 0, "last_poll": None, "last_poll_error": None,
+    "stale_events_observed": 0
 }
 
 
@@ -126,6 +129,117 @@ def _fetch_wallet_transaction(signature, wallet):
     )
 
 
+def _fetch_wallet_signatures(wallet, limit=None):
+    """Fetch a bounded recent signature page for reconnect recovery and polling."""
+    try:
+        configured = int(os.getenv("TROJAN_COPY_POLL_SIGNATURE_LIMIT", "20"))
+    except (TypeError, ValueError, OverflowError):
+        configured = 20
+    maximum = max(1, min(configured, 100))
+    page_limit = maximum if limit is None else max(1, min(int(limit), maximum))
+    response = requests.post(
+        _rpc_url(),
+        json={
+            "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
+            "params": [wallet, {"limit": page_limit, "commitment": "confirmed"}]
+        },
+        timeout=10
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("error"):
+        error = payload.get("error") if isinstance(payload, dict) else "invalid JSON-RPC response"
+        raise RuntimeError("signature page RPC failed: " + str(error)[:160])
+    result = payload.get("result")
+    if not isinstance(result, list):
+        raise ValueError("signature page must be a list")
+    return [
+        item for item in result
+        if isinstance(item, dict) and isinstance(item.get("signature"), str)
+        and item["signature"]
+    ]
+
+
+def _process_wallet_signature(wallet, signature):
+    """Persist a deduplicated wallet event; only fresh events can reach paper-copy."""
+    event = _fetch_wallet_transaction(signature, wallet)
+    if not isinstance(event, dict):
+        return False
+    inserted = database.record_copy_trade_event(
+        event["wallet"], event["signature"], event["action"],
+        event["token_mint"], event["token_delta"], event["sol_delta"],
+        json.dumps({
+            "logs": event["logs"],
+            "classification_reason": event.get("classification_reason"),
+            "economic_sol_delta": event.get("economic_sol_delta"),
+            "quote_delta": event.get("quote_delta"),
+            "invoked_programs": event.get("invoked_programs", [])
+        })
+    )
+    if not inserted:
+        return False
+    _status["events_seen"] += 1
+    _status["last_event"] = time.time()
+    freshness = copy_freshness.evaluate_event_freshness(
+        event.get("block_time"), received_at=event.get("received_at")
+    )
+    if not freshness.get("allowed"):
+        _status["stale_events_observed"] += 1
+        return True
+    if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
+        try:
+            import main
+            main.queue_copy_signal(event)
+        except Exception as copy_error:
+            _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
+    send_alert(
+        "COPY WATCH " + event["action"]
+        + "\nWallet: " + wallet
+        + "\nMint: " + event["token_mint"]
+        + "\nToken delta: " + str(round(event["token_delta"], 6))
+        + "\nSOL delta: " + (
+            str(round(event["sol_delta"], 6))
+            if event["sol_delta"] is not None else "n/a"
+        )
+        + "\nClassification: " + event.get("classification_reason", "unknown")
+        + "\nSignature: " + signature
+    )
+    return True
+
+
+def _poll_wallet_activity(wallets):
+    """Recover recent wallet signatures missed during WebSocket gaps; DB dedupes replay."""
+    processed = 0
+    errors = []
+    for wallet in wallets:
+        try:
+            signatures = _fetch_wallet_signatures(wallet)
+            # RPC returns newest first; process oldest first to preserve event order.
+            for item in reversed(signatures):
+                if item.get("err") is not None:
+                    continue
+                if _process_wallet_signature(wallet, item["signature"]):
+                    processed += 1
+        except Exception as error:
+            errors.append(wallet[:8] + ":" + (str(error) or type(error).__name__)[:100])
+    _status["polls"] += 1
+    _status["last_poll"] = time.time()
+    _status["last_poll_error"] = "; ".join(errors[:5]) if errors else None
+    if errors:
+        _status["last_error"] = "wallet signature poll: " + _status["last_poll_error"]
+    return {"processed": processed, "wallets": len(wallets), "errors": len(errors)}
+
+
+def _poll_interval_seconds():
+    try:
+        value = float(os.getenv("TROJAN_COPY_POLL_INTERVAL_SECONDS", "30"))
+    except (TypeError, ValueError, OverflowError):
+        value = 30.0
+    if not 5.0 <= value <= 300.0:
+        value = 30.0
+    return value
+
+
 def _subscribe_wallets(ws, wallets, timeout_seconds=15):
     """Subscribe every configured wallet or fail closed; retain early notifications."""
     if not isinstance(wallets, list) or not wallets:
@@ -211,10 +325,15 @@ def _monitor_loop():
                 "running": True, "configured": True,
                 "wallet_count": len(subscriptions), "last_error": None
             })
+            poll_interval = _poll_interval_seconds()
+            next_poll = time.monotonic()
             while True:
                 if _wallets() != wallets:
                     print("[TROJAN V2] COPY WATCHLIST CHANGED; RECONNECTING", flush=True)
                     break
+                if time.monotonic() >= next_poll:
+                    _poll_wallet_activity(wallets)
+                    next_poll = time.monotonic() + poll_interval
                 try:
                     payload = notification_queue.pop(0) if notification_queue else json.loads(ws.recv())
                 except websocket.WebSocketTimeoutException:
@@ -231,42 +350,7 @@ def _monitor_loop():
                 ), None)
                 if not signature or not wallet or value.get("err"):
                     continue
-                event = _fetch_wallet_transaction(signature, wallet)
-                if not event:
-                    continue
-                inserted = database.record_copy_trade_event(
-                    event["wallet"], event["signature"], event["action"],
-                    event["token_mint"], event["token_delta"], event["sol_delta"],
-                    json.dumps({
-                        "logs": event["logs"],
-                        "classification_reason": event.get("classification_reason"),
-                        "economic_sol_delta": event.get("economic_sol_delta"),
-                        "quote_delta": event.get("quote_delta"),
-                        "invoked_programs": event.get("invoked_programs", [])
-                    })
-                )
-                if not inserted:
-                    continue
-                _status["events_seen"] += 1
-                _status["last_event"] = time.time()
-                if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
-                    try:
-                        import main
-                        main.queue_copy_signal(event)
-                    except Exception as copy_error:
-                        _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
-                send_alert(
-                    "COPY WATCH " + event["action"]
-                    + "\nWallet: " + wallet
-                    + "\nMint: " + event["token_mint"]
-                    + "\nToken delta: " + str(round(event["token_delta"], 6))
-                    + "\nSOL delta: " + (
-                        str(round(event["sol_delta"], 6))
-                        if event["sol_delta"] is not None else "n/a"
-                    )
-                    + "\nClassification: " + event.get("classification_reason", "unknown")
-                    + "\nSignature: " + signature
-                )
+                _process_wallet_signature(wallet, signature)
         except Exception as error:
             _status.update({"running": False, "last_error": str(error)[:220]})
             print("[TROJAN V2] COPY WATCH RECONNECT:", repr(error), flush=True)
@@ -297,5 +381,6 @@ def get_copy_monitor_status():
     return dict(
         _status, configured=configured, wallet_count=len(wallets),
         paper_copy_enabled=os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true",
-        watchlist_maximum=20
+        watchlist_maximum=20,
+        poll_interval_seconds=_poll_interval_seconds()
     )
