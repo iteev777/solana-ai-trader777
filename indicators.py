@@ -303,11 +303,18 @@ def calculate_multi_timeframe_indicators(candles):
     Higher timeframes remain explicitly not-ready until enough complete
     aggregate candles exist; no synthetic history or forward filling is used.
     """
-    normalized, _history_quality = normalize_ohlcv_rows(candles)
+    normalized, history_quality = normalize_ohlcv_rows(candles)
     # The retained history can contain old gaps or stale edges. Live readiness
     # is judged from the newest API-sized window; older history still feeds
-    # complete higher-timeframe indicator series.
+    # complete higher-timeframe indicator series. Preserve validation counters
+    # from the original input: re-validating only normalized rows would erase
+    # evidence of malformed and duplicate source candles.
     _, quality = normalize_ohlcv_rows(normalized[-CANDLE_LIMIT:])
+    quality["input_count"] = history_quality["input_count"]
+    quality["invalid_count"] = history_quality["invalid_count"]
+    quality["duplicate_count"] = history_quality["duplicate_count"]
+    if history_quality["invalid_count"] and not quality.get("reason"):
+        quality["reason"] = "Invalid OHLCV rows were discarded"
     arrays = [
         [row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"]]
         for row in normalized
