@@ -141,6 +141,14 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             None, self.tick_account,
         ]
 
+    def token_account(self, mint, amount, owner):
+        data = bytearray(165)
+        data[:32] = chain._b58decode(mint)
+        data[32:64] = chain._b58decode(owner)
+        data[64:72] = amount.to_bytes(8, "little")
+        data[108] = 1
+        return {"owner": chain.TOKEN_PROGRAM, "data": bytes(data)}
+
     def _pda(self, seeds, program):
         if seeds[0] == dlmm.BITMAP_EXTENSION_SEED:
             return self.bitmap_extension, 255
