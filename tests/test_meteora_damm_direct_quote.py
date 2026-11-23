@@ -64,7 +64,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
     def test_confirmed_snapshot_quotes_both_directions(self):
         a_to_b = self.quote()
         b_to_a = self.quote(input_mint=self.mint_b, output_mint=self.mint_a)
-        self.assertEqual(a_to_b["protocol"], "meteora_damm")
+        self.assertEqual(a_to_b["protocol"], "meteora_damm_v2")
         self.assertEqual(a_to_b["slot"], 765432)
         self.assertEqual(a_to_b["output_mint"], self.mint_b)
         self.assertGreater(a_to_b["out_amount"], 0)
