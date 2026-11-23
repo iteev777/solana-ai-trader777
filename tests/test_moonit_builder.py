@@ -58,7 +58,6 @@ class MoonitBuilderTests(unittest.TestCase):
         curve[56] = 9
         curve[57] = 0
         curve[58] = 1
-        curve[48] = 0
         self.curve_data = bytes(curve)
 
         config = bytearray(170)
