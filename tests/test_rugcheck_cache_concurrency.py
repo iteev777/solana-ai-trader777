@@ -54,7 +54,7 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
 
     @patch("rugcheck.get_json")
     def test_successful_report_is_cached(self, get):
-        get.return_value = FakeResponse().json().json()
+        get.return_value = FakeResponse().json()
         first = rugcheck.get_rugcheck_report("MintCache1")
         second = rugcheck.get_rugcheck_report("MintCache1")
         self.assertIs(first, second)
@@ -116,7 +116,7 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
     @patch.dict("os.environ", {"TROJAN_RUGCHECK_CACHE_SECONDS": "0"})
     @patch("rugcheck.get_json")
     def test_zero_ttl_disables_cache(self, get):
-        get.return_value = FakeResponse()
+        get.return_value = FakeResponse().json()
         first = rugcheck.get_rugcheck_report("MintNoCache")
         second = rugcheck.get_rugcheck_report("MintNoCache")
         self.assertIsNot(first, second)
