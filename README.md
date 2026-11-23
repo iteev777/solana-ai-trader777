@@ -371,3 +371,8 @@ The RugCheck analyzer supports an optional unique-holder floor with `TROJAN_RUGC
 
 LP-lock requirements can be configured separately: `TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT` for Pump-family tokens and `TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT` for other token types. The older `TROJAN_RUGCHECK_MIN_LP_LOCK_PCT` remains the fallback for Pump-family tokens. If a configured LP-lock floor cannot be verified from the RugCheck report, the security result is UNKNOWN. The report exposes the observed lock, required floor and holder count in its structured signals.
 
+
+
+## Pump.fun legacy bonding-curve quotes
+
+The read-only direct quote layer supports SOL-paired Pump.fun legacy bonding curves using confirmed pool, Global, FeeConfig and mint account data from one RPC context. It selects the on-chain market-cap fee tier when present, checks virtual and real reserves, rejects unsupported Token-2022/custom creator-fee/reward modes, and refuses buys that would complete or migrate the curve. Route comparison forwards the requested output mint so a Pump.fun quote cannot be compared against the wrong asset. This adapter does not build, sign or broadcast swaps.
