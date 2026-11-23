@@ -1,5 +1,6 @@
 import threading
 import time
+from collections import OrderedDict
 import unittest
 from unittest.mock import patch
 
@@ -44,7 +45,7 @@ class OhlcvIndicatorFreshnessTests(unittest.TestCase):
 
         with patch.object(indicators, "_last_fetch", 0.0), \
              patch.object(indicators, "_last_prune", time.monotonic()), \
-             patch.object(indicators, "_cache", {}), \
+             patch.object(indicators, "_cache", OrderedDict()), \
              patch.object(indicators, "_fetch_lock", threading.Lock()), \
              patch.object(indicators, "get_json", return_value=payload), \
              patch("database.save_market_candles", return_value=len(raw)), \
