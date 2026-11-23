@@ -27,10 +27,10 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
 
     def test_aggregation_preserves_ohlcv_semantics(self):
         rows = self._candles(6)
-        # Anchor the sample to exact 3-minute boundaries; real Unix timeframe
-        # aggregation is epoch-aligned and a wall-clock-second remainder can
-        # legitimately split six rows across three buckets.
-        start = 1_700_000_000 - (1_700_000_000 % 180)
+        # Align the fixture to real epoch buckets and keep it fresh for the
+        # OHLCV validator; otherwise a 3-minute interval may span three buckets.
+        now = int(time.time())
+        start = now - (now % 180) - 360
         for index, row in enumerate(rows):
             row[0] = start + index * 60
         aggregated = indicators.aggregate_candles(rows, 180)
