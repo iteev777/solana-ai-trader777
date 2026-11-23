@@ -314,5 +314,16 @@ class Token2022InspectorTests(unittest.TestCase):
             inspector.validate_zero_fee_mint_data(raw)
 
 
+    def test_transfer_fee_rejects_amount_and_cap_above_u64(self):
+        with self.assertRaisesRegex(ValueError, "u64"):
+            inspector.transfer_fee_for_amount(
+                {"basis_points": 100, "maximum_fee": 100}, 2**64
+            )
+        with self.assertRaisesRegex(ValueError, "maximum is invalid"):
+            inspector.transfer_fee_for_amount(
+                {"basis_points": 100, "maximum_fee": 2**64}, 100
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
