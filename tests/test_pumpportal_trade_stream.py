@@ -11,6 +11,8 @@ class PumpPortalTradeStreamTests(unittest.TestCase):
         with sniper_scanner._subscription_lock:
             sniper_scanner._active_ws = None
             sniper_scanner._watched_tokens.clear()
+        with sniper_scanner.seen_lock:
+            sniper_scanner.seen_tokens.clear()
         while True:
             try:
                 sniper_scanner.new_token_queue.get_nowait()
@@ -42,6 +44,22 @@ class PumpPortalTradeStreamTests(unittest.TestCase):
         token = sniper_scanner.new_token_queue.get_nowait()
         self.assertEqual(token["mint"], event["mint"])
         self.assertEqual(token["discovery_sources"], ["pumpportal"])
+
+    def test_reconnect_resubscribes_active_tokens_on_same_socket(self):
+        ws = Mock()
+        with sniper_scanner._subscription_lock:
+            sniper_scanner._watched_tokens.add("TokenMint")
+        with patch.object(sniper_scanner, "API_KEY", "test-api-key"), patch.dict(
+            os.environ, {"TROJAN_PUMPPORTAL_OBSERVATION_ENABLED": "true"}, clear=False
+        ):
+            sniper_scanner.on_open(ws)
+        self.assertEqual(
+            [json.loads(call.args[0]) for call in ws.send.call_args_list],
+            [
+                {"method": "subscribeNewToken"},
+                {"method": "subscribeTokenTrade", "keys": ["TokenMint"]},
+            ],
+        )
 
     def test_trade_subscription_uses_existing_single_socket(self):
         ws = Mock()
