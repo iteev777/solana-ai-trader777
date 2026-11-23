@@ -344,3 +344,10 @@ RugCheck report retrieval coalesces simultaneous requests for the same mint into
 ## Paper position input safety
 
 Paper entry and exit paths reject non-finite or non-positive prices before reaching the database. Persisted trailing peaks are normalized before use, and DCA/exit policy configuration is fully parsed before a monitoring cycle mutates position state. Invalid policy configuration returns a controlled wait/error result rather than interrupting the position monitor. Reserved engine, strategy and adaptive-sizing metadata cannot be overwritten by caller metadata.
+
+## Pump.fun legacy bonding-curve direct quote
+
+The direct quote router also supports legacy SOL-paired Pump.fun bonding curves. It reads the curve, Pump Global configuration, Pump Fees FeeConfig and token mint at one confirmed RPC slot. It selects the on-chain market-cap fee tier using the curve's virtual reserves and token supply, applies protocol/creator fee rounding, prices buys and sells against virtual reserves, and checks real token/SOL reserves before returning a quote.
+
+This adapter intentionally refuses completed curves, trades that would cross into synthetic migration, Token-2022 mints, mayhem/cashback/holder-reward modes, custom quote mints and custom creator-fee curves. Those require separate settlement or extension logic. It is read-only and never creates, signs or broadcasts a swap.
+
