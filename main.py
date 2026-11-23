@@ -1859,6 +1859,7 @@ def _service_manager_health():
     import dashboard
     import copy_trade
     import pool_registry
+    import telegram_alerts
     from service_manager import ServiceManager, ServiceSpec, set_global_service_manager
 
     def dashboard_health():
@@ -1896,6 +1897,17 @@ def _service_manager_health():
         return {
             "status": "healthy" if status.get("worker_running") else "unhealthy",
             "message": None if status.get("worker_running") else "pool registry worker is not running",
+        }
+
+    def telegram_health():
+        status = telegram_alerts.get_telegram_status()
+        if not status.get("configured"):
+            return {"status": "disabled", "message": "Telegram notifications not configured"}
+        if status.get("worker_stopping"):
+            return {"status": "degraded", "message": "Telegram alert worker is stopping"}
+        return {
+            "status": "healthy" if status.get("worker_running") else "unhealthy",
+            "message": None if status.get("worker_running") else "Telegram alert worker is not running",
         }
 
     def start_sniper():
@@ -1943,6 +1955,16 @@ def _service_manager_health():
         priority=25,
         essential=False,
         enabled=True,
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="telegram_alert_worker",
+        start=telegram_alerts.start_telegram_alert_worker,
+        stop=lambda _handle: telegram_alerts.stop_telegram_alert_worker(timeout=5.0),
+        health=telegram_health,
+        priority=40,
+        essential=False,
+        enabled=lambda: bool(telegram_alerts.get_telegram_status().get("configured")),
         stops_alone=True,
     ))
     set_global_service_manager(service_manager)
