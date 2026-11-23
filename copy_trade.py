@@ -17,6 +17,12 @@ import copy_freshness
 
 _lock = threading.Lock()
 _thread = None
+# In-memory paging state is intentionally bounded. The durable cursor is advanced
+# only after the complete catch-up range has been replayed oldest-first.
+_poll_catchup = {}
+_COPY_SIGNATURE_PAGE_SIZE = 100
+_COPY_MAX_PAGES_PER_POLL = 5
+_COPY_MAX_BACKLOG_SIGNATURES = _COPY_SIGNATURE_PAGE_SIZE * _COPY_MAX_PAGES_PER_POLL
 _status = {
     "running": False, "configured": False, "wallet_count": 0,
     "last_event": None, "last_error": None, "events_seen": 0,
@@ -129,19 +135,30 @@ def _fetch_wallet_transaction(signature, wallet):
     )
 
 
-def _fetch_wallet_signatures(wallet, limit=None):
-    """Fetch a bounded recent signature page for reconnect recovery and polling."""
+def _fetch_wallet_signatures(wallet, limit=None, before=None, until=None):
+    """Fetch one bounded Solana signature page, newest first, with resumable bounds."""
     try:
-        configured = int(os.getenv("TROJAN_COPY_POLL_SIGNATURE_LIMIT", "20"))
+        configured = int(os.getenv("TROJAN_COPY_POLL_SIGNATURE_LIMIT", "100"))
     except (TypeError, ValueError, OverflowError):
-        configured = 20
-    maximum = max(1, min(configured, 100))
-    page_limit = maximum if limit is None else max(1, min(int(limit), maximum))
+        configured = 100
+    maximum = max(1, min(configured, 1000))
+    if limit is None:
+        page_limit = maximum
+    elif isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= maximum:
+        raise ValueError("signature page limit is outside the configured bound")
+    else:
+        page_limit = limit
+    options = {"limit": page_limit, "commitment": "confirmed"}
+    for key, value in (("before", before), ("until", until)):
+        if value is not None:
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                raise ValueError("signature " + key + " cursor is invalid")
+            options[key] = value.strip()
     response = requests.post(
         _rpc_url(),
         json={
             "jsonrpc": "2.0", "id": 1, "method": "getSignaturesForAddress",
-            "params": [wallet, {"limit": page_limit, "commitment": "confirmed"}]
+            "params": [wallet, options]
         },
         timeout=10
     )
@@ -153,11 +170,14 @@ def _fetch_wallet_signatures(wallet, limit=None):
     result = payload.get("result")
     if not isinstance(result, list):
         raise ValueError("signature page must be a list")
-    return [
-        item for item in result
-        if isinstance(item, dict) and isinstance(item.get("signature"), str)
-        and item["signature"]
-    ]
+    rows = []
+    for item in result:
+        if not isinstance(item, dict) or not isinstance(item.get("signature"), str):
+            continue
+        signature = item["signature"].strip()
+        if signature and len(signature) <= 128:
+            rows.append({**item, "signature": signature})
+    return rows
 
 
 def _process_wallet_signature(wallet, signature):
@@ -208,20 +228,79 @@ def _process_wallet_signature(wallet, signature):
 
 
 def _poll_wallet_activity(wallets):
-    """Recover recent wallet signatures missed during WebSocket gaps; DB dedupes replay."""
+    """Recover WS gaps with bounded paging and a durable per-wallet cursor.
+
+    A range is accumulated newest-first until its old durable boundary is reached.
+    Only then is it replayed oldest-first and the durable cursor advanced. A process
+    restart may refetch an unfinished range, but event-signature dedupe makes replay
+    safe and prevents an incomplete page from skipping unseen transactions.
+    """
     processed = 0
     errors = []
     for wallet in wallets:
         try:
-            signatures = _fetch_wallet_signatures(wallet)
-            # RPC returns newest first; process oldest first to preserve event order.
-            for item in reversed(signatures):
+            cursor = database.get_copy_watch_cursor(wallet)
+            state = _poll_catchup.get(wallet)
+            if state is None or state.get("until") != cursor:
+                state = {
+                    "until": cursor, "before": None, "newest_signature": None,
+                    "newest_first": [], "seen": set(), "complete": False,
+                    "initial_window": cursor is None,
+                }
+                _poll_catchup[wallet] = state
+
+            if not state["complete"]:
+                for _ in range(_COPY_MAX_PAGES_PER_POLL):
+                    page = _fetch_wallet_signatures(
+                        wallet, limit=_COPY_SIGNATURE_PAGE_SIZE,
+                        before=state["before"], until=state["until"]
+                    )
+                    if not page:
+                        state["complete"] = True
+                        break
+                    if state["newest_signature"] is None:
+                        state["newest_signature"] = page[0]["signature"]
+                    previous_before = state["before"]
+                    page_last = page[-1]["signature"]
+                    added = 0
+                    for item in page:
+                        signature = item["signature"]
+                        if signature not in state["seen"]:
+                            state["seen"].add(signature)
+                            state["newest_first"].append(item)
+                            added += 1
+                    if added == 0 or (previous_before is not None and page_last == previous_before):
+                        raise RuntimeError("signature pagination made no forward progress")
+                    state["before"] = page_last
+
+                    # First observation deliberately establishes a recent bounded
+                    # baseline; it does not replay the wallet's entire lifetime.
+                    if state["initial_window"] or len(page) < _COPY_SIGNATURE_PAGE_SIZE:
+                        state["complete"] = True
+                        break
+                    if len(state["newest_first"]) >= _COPY_MAX_BACKLOG_SIGNATURES:
+                        break
+
+            if not state["complete"]:
+                continue
+
+            # Every signature in the fetched range has been collected. Failed
+            # transactions are intentionally skipped, but still lie behind the
+            # cursor boundary and therefore must not block forward progress.
+            for item in reversed(state["newest_first"]):
                 if item.get("err") is not None:
                     continue
                 if _process_wallet_signature(wallet, item["signature"]):
                     processed += 1
+
+            newest = state.get("newest_signature")
+            if newest:
+                database.set_copy_watch_cursor(wallet, newest)
+            _poll_catchup.pop(wallet, None)
+
         except Exception as error:
             errors.append(wallet[:8] + ":" + (str(error) or type(error).__name__)[:100])
+
     _status["polls"] += 1
     _status["last_poll"] = time.time()
     _status["last_poll_error"] = "; ".join(errors[:5]) if errors else None
