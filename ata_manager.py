@@ -1,13 +1,14 @@
-"""Non-custodial legacy SPL Associated Token Account manager.
+"""Non-custodial SPL and supported Token-2022 ATA manager.
 
 Builds and simulates an unsigned idempotent ATA-create transaction. The
 server never signs or broadcasts; the user's wallet pays rent and fees.
-Token-2022 is deliberately rejected until extension-aware support is complete.
+Token-2022 rent uses the mint-required account extensions, not the legacy size.
 """
 import base64
 import os
 
 import solana_onchain as chain
+import token2022_inspector as token2022
 
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
 ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
@@ -138,22 +139,31 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
     mint_account = _rpc_account(mint)
     if mint_account is None:
         raise ValueError("Mint account does not exist")
-    if mint_account["owner"] != chain.TOKEN_PROGRAM:
-        raise ValueError("Only legacy SPL Token mints are supported; Token-2022 is rejected")
-    if len(mint_account["data"]) != 82 or mint_account["data"][45] != 1:
-        raise ValueError("Mint account has an invalid or uninitialized legacy SPL layout")
+    token_program = mint_account.get("owner")
+    if token_program == chain.TOKEN_PROGRAM:
+        if len(mint_account["data"]) != 82 or mint_account["data"][45] != 1:
+            raise ValueError("Mint account has an invalid or uninitialized legacy SPL layout")
+        token_account_size = TOKEN_ACCOUNT_SIZE
+    elif token_program == chain.TOKEN_2022_PROGRAM:
+        token_account_size = token2022.token_account_size_for_mint(mint_account["data"])
+    else:
+        raise ValueError("Mint account is not owned by a supported SPL Token program")
 
     ata = chain._find_program_address(
-        [_pubkey(wallet, "Wallet"), _pubkey(chain.TOKEN_PROGRAM, "Token program"),
+        [_pubkey(wallet, "Wallet"), _pubkey(token_program, "Token program"),
          _pubkey(mint, "Mint")],
         ASSOCIATED_TOKEN_PROGRAM_ID,
     )[0]
     existing = _rpc_account(ata)
     if existing is not None:
-        if existing["owner"] != chain.TOKEN_PROGRAM or len(existing["data"]) != TOKEN_ACCOUNT_SIZE:
-            raise ValueError("Canonical ATA address exists with an unexpected owner or layout")
+        if existing["owner"] != token_program or len(existing["data"]) != token_account_size:
+            raise ValueError("Canonical ATA address exists with an unexpected owner or extension-aware layout")
         raw = existing["data"]
-        if chain._key(raw, 0) != mint or chain._key(raw, 32) != wallet or raw[108] != 1:
+        if token_program == chain.TOKEN_2022_PROGRAM:
+            token2022.validate_token_account_for_program(
+                existing, token_program, mint, wallet, "Existing Token-2022 ATA"
+            )
+        elif chain._key(raw, 0) != mint or chain._key(raw, 32) != wallet or raw[108] != 1:
             raise ValueError("Existing canonical ATA does not match the wallet, mint and initialized state")
         return {
             "status": "ATA_ALREADY_EXISTS", "created": False, "ata": ata,
@@ -168,7 +178,7 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
     if isinstance(wallet_balance, bool) or not isinstance(wallet_balance, int) or wallet_balance < 0:
         raise ValueError("RPC returned an invalid wallet SOL balance")
     rent = _integer_rpc("getMinimumBalanceForRentExemption", [
-        TOKEN_ACCOUNT_SIZE, {"commitment": "confirmed"}
+        token_account_size, {"commitment": "confirmed"}
     ], "ATA rent exemption")
     latest = chain._rpc("getLatestBlockhash", [{"commitment": "confirmed"}])
     latest_value = (latest or {}).get("value") or {}
@@ -179,7 +189,7 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
         raise ValueError("RPC latest blockhash response is missing lastValidBlockHeight")
 
     message, transaction, account_keys = _compile_create_message(
-        wallet, ata, wallet, mint, chain.TOKEN_PROGRAM, blockhash
+        wallet, ata, wallet, mint, token_program, blockhash
     )
     message_b64 = base64.b64encode(message).decode("ascii")
     fee_result = chain._rpc("getFeeForMessage", [
@@ -209,7 +219,8 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
         "wallet": wallet,
         "mint": mint,
         "ata": ata,
-        "token_program": chain.TOKEN_PROGRAM,
+        "token_program": token_program,
+        "token_account_size": token_account_size,
         "associated_token_program": ASSOCIATED_TOKEN_PROGRAM_ID,
         "instruction": "CreateIdempotent",
         "transaction": transaction_b64,
@@ -217,6 +228,7 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
         "required_signers": [wallet],
         "account_keys": account_keys,
         "wallet_sol_balance_lamports": wallet_balance,
+        "token_account_size": token_account_size,
         "rent_lamports": rent,
         "network_fee_lamports": fee,
         "minimum_sol_reserve_lamports": reserve,
