@@ -1,4 +1,5 @@
 import unittest
+import time
 from unittest.mock import patch
 
 import clmm_quote_math as mathx
@@ -76,6 +77,7 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
             patch.object(chain, "_multiple_accounts_with_context", return_value=(
                 self.accounts if accounts is None else accounts, 98765
             )),
+            patch.object(chain, "_rpc", return_value=int(time.time())),
         ):
             return quote_orca_whirlpool_pool(
                 self.pool, input_mint or self.mint_b, amount,
@@ -144,6 +146,8 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
     def test_active_adaptive_fee_oracle_is_rejected(self):
         accounts = list(self.accounts)
         oracle = bytearray(64)
+        oracle[:8] = chain._discriminator("Oracle")
+        oracle[8:40] = chain._b58decode(self.pool)
         oracle[54:58] = (1).to_bytes(4, "little")
         accounts[5] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(oracle)}
         with self.assertRaisesRegex(ValueError, "adaptive-fee"):
@@ -178,6 +182,49 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         result = self.quote(accounts=accounts)
         self.assertGreater(result["out_amount"], 0)
         self.assertEqual(result["loaded_tick_arrays"], 0)
+
+
+    def test_protocol_fees_are_subtracted_from_spendable_vault_reserves(self):
+        state = bytearray(self.state)
+        state[93:101] = (10**12 - 1).to_bytes(8, "little")
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(state)}
+        with self.assertRaisesRegex(ValueError, "spendable vault reserves"):
+            self.quote(accounts=accounts)
+
+    def test_confirmed_slot_block_time_is_required(self):
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+            }),
+            patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 98765)),
+            patch.object(chain, "_rpc", return_value=None),
+        ):
+            with self.assertRaisesRegex(ValueError, "block time is unavailable"):
+                quote_orca_whirlpool_pool(self.pool, self.mint_b, 1000, output_mint=self.mint_a)
+
+    def test_stale_confirmed_slot_block_time_is_rejected(self):
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+            }),
+            patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 98765)),
+            patch.object(chain, "_rpc", return_value=int(time.time() - 30)),
+        ):
+            with self.assertRaisesRegex(ValueError, "snapshot is stale"):
+                quote_orca_whirlpool_pool(self.pool, self.mint_b, 1000, output_mint=self.mint_a)
+
+    def test_oracle_for_another_pool_is_rejected(self):
+        accounts = list(self.accounts)
+        oracle = bytearray(64)
+        oracle[:8] = chain._discriminator("Oracle")
+        oracle[8:40] = chain._b58decode(self.oracle)
+        accounts[5] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(oracle)}
+        with self.assertRaisesRegex(ValueError, "different pool"):
+            self.quote(accounts=accounts)
+
 
 
 if __name__ == "__main__":
