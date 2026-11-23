@@ -62,6 +62,48 @@ class RaydiumClmmMathTests(unittest.TestCase):
                 False, 10**12, 3000, 60,
             )
 
+    def test_rejects_boolean_and_out_of_range_quote_inputs(self):
+        with self.assertRaisesRegex(ValueError, "fee rate"):
+            mathx.quote_exact_input(
+                mathx.sqrt_price_at_tick(10), 1_000_000_000, 10, [],
+                False, 1000, True, 60,
+            )
+        with self.assertRaisesRegex(ValueError, "input amount"):
+            mathx.quote_exact_input(
+                mathx.sqrt_price_at_tick(10), 1_000_000_000, 10, [],
+                False, 1 << 64, 3000, 60,
+            )
+        with self.assertRaisesRegex(ValueError, "current tick"):
+            mathx.quote_exact_input(
+                mathx.sqrt_price_at_tick(10), 1_000_000_000, True, [],
+                False, 1000, 3000, 60,
+            )
+
+    def test_rejects_duplicate_or_malformed_initialized_ticks(self):
+        sqrt_price = mathx.sqrt_price_at_tick(10)
+        with self.assertRaisesRegex(ValueError, "unique"):
+            mathx.quote_exact_input(
+                sqrt_price, 1_000_000_000, 10, [(20, 1), (20, 2)],
+                False, 1000, 3000, 60,
+            )
+        with self.assertRaisesRegex(ValueError, "liquidity delta"):
+            mathx.quote_exact_input(
+                sqrt_price, 1_000_000_000, 10, [(20, True)],
+                False, 1000, 3000, 60,
+            )
+
+    def test_output_is_saturated_to_instruction_u64_width(self):
+        output = mathx.amount_out_for_move(
+            True, mathx.U128_MAX, mathx.U128_MAX, 1
+        )
+        self.assertEqual(output, mathx.U64_MAX)
+
+    def test_rejects_liquidity_that_cannot_be_scaled_into_q64_u128(self):
+        with self.assertRaisesRegex(ValueError, "Q64.64 u128"):
+            mathx.amount_in_to_target(
+                True, 1 << 64, mathx.U128_MAX, 1
+            )
+
     def test_zero_active_liquidity_after_tick_crossing_is_refused(self):
         start = mathx.sqrt_price_at_tick(10)
         target = mathx.sqrt_price_at_tick(20)
