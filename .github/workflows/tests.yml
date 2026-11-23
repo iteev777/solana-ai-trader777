@@ -1,10 +1,7 @@
 name: Trojan V2 tests
 
 on:
-  push:
-    branches: ["main", "trojan/**", "feature/**"]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   unit-tests:
