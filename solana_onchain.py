@@ -33,6 +33,13 @@ PROGRAMS = {
     "moonit_amm": "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG",
 }
 
+PUMP_GLOBAL_CONFIG = "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf"
+PUMP_FEE_CONFIG = "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt"
+PUMP_GLOBAL_CONFIG_DISCRIMINATOR = bytes([167, 232, 232, 177, 200, 108, 114, 127])
+SOL_MINT = "So11111111111111111111111111111111111111112"
+DEFAULT_PUBKEY = "11111111111111111111111111111111"
+
+
 PUMPSWAP_GLOBAL_CONFIG = "ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw"
 PUMPSWAP_FEE_CONFIG = "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx"
 PUMP_FEES_PROGRAM = "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
@@ -301,6 +308,13 @@ def _decode_pool(protocol, raw):
             "real_token_reserves": _u64(raw, 24),
             "real_quote_reserves": _u64(raw, 32),
             "token_total_supply": _u64(raw, 40),
+            "complete": bool(raw[48]),
+            "creator": _key(raw, 49) if len(raw) >= 81 else None,
+            "is_mayhem_mode": bool(raw[81]) if len(raw) >= 82 else False,
+            "is_cashback_coin": bool(raw[82]) if len(raw) >= 83 else False,
+            "quote_mint": _key(raw, 83) if len(raw) >= 115 else DEFAULT_PUBKEY,
+            "creator_fee_bps": _u64(raw, 115) if len(raw) >= 123 else 0,
+            "is_holder_reward": bool(raw[124]) if len(raw) >= 125 else False,
             "status": "active", "price_mode": "pump_curve"
         }
     if protocol == "moonit_amm":
@@ -522,6 +536,9 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("Input mint does not belong to this PumpSwap pool")
 
+    if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
+        raise ValueError("Input mint does not belong to this PumpSwap pool")
+
     creator_pool = decoded["coin_creator"] != "11111111111111111111111111111111"
     fee_candidates = [fee_config["conservative_fees"], global_flat_fees]
     if not creator_pool:
@@ -592,7 +609,7 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
         "lp_fee_amount": fee_amounts[0], "protocol_fee_amount": fee_amounts[1],
-        "creator_fee_amount": fee_amounts[2] if len(fee_amounts) > 2 else 0, "total_fee_amount": total_fee,
+        "creator_fee_amount": fee_amounts[2], "total_fee_amount": total_fee,
         "effective_quote_reserves": reserve_quote, "raw_quote_vault_reserves": raw_quote_reserve,
         "virtual_quote_reserves": decoded["virtual_quote_reserves"],
         "price_impact_percent": round(impact, 6),
@@ -934,11 +951,379 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
     }
 
 
-def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
+
+def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
+                              slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only Pump bonding-curve quote for SOL-paired legacy SPL mints."""
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("Pump.fun bonding curve address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if not isinstance(output_mint, str) or not output_mint.strip():
+        raise ValueError("Output mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+        raise ValueError("Maximum snapshot age must be positive and finite")
+
+    is_buy = input_mint == SOL_MINT and output_mint != SOL_MINT
+    is_sell = output_mint == SOL_MINT and input_mint != SOL_MINT
+    if not (is_buy or is_sell):
+        raise ValueError("Pump.fun direct quotes currently support only SOL/token directions")
+    token_mint = output_mint if is_buy else input_mint
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Bonding curve account is not owned by the Pump.fun program")
+    first = _decode_pool("pumpfun_legacy", discovered["data"])
+    if first.get("is_mayhem_mode"):
+        raise ValueError("Pump.fun mayhem curves are not supported by this fee model")
+    if first.get("is_cashback_coin"):
+        raise ValueError("Pump.fun cashback curves are not supported")
+    if first.get("is_holder_reward"):
+        raise ValueError("Pump.fun holder-reward curves require a separate fee model")
+    if first.get("quote_mint") not in (None, DEFAULT_PUBKEY):
+        raise ValueError("Pump.fun token-paired curves are not supported by this SOL-only adapter")
+    if first.get("creator_fee_bps", 0) > 0:
+        raise ValueError("Custom creator-fee curves require a separate fee model")
+
+    keys = [pool_address, PUMP_GLOBAL_CONFIG, PUMP_FEE_CONFIG, token_mint]
+    snapshot_started = time.time()
+    accounts, slot = _multiple_accounts_with_context(keys)
+    if any(item is None for item in accounts):
+        raise ValueError("Pump.fun confirmed snapshot is missing a required account")
+    curve_acc, global_acc, fee_acc, mint_acc = accounts
+
+    if curve_acc.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Pump.fun curve owner changed during snapshot")
+    curve = _decode_pool("pumpfun_legacy", curve_acc["data"])
+    for field in (
+        "virtual_token_reserves", "virtual_quote_reserves",
+        "real_token_reserves", "real_quote_reserves", "token_total_supply",
+        "creator", "is_mayhem_mode", "is_cashback_coin", "quote_mint",
+        "creator_fee_bps", "is_holder_reward",
+    ):
+        if curve.get(field) != first.get(field):
+            raise ValueError("Pump.fun curve reserves or fee-mode state changed during snapshot")
+    if curve.get("complete"):
+        raise ValueError("Pump.fun bonding curve completed during quote snapshot")
+
+    if global_acc.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Pump.fun Global account is not owned by the Pump program")
+    global_raw = global_acc.get("data", b"")
+    if len(global_raw) < 162 or global_raw[:8] != PUMP_GLOBAL_CONFIG_DISCRIMINATOR:
+        raise ValueError("Pump.fun Global account discriminator or layout is invalid")
+    if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
+        raise ValueError("Pump.fun FeeConfig is not owned by the Pump Fees program")
+    fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
+    if mint_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("Pump.fun Token-2022 mints are refused until transfer-fee and hook behavior is verified")
+
+    token_decimals = _mint_decimals(mint_acc)
+    virtual_token = curve["virtual_token_reserves"]
+    virtual_quote = curve["virtual_quote_reserves"]
+    real_token = curve["real_token_reserves"]
+    real_quote = curve["real_quote_reserves"]
+    supply = curve["token_total_supply"]
+    if min(virtual_token, virtual_quote, real_token, supply) <= 0:
+        raise ValueError("Pump.fun bonding curve reserves or supply are invalid")
+    market_cap_lamports = (virtual_quote * supply) // virtual_token
+
+    tiers = fee_config["fee_tiers"]
+    if tiers:
+        ordered = sorted(tiers, key=lambda item: item["threshold"])
+        selected = ordered[0]
+        for tier in ordered:
+            if market_cap_lamports >= tier["threshold"]:
+                selected = tier
+            else:
+                break
+        fee_policy = "ONCHAIN_MARKET_CAP_FEE_TIER"
+        fee_rates = [
+            selected["lp_fee_bps"],
+            selected["protocol_fee_bps"],
+            selected["creator_fee_bps"],
+        ]
+    else:
+        fee_policy = "GLOBAL_CONFIG_FALLBACK"
+        fee_rates = [
+            0,
+            _u64(global_raw, 105),
+            _u64(global_raw, 154),
+        ]
+    if any(rate > 10_000 for rate in fee_rates) or sum(fee_rates) >= 10_000:
+        raise ValueError("Pump.fun fee schedule is invalid or consumes the full trade")
+
+    if is_buy:
+        net_quote, fee_amounts = _pumpswap_spendable_quote(amount_in, fee_rates)
+        total_fee = sum(fee_amounts)
+        if net_quote <= 0:
+            raise ValueError("Pump.fun quote input is consumed by fees")
+        output_amount = (virtual_token * net_quote) // (virtual_quote + net_quote)
+        if output_amount <= 0 or output_amount >= real_token:
+            raise ValueError("Pump.fun buy would drain or complete the bonding curve; migration quoting is not enabled")
+        impact_input = net_quote
+        impact_output = output_amount
+        spot_price = virtual_token / virtual_quote
+        output_mint = token_mint
+        unspent_input = amount_in - net_quote - total_fee
+        gross_output = output_amount
+    else:
+        gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
+        if real_quote <= 0 or gross_quote > real_quote:
+            raise ValueError("Pump.fun curve has insufficient real SOL reserves for this sell")
+        fee_amounts = [_fee_amount_ceil(gross_quote, rate) for rate in fee_rates]
+        total_fee = sum(fee_amounts)
+        output_amount = gross_quote - total_fee
+        if output_amount <= 0:
+            raise ValueError("Pump.fun sell output is consumed by fees")
+        impact_input = amount_in
+        impact_output = gross_quote
+        spot_price = virtual_quote / virtual_token
+        output_mint = SOL_MINT
+        unspent_input = 0
+        gross_output = gross_quote
+
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    execution_price = impact_output / impact_input
+    impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Pump.fun curve snapshot is stale")
+    if not math.isfinite(impact):
+        raise ValueError("Pump.fun price impact is invalid")
+
+    return {
+        "provider": "pumpfun_legacy_direct",
+        "protocol": "pumpfun_legacy",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "output_amount_gross": gross_output,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "unspent_input_amount": unspent_input,
+        "fee_policy": fee_policy,
+        "fee_mint": SOL_MINT,
+        "fee_rates_bps": fee_rates,
+        "lp_fee_amount": fee_amounts[0],
+        "protocol_fee_amount": fee_amounts[1],
+        "creator_fee_amount": fee_amounts[2],
+        "total_fee_amount": total_fee,
+        "market_cap_lamports": market_cap_lamports,
+        "virtual_token_reserves": virtual_token,
+        "virtual_quote_reserves": virtual_quote,
+        "real_token_reserves": real_token,
+        "real_quote_reserves": real_quote,
+        "token_decimals": token_decimals,
+        "price_impact_percent": round(impact, 6),
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
+
+
+def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
+                              slippage_bps=100, max_snapshot_age=5.0):
+    """Read-only Pump bonding-curve quote for SOL-paired legacy SPL mints."""
+    if not isinstance(pool_address, str) or not pool_address.strip():
+        raise ValueError("Pump.fun bonding curve address is required")
+    if not isinstance(input_mint, str) or not input_mint.strip():
+        raise ValueError("Input mint is required")
+    if not isinstance(output_mint, str) or not output_mint.strip():
+        raise ValueError("Output mint is required")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
+    if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
+        raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
+        raise ValueError("Maximum snapshot age must be positive and finite")
+
+    is_buy = input_mint == SOL_MINT and output_mint != SOL_MINT
+    is_sell = output_mint == SOL_MINT and input_mint != SOL_MINT
+    if not (is_buy or is_sell):
+        raise ValueError("Pump.fun direct quotes currently support only SOL/token directions")
+    token_mint = output_mint if is_buy else input_mint
+
+    discovered = _account(pool_address)
+    if discovered.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Bonding curve account is not owned by the Pump.fun program")
+    first = _decode_pool("pumpfun_legacy", discovered["data"])
+    if first.get("is_mayhem_mode"):
+        raise ValueError("Pump.fun mayhem curves are not supported by this fee model")
+    if first.get("is_cashback_coin"):
+        raise ValueError("Pump.fun cashback curves are not supported")
+    if first.get("is_holder_reward"):
+        raise ValueError("Pump.fun holder-reward curves require a separate fee model")
+    if first.get("quote_mint") not in (None, DEFAULT_PUBKEY):
+        raise ValueError("Pump.fun token-paired curves are not supported by this SOL-only adapter")
+    if first.get("creator_fee_bps", 0) > 0:
+        raise ValueError("Custom creator-fee curves require a separate fee model")
+
+    keys = [pool_address, PUMP_GLOBAL_CONFIG, PUMP_FEE_CONFIG, token_mint]
+    snapshot_started = time.time()
+    accounts, slot = _multiple_accounts_with_context(keys)
+    if any(item is None for item in accounts):
+        raise ValueError("Pump.fun confirmed snapshot is missing a required account")
+    curve_acc, global_acc, fee_acc, mint_acc = accounts
+
+    if curve_acc.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Pump.fun curve owner changed during snapshot")
+    curve = _decode_pool("pumpfun_legacy", curve_acc["data"])
+    for field in (
+        "virtual_token_reserves", "virtual_quote_reserves",
+        "real_token_reserves", "real_quote_reserves", "token_total_supply",
+        "creator", "is_mayhem_mode", "is_cashback_coin", "quote_mint",
+        "creator_fee_bps", "is_holder_reward",
+    ):
+        if curve.get(field) != first.get(field):
+            raise ValueError("Pump.fun curve reserves or fee-mode state changed during snapshot")
+    if curve.get("complete"):
+        raise ValueError("Pump.fun bonding curve completed during quote snapshot")
+
+    if global_acc.get("owner") != PROGRAMS["pumpfun_legacy"]:
+        raise ValueError("Pump.fun Global account is not owned by the Pump program")
+    global_raw = global_acc.get("data", b"")
+    if len(global_raw) < 162 or global_raw[:8] != PUMP_GLOBAL_CONFIG_DISCRIMINATOR:
+        raise ValueError("Pump.fun Global account discriminator or layout is invalid")
+    if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
+        raise ValueError("Pump.fun FeeConfig is not owned by the Pump Fees program")
+    fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
+    if mint_acc.get("owner") != TOKEN_PROGRAM:
+        raise ValueError("Pump.fun Token-2022 mints are refused until transfer-fee and hook behavior is verified")
+
+    token_decimals = _mint_decimals(mint_acc)
+    virtual_token = curve["virtual_token_reserves"]
+    virtual_quote = curve["virtual_quote_reserves"]
+    real_token = curve["real_token_reserves"]
+    real_quote = curve["real_quote_reserves"]
+    supply = curve["token_total_supply"]
+    if min(virtual_token, virtual_quote, real_token, supply) <= 0:
+        raise ValueError("Pump.fun bonding curve reserves or supply are invalid")
+    market_cap_lamports = (virtual_quote * supply) // virtual_token
+
+    tiers = fee_config["fee_tiers"]
+    if tiers:
+        ordered = sorted(tiers, key=lambda item: item["threshold"])
+        selected = ordered[0]
+        for tier in ordered:
+            if market_cap_lamports >= tier["threshold"]:
+                selected = tier
+            else:
+                break
+        fee_policy = "ONCHAIN_MARKET_CAP_FEE_TIER"
+        fee_rates = [
+            selected["lp_fee_bps"],
+            selected["protocol_fee_bps"],
+            selected["creator_fee_bps"],
+        ]
+    else:
+        fee_policy = "GLOBAL_CONFIG_FALLBACK"
+        fee_rates = [
+            0,
+            _u64(global_raw, 105),
+            _u64(global_raw, 154),
+        ]
+    if any(rate > 10_000 for rate in fee_rates) or sum(fee_rates) >= 10_000:
+        raise ValueError("Pump.fun fee schedule is invalid or consumes the full trade")
+
+    if is_buy:
+        net_quote, fee_amounts = _pumpswap_spendable_quote(amount_in, fee_rates)
+        total_fee = sum(fee_amounts)
+        if net_quote <= 0:
+            raise ValueError("Pump.fun quote input is consumed by fees")
+        output_amount = (virtual_token * net_quote) // (virtual_quote + net_quote)
+        if output_amount <= 0 or output_amount >= real_token:
+            raise ValueError("Pump.fun buy would drain or complete the bonding curve; migration quoting is not enabled")
+        impact_input = net_quote
+        impact_output = output_amount
+        spot_price = virtual_token / virtual_quote
+        output_mint = token_mint
+        unspent_input = amount_in - net_quote - total_fee
+        gross_output = output_amount
+    else:
+        gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
+        if real_quote <= 0 or gross_quote > real_quote:
+            raise ValueError("Pump.fun curve has insufficient real SOL reserves for this sell")
+        fee_amounts = [_fee_amount_ceil(gross_quote, rate) for rate in fee_rates]
+        total_fee = sum(fee_amounts)
+        output_amount = gross_quote - total_fee
+        if output_amount <= 0:
+            raise ValueError("Pump.fun sell output is consumed by fees")
+        impact_input = amount_in
+        impact_output = gross_quote
+        spot_price = virtual_quote / virtual_token
+        output_mint = SOL_MINT
+        unspent_input = 0
+        gross_output = gross_quote
+
+    minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    execution_price = impact_output / impact_input
+    impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
+    age = time.time() - snapshot_started
+    if age < 0 or age > max_snapshot_age:
+        raise ValueError("Pump.fun curve snapshot is stale")
+    if not math.isfinite(impact):
+        raise ValueError("Pump.fun price impact is invalid")
+
+    return {
+        "provider": "pumpfun_legacy_direct",
+        "protocol": "pumpfun_legacy",
+        "pool_id": pool_address,
+        "slot": slot,
+        "snapshot_age_seconds": round(age, 3),
+        "input_mint": input_mint,
+        "output_mint": output_mint,
+        "input_amount": amount_in,
+        "output_amount_gross": gross_output,
+        "out_amount": output_amount,
+        "minimum_out_amount": minimum_out,
+        "unspent_input_amount": unspent_input,
+        "fee_policy": fee_policy,
+        "fee_mint": SOL_MINT,
+        "fee_rates_bps": fee_rates,
+        "lp_fee_amount": fee_amounts[0],
+        "protocol_fee_amount": fee_amounts[1],
+        "creator_fee_amount": fee_amounts[2],
+        "total_fee_amount": total_fee,
+        "market_cap_lamports": market_cap_lamports,
+        "virtual_token_reserves": virtual_token,
+        "virtual_quote_reserves": virtual_quote,
+        "real_token_reserves": real_token,
+        "real_quote_reserves": real_quote,
+        "token_decimals": token_decimals,
+        "price_impact_percent": round(impact, 6),
+        "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+        "execution": "DISABLED",
+        "signing": "DISABLED",
+        "broadcast": "DISABLED",
+    }
+
+
+
+def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100, output_mint=None):
     """Dispatch read-only direct quotes from the actual pool account owner."""
     discovered = _account(pool_address)
     owner = discovered.get("owner")
     protocol = next((name for name, program in PROGRAMS.items() if program == owner), None)
+    if protocol == "pumpfun_legacy":
+        if not output_mint:
+            raise ValueError("Pump.fun direct quotes require the requested output mint")
+        return quote_pumpfun_legacy_pool(
+            pool_address, input_mint, output_mint, amount_in, slippage_bps
+        )
+    if protocol == "pumpfun_legacy":
+        if not output_mint:
+            raise ValueError("Pump.fun direct quotes require the requested output mint")
+        return quote_pumpfun_legacy_pool(
+            pool_address, input_mint, output_mint, amount_in, slippage_bps
+        )
     if protocol == "pumpswap":
         return quote_pumpswap_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_cpmm":
