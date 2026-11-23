@@ -1,8 +1,10 @@
 import unittest
+import time
 from unittest.mock import patch
 
 import strategy_conditions
 import strategy_rules
+import strategy_catalog
 
 
 class StrategyConditionTests(unittest.TestCase):
@@ -21,6 +23,8 @@ class StrategyConditionTests(unittest.TestCase):
             },
             "pairCreatedAt": 1760000000000,
             "indicators": {
+                "ready": True,
+                "timestamp": time.time(),
                 "rsi_14": 42,
                 "ema_9": 11,
                 "ema_21": 10,
@@ -183,6 +187,53 @@ class StrategyConditionTests(unittest.TestCase):
             strategy_rules.validate_rules_config({
                 "main": {"condition": "NotARealCondition", "params": {}}
             })
+
+
+    def test_technical_condition_rejects_stale_indicator_series(self):
+        self.context["indicators"]["timestamp"] = self.context["evaluated_at"] - 181
+        passed, reasons = self.evaluate("Rsi", {"comparison": "ABOVE", "threshold": 30})
+        self.assertFalse(passed)
+        self.assertIn("stale", reasons[0])
+
+    def test_technical_condition_rejects_missing_indicator_timestamp(self):
+        self.context["indicators"].pop("timestamp")
+        passed, reasons = self.evaluate("VolumeSpike", {"multiplier": 1.5})
+        self.assertFalse(passed)
+        self.assertIn("timestamp is missing", reasons[0])
+
+    def test_technical_condition_rejects_future_indicator_timestamp(self):
+        self.context["indicators"]["timestamp"] = self.context["evaluated_at"] + 10
+        passed, reasons = self.evaluate("MaCross", {"direction": "BULLISH"})
+        self.assertFalse(passed)
+        self.assertIn("future", reasons[0])
+
+    def test_non_indicator_market_conditions_do_not_depend_on_ohlcv_clock(self):
+        self.context["indicators"]["ready"] = False
+        passed, _ = self.evaluate("LiquidityLevel", {
+            "comparison": "ABOVE", "threshold_usd": 10000
+        })
+        self.assertTrue(passed)
+
+    def test_position_drawdown_metric_can_be_used_without_indicator_series(self):
+        self.context["indicators"]["ready"] = False
+        self.context["drawdown_from_peak_pct"] = 15
+        passed, _ = self.evaluate("DrawdownFromPeak", {
+            "minimum_pct": 10, "maximum_pct": 20
+        })
+        self.assertTrue(passed)
+
+
+    def test_strategy_catalog_exposes_bounded_indicator_freshness_policy(self):
+        with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "90"}):
+            policy = strategy_catalog.get_strategy_catalog()["indicator_freshness"]
+        self.assertTrue(policy["enabled"])
+        self.assertEqual(policy["max_age_seconds"], 90.0)
+        self.assertEqual(policy["missing_timestamp"], "reject")
+
+    def test_invalid_indicator_freshness_configuration_uses_safe_default(self):
+        with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "nan"}):
+            policy = strategy_catalog.get_strategy_catalog()["indicator_freshness"]
+        self.assertEqual(policy["max_age_seconds"], 180.0)
 
 
 if __name__ == "__main__":
