@@ -345,7 +345,6 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["reserve_x"], first["reserve_y"],
         first["mint_x"], first["mint_y"], CLOCK_SYSVAR, bitmap_address,
     ] + array_addresses
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Meteora DLMM confirmed snapshot has an incomplete account list")
@@ -442,7 +441,9 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Meteora DLMM price impact is invalid")
-    age = time.time() - snapshot_started
+    # Use the on-chain Clock sysvar captured in the same account batch, not
+    # local RPC request latency, to measure snapshot age.
+    age = time.time() - now
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DLMM confirmed snapshot is stale")
 
@@ -464,7 +465,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "token2022_output_gross_amount": gross_output,
         "token_program_input": token_program_x if input_is_x else token_program_y,
         "token_program_output": token_program_y if input_is_x else token_program_x,
-        "minimum_out_amount": quote["out_amount"] * (10_000 - slippage_bps) // 10_000,
+        "minimum_out_amount": expected_output_amount * (10_000 - slippage_bps) // 10_000,
         "fee_mint": fee_mint,
         "fee_amount": quote["fee_amount"],
         "trade_fee_amount": quote["fee_amount"],
