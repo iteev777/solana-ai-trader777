@@ -114,6 +114,43 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             dex_engine._validate_pool_addresses(["pool-%d" % index for index in range(21)])
 
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    @patch("pool_registry.get_pool_candidates")
+    @patch("pool_registry.enqueue_dex_pool_refresh")
+    def test_auto_discovers_only_matching_pools_from_both_token_indexes(
+        self, enqueue, registry, direct, aggregate
+    ):
+        aggregate.return_value = self.aggregator_quotes()
+        registry.side_effect = [
+            [
+                {"pairAddress": "pool-a", "baseToken": {"address": self.input_mint},
+                 "quoteToken": {"address": self.output_mint}, "liquidity": {"usd": 5000}},
+                {"pairAddress": "unrelated", "baseToken": {"address": self.input_mint},
+                 "quoteToken": {"address": "other-mint"}, "liquidity": {"usd": 9000}},
+            ],
+            [
+                {"pairAddress": "pool-b", "baseToken": {"address": self.output_mint},
+                 "quoteToken": {"address": self.input_mint}, "liquidity": {"usd": 10000}},
+            ],
+        ]
+        direct.side_effect = [
+            self.direct_quote("pool-a", 1100),
+            self.direct_quote("pool-b", 1200),
+        ]
+        result = dex_engine.build_routes(
+            self.input_mint, self.output_mint, 100
+        )
+        self.assertEqual(registry.call_count, 2)
+        self.assertEqual(enqueue.call_count, 2)
+        self.assertEqual(direct.call_count, 2)
+        self.assertEqual(result["pool_discovery"], "AUTOMATIC_REGISTRY_PAIR_MATCH")
+        self.assertEqual(result["best_pool"], "pool-b")
+        self.assertEqual(
+            {route["pool_id"] for route in result["routes_eligible"]},
+            {"pool-a", "pool-b"},
+        )
+
     def test_rejects_invalid_fee_estimate(self):
         with self.assertRaises(ValueError):
             dex_engine.build_routes(
