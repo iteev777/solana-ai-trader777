@@ -50,6 +50,11 @@ class DcaPolicyTests(unittest.TestCase):
         self.assertFalse(position_policy.get_dca_policy()["enabled"])
         self.assertEqual(position_policy.get_dca_steps(), [])
 
+    def test_direct_evaluator_rejects_disabled_policy(self):
+        result = self.evaluate(policy=self.policy(enabled=False))
+        self.assertFalse(result["allowed"])
+        self.assertIn("disabled", result["reason"])
+
     def test_legacy_fixed_usd_steps_remain_supported(self):
         with patch.dict(os.environ, {
             "TROJAN_DCA_ENABLED": "true",
