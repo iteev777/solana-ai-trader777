@@ -451,3 +451,14 @@ The read-only Dynamic Bonding Curve adapter decodes the VirtualPool and PoolConf
 ## Meteora DLMM direct quote adapter
 
 The read-only DLMM adapter decodes the LbPair, confirmed Clock timestamp, reserve vaults and up to three consecutive directional BinArrays. It walks each bin using the on-chain Q64.64 bin price and market-making reserves, updates the volatility reference/accumulator between bins, applies the base plus variable fee with the pool's InputOnly or OnlyY collection mode, and subtracts accrued protocol fees from the spendable output reserve. Quotes fail closed if the active array is unavailable, the amount exceeds loaded-array coverage, the pair is disabled, fee parameters are invalid or the mint uses Token-2022. Limit-order liquidity and Token-2022 transfer extensions are not included in this direct quote adapter. No instruction is built or signed.
+
+## Native Raydium CPMM transaction preparation
+
+Trojan now has an unsigned Raydium CPMM SwapBaseInput builder. It re-quotes
+from confirmed pool state, checks the pool/config/vault/mint/user-account and
+observation relationships, compiles a legacy transaction for external wallet
+signing, and requires a successful unsigned RPC simulation before returning
+the transaction through the authenticated dashboard API. Legacy SPL Token
+only; Token-2022 and automatic ATA creation remain refused. Native signing,
+broadcast and live execution remain disabled. See
+`docs/RAYDIUM_CPMM_BUILDER.md`.
