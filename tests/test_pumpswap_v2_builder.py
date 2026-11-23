@@ -230,7 +230,7 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         self.assertTrue(result["token2022_fee_aware_supported"])
         self.assertEqual(result["instruction"], "buy_exact_quote_in_v2")
 
-    def test_rejects_token_2022_mint_until_extension_aware_support_exists(self):
+    def test_rejects_mint_program_mismatch_against_quote(self):
         accounts = dict(self.account_map)
         accounts[self.base_mint] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(166)}
         with self.assertRaisesRegex(ValueError, "mint owner changed"):
