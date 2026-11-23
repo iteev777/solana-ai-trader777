@@ -50,13 +50,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `dexscreener_api.py` | `src/apis/dexscreener/` endpoint behavior | TESTED | New independent validated wrappers for token pools, token batches, pair lookup, search, token orders and supported chains; batch capped at 30 and path segments validated. Tests `test_dexscreener_api.py`; full validation `45254436959`.  |
-| `discovery/__init__.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/birdeye_scanner.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/dexscreener_scanner.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/gecko_scanner.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/pumpfun_scanner.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/screenerbot_sources.py` | Ei vielä kartoitettu | PENDING |  |
-| `discovery/token_aggregator.py` | Ei vielä kartoitettu | PENDING |  |
+| `discovery/__init__.py` | Python package marker | NO-CHANGE | 19-rivinen? Ei: 19 tavun package marker luettu; ei sisällä logiikkaa eikä vaadi vastaavaa Rust-lähdetiedostoa. |
+| `discovery/birdeye_scanner.py` | Birdeye source behavior; ScreenerBot discovery source set | PARTIAL | Koko tiedosto luettu: V3 token-list, 400/404/422 trending fallback, 1h quota cooldown, response-shape/duplicate checks ja virheen propagointi. Birdeye on Trojanin lisälähde eikä ScreenerBotin yksi-yhteen discovery-vastine. Provider-family konsensus pidetään Birdeye-yhtenä. |
+| `discovery/dexscreener_scanner.py` | `src/tokens/discovery_sources.rs` DexScreener profile/latest/top boost feeds | PARTIAL | Kolme feediä erillisinä tehtävinä ja endpoint-kohtaisina lähteinä; chain filtering, dedupe ja virheiden propagointi aggregaattorin health telemetryyn. Täysi payload- ja rate-limit-rajatapausvertailu vielä kesken. |
+| `discovery/gecko_scanner.py` | `src/tokens/discovery_sources.rs` Gecko new/trending/recently-updated | PARTIAL | Koko tiedosto luettu: base+quote-token pool candidates, Gecko pool normalization, base-only market-data attribution, recently-updated Solana network filter ja metadata. Reference's deferred rate-limit response (skip current tick/retry next tick) vs Trojan's source failure semantics needs full review. |
+| `discovery/pumpfun_scanner.py` | Birdeye meme listing; no direct ScreenerBot Pump.fun feed | PARTIAL | Tiedosto käyttää todellisuudessa Birdeye `new_listing` + meme_platform_enabled -endpointia ja trending fallbackia, ei Pump.fun API:a. Korjattu aggregaattorin source/provider attribution Birdeye-perheeseen ja lisätty canonical `scan_birdeye_meme_listing` alias; vanha import säilytetty. Commitit `c0c97f2`, `84b8eb9`, `47afd49`; testi `b64048f`. |
+| `discovery/screenerbot_sources.py` | `src/tokens/discovery_sources.rs` RugCheck/Jupiter/CoinGecko/DeFiLlama feeds | PARTIAL | Yhdennetty lähdemoduuli sisältää RugCheck new/recent/trending/verified, Jupiter recent/organic/traded/trending, CoinGecko Solana contract ja DeFiLlama Solana protocol feeds; base58-mint validation, safe fetch/cache ja source-level errors. Täysi endpoint-parametrien, rate limitin ja fallbackien vertailu avoin. |
+| `discovery/token_aggregator.py` | `src/tokens/discovery.rs` discovery runner and aggregation | PARTIAL | 23k tiedosto: provider/per-feed enablement, concurrent fetch, source health persistence, provider-family consensus, candidate merge/normalization/provenance, dedupe and DB persistence inspected in part. Reference shutdown-aware scheduler, skip-on-network-outage/contention and chain-adapter feed registration require complete comparison. Birdeye meme listing corrected to same provider family as Birdeye token list. |
 | `docs/DISCOVERY_QUALITY.md` | Ei vielä kartoitettu | PENDING |  |
 | `docs/EXECUTION_READINESS_PLAN.md` | Ei vielä kartoitettu | PENDING |  |
 | `docs/NATIVE_EXECUTION.md` | Ei vielä kartoitettu | PENDING |  |
