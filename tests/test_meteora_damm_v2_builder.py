@@ -12,13 +12,36 @@ def key(value):
     return chain._b58encode(bytes([value]) * 32)
 
 
-def token_account(mint, authority, amount=1_000_000):
-    raw = bytearray(165)
+def token_account(mint, authority, amount=1_000_000, token_program=chain.TOKEN_PROGRAM,
+                  transfer_fee=False, immutable_owner=False):
+    raw = bytearray(182 if immutable_owner else (178 if transfer_fee else 165))
     raw[:32] = chain._b58decode(mint)
     raw[32:64] = chain._b58decode(authority)
     raw[64:72] = amount.to_bytes(8, "little")
     raw[108] = 1
-    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+    if transfer_fee:
+        raw[165] = 2
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (8).to_bytes(2, "little")
+    if immutable_owner:
+        raw[178:180] = (7).to_bytes(2, "little")
+        raw[180:182] = (0).to_bytes(2, "little")
+    return {"owner": token_program, "data": bytes(raw)}
+
+
+def token2022_mint(decimals=9):
+    from token2022_inspector import MINT_ACCOUNT_TYPE
+    raw = bytearray(166)
+    raw[44] = decimals
+    raw[45] = 1
+    raw[165] = MINT_ACCOUNT_TYPE
+    config = bytearray(108)
+    config[80:88] = (10_000).to_bytes(8, "little")
+    config[88:90] = (100).to_bytes(2, "little")
+    config[98:106] = (10_000).to_bytes(8, "little")
+    config[106:108] = (100).to_bytes(2, "little")
+    raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+    return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
 
 
 class MeteoraDammV2BuilderTests(unittest.TestCase):
@@ -79,6 +102,8 @@ class MeteoraDammV2BuilderTests(unittest.TestCase):
             "collect_fee_mode": 0,
             "fee_rate_numerator": 3_000_000,
             "fee_cap_numerator": 990_000_000,
+            "token_program_input": chain.TOKEN_PROGRAM,
+            "token_program_output": chain.TOKEN_PROGRAM,
         }
         mint_a = bytearray(82)
         mint_a[44] = 6
@@ -100,11 +125,16 @@ class MeteoraDammV2BuilderTests(unittest.TestCase):
         accounts = accounts or self.account_map
         def fresh(pool, input_mint, amount, slippage, output_mint=None):
             result = dict(self.quote)
+            output_mint = self.mint_b if input_mint == self.mint_a else self.mint_a
+            input_program = accounts[input_mint]["owner"]
+            output_program = accounts[output_mint]["owner"]
             result.update({
                 "input_mint": input_mint,
-                "output_mint": self.mint_b if input_mint == self.mint_a else self.mint_a,
+                "output_mint": output_mint,
                 "input_amount": amount,
                 "slippage_bps": slippage,
+                "token_program_input": input_program,
+                "token_program_output": output_program,
             })
             return result
         selected = quote or self.quote
@@ -147,14 +177,41 @@ class MeteoraDammV2BuilderTests(unittest.TestCase):
         self.assertEqual(accounts[2:4], [self.user_out, self.user_in])
         self.assertEqual(accounts[4:8], [self.vault_a, self.vault_b, self.mint_a, self.mint_b])
 
-    def test_rejects_token2022_mint_and_wrong_vault_authority(self):
+    def test_builds_fee_bearing_token2022_swap_with_mint_specific_programs(self):
         accounts = dict(self.account_map)
-        accounts[self.mint_b] = dict(accounts[self.mint_b], owner=chain.TOKEN_2022_PROGRAM)
-        with self.assertRaisesRegex(ValueError, "legacy SPL Token mints"):
-            self.build(accounts=accounts)
+        accounts[self.mint_b] = token2022_mint()
+        accounts[self.vault_b] = token_account(
+            self.mint_b, builder.POOL_AUTHORITY, 1_000_000,
+            token_program=chain.TOKEN_2022_PROGRAM, transfer_fee=True,
+        )
+        token2022_ata = chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint_b)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        accounts.pop(self.user_out)
+        accounts[token2022_ata] = token_account(
+            self.mint_b, self.wallet, 0, token_program=chain.TOKEN_2022_PROGRAM,
+            transfer_fee=True, immutable_owner=True,
+        )
+        self.user_out = token2022_ata
+        quote = dict(
+            self.quote,
+            token_program_input=chain.TOKEN_PROGRAM,
+            token_program_output=chain.TOKEN_2022_PROGRAM,
+        )
+        result = self.build(quote=quote, accounts=accounts)
+        self.assertEqual(result["token_program_input"], chain.TOKEN_PROGRAM)
+        self.assertEqual(result["token_program_output"], chain.TOKEN_2022_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(
+            result["instruction_accounts"][9:11],
+            [chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM],
+        )
+
+    def test_rejects_wrong_vault_authority(self):
         accounts = dict(self.account_map)
         accounts[self.vault_a] = token_account(self.mint_a, key(99))
-        with self.assertRaisesRegex(ValueError, "pool authority"):
+        with self.assertRaisesRegex(ValueError, "vault token authority"):
             self.build(accounts=accounts)
 
     def test_rejects_stale_snapshot_and_changed_fee_state(self):
