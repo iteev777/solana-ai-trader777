@@ -68,6 +68,53 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         self.assertEqual(aggregator._provider_family("pumpfun"), "pumpfun")
         self.assertEqual(aggregator._provider_family("pumpfun_curve"), "pumpfun")
 
+    def test_discovered_candidates_are_persisted_with_source_provenance(self):
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        token = {
+            "tokenAddress": mint, "chainId": "solana",
+            "name": "Persisted Token", "symbol": "PERSIST", "decimals": 9,
+            "discovery_sources": ["jupiter_recent", "rugcheck_new"],
+        }
+        aggregator.SCANNERS = [("jupiter_recent", lambda: [token])]
+        aggregator.collect_tokens()
+        with aggregator.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM discovery_candidates WHERE token_address = ?", (mint,)
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["name"], "Persisted Token")
+        self.assertEqual(row["decimals"], 9)
+        self.assertEqual(set(__import__("json").loads(row["discovery_sources"])), {
+            "jupiter_recent", "rugcheck_new"
+        })
+        self.assertEqual(__import__("json").loads(row["payload_json"])["symbol"], "PERSIST")
+
+    def test_candidate_persistence_preserves_first_seen_and_increments_observations(self):
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        token = {"tokenAddress": mint, "chainId": "solana", "symbol": "PERSIST",
+                 "discovery_sources": ["jupiter_recent"]}
+        aggregator._persist_discovered_candidates([token])
+        with aggregator.database.connect() as connection:
+            first = connection.execute(
+                "SELECT first_seen_at, discovery_count FROM discovery_candidates WHERE token_address = ?", (mint,)
+            ).fetchone()
+        aggregator._persist_discovered_candidates([dict(token, discovery_sources=["rugcheck_new"])])
+        with aggregator.database.connect() as connection:
+            second = connection.execute(
+                "SELECT first_seen_at, discovery_count, discovery_sources FROM discovery_candidates WHERE token_address = ?", (mint,)
+            ).fetchone()
+        self.assertEqual(first["first_seen_at"], second["first_seen_at"])
+        self.assertEqual(second["discovery_count"], 2)
+        self.assertEqual(set(__import__("json").loads(second["discovery_sources"])),
+                         {"jupiter_recent", "rugcheck_new"})
+
+    def test_source_health_resets_consecutive_failures_after_recovery(self):
+        aggregator._source_history = {}
+        aggregator._source_result("jupiter_recent", False, 0, __import__("time").perf_counter(), "timeout")
+        recovered = aggregator._source_result("jupiter_recent", True, 1, __import__("time").perf_counter())
+        self.assertEqual(recovered["consecutive_failures"], 0)
+        self.assertEqual(recovered["successes"], 1)
+        self.assertEqual(recovered["failures"], 1)
     def test_later_sources_fill_missing_and_zero_market_data_without_erasing_good_values(self):
         mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         first = {
