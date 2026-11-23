@@ -47,7 +47,7 @@ class DiscoverySourceHealthTests(unittest.TestCase):
         with patch.object(aggregator, "SCANNERS", [
             ("geckoterminal_new_pools", lambda: [shared]),
             ("geckoterminal_trending_pools", lambda: [shared]),
-            ("birdeye", lambda: [shared, independent]),
+            ("birdeye", lambda: [independent]),
             ("jupiter", lambda: [independent]),
         ]):
             result = aggregator.collect_tokens()
