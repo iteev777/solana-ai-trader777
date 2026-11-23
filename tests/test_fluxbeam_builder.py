@@ -171,7 +171,7 @@ class FluxbeamBuilderTests(unittest.TestCase):
             self.mint_b, self.authority, program=chain.TOKEN_2022_PROGRAM,
             extended=True,
         )
-        with self.assertRaisesRegex(ValueError, "transfer hook"):
+        with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
             self.call_builder(account_map=accounts)
 
     def test_refuses_nonzero_token2022_transfer_fee(self):
@@ -185,7 +185,7 @@ class FluxbeamBuilderTests(unittest.TestCase):
             self.mint_b, self.authority, program=chain.TOKEN_2022_PROGRAM,
             extended=True,
         )
-        with self.assertRaisesRegex(ValueError, "non-zero Token-2022 transfer fee"):
+        with self.assertRaisesRegex(ValueError, "transfer fees must be zero"):
             self.call_builder(account_map=accounts)
 
     def test_rejects_wrong_fee_account_mint(self):
