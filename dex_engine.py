@@ -391,14 +391,17 @@ def get_engine_status():
     native_builders = {
         "raydium_cpmm": protocol_capabilities.get("raydium_cpmm", {}).get("transaction_builder", {}),
         "pumpswap_v2": protocol_capabilities.get("pumpswap", {}).get("transaction_builder", {}),
+        "orca_whirlpool": protocol_capabilities.get("orca_whirlpool", {}).get("transaction_builder", {}),
         "other_protocols": {
             "available": False,
             "reason": "No protocol-specific native builder is registered and validated",
         },
     }
     # Preserve dashboard fields while adding the full, explicit protocol matrix.
-    for key in ("raydium_cpmm", "pumpswap_v2"):
-        protocol_key = "raydium_cpmm" if key == "raydium_cpmm" else "pumpswap"
+    for key in ("raydium_cpmm", "pumpswap_v2", "orca_whirlpool"):
+        protocol_key = ("raydium_cpmm" if key == "raydium_cpmm"
+                        else "pumpswap" if key == "pumpswap_v2"
+                        else "orca_whirlpool")
         simulation_capability = protocol_capabilities.get(protocol_key, {}).get(
             "simulation", {}
         )
@@ -408,7 +411,8 @@ def get_engine_status():
         )
         native_builders[key] = {
             **native_builders[key],
-            "instruction": "SwapBaseInput" if key == "raydium_cpmm" else None,
+            "instruction": ("SwapBaseInput" if key == "raydium_cpmm"
+                            else "Swap" if key == "orca_whirlpool" else None),
             "instructions": ["buy_exact_quote_in_v2", "sell_v2"] if key == "pumpswap_v2" else None,
             "transaction_version": "legacy",
             "fresh_requote_required": True,
