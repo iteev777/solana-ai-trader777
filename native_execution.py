@@ -130,7 +130,7 @@ def get_native_execution_status():
         "requires_signed_rpc_simulation": True,
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
         "approval_cache": "process_local_single_use",
-        "supported_protocols": ["raydium_cpmm", "pumpswap", "orca_whirlpool"],
+        "supported_protocols": ["raydium_cpmm", "pumpswap", "orca_whirlpool", "meteora_dlmm"],
         "private_key_custody": False,
         "server_signing": False,
         "broadcast_available": _enabled(),
