@@ -136,6 +136,8 @@ def select_best_pairs(pairs, requested_addresses):
         if not isinstance(address, str) or address not in requested:
             continue
         candidate = _candidate(pair, native_price)
+        if candidate is None:
+            continue
         grouped.setdefault(address, []).append(candidate)
 
     selected = {}
