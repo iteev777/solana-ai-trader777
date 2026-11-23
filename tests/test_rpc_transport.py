@@ -21,12 +21,17 @@ class FakeStdout:
 class RustRpcTransportTests(unittest.TestCase):
     def setUp(self):
         self.url = "https://rpc.example.invalid"
+        self.sidecar_bin_patch = patch.object(
+            rpc_transport, "_RUST_SIDECAR_BIN", "/tmp/trojan-rust-rpc-sidecar-test"
+        )
+        self.sidecar_bin_patch.start()
         self.original_processes = dict(rpc_transport._rust_sidecars)
         self.original_locks = dict(rpc_transport._rust_sidecar_locks)
         rpc_transport._rust_sidecars.clear()
         rpc_transport._rust_sidecar_locks.clear()
 
     def tearDown(self):
+        self.sidecar_bin_patch.stop()
         rpc_transport._rust_sidecars.clear()
         rpc_transport._rust_sidecars.update(self.original_processes)
         rpc_transport._rust_sidecar_locks.clear()
