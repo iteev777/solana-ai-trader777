@@ -244,6 +244,25 @@ Optional Railway variables (unset defaults preserve the current strategy behavio
 Thresholds should be calibrated from paper-trading evidence before being tightened. A filter pass is not a buy signal; strategy, RugCheck, on-chain security, route quality and risk checks remain separate gates.
 
 
+## Pump.fun trade-window observation
+
+The optional candidate observer mirrors the reference bot's short live-trade observation stage. For supported Pump.fun/PumpPortal candidates it records buy/sell events during a bounded window and evaluates trade count, distinct buyers, buy volume, buy/sell ratio, largest-buyer concentration and price movement. A failed observation returns an auditable WAIT result and is retried inside the candidate's normal discovery window. Observation metrics are attached to the candidate result and exposed in the authenticated dashboard at `/api/observation`.
+
+This feed is deliberately **off by default** because PumpPortal token-trade subscriptions are metered. To opt in, configure `PUMPPORTAL_API_KEY` and explicitly set `TROJAN_PUMPPORTAL_OBSERVATION_ENABLED=true`. PumpPortal requires a linked wallet with at least 0.02 SOL for trade subscriptions and currently meters delivered trade events at 0.01 SOL per 10,000 events. Start with a small observation window and review provider usage before increasing concurrent candidates. The bot uses the existing single PumpPortal WebSocket; it does not open one connection per token.
+
+Optional limits (bounded in code):
+- `TROJAN_OBSERVATION_DURATION_SECONDS` (default 20; 5–180)
+- `TROJAN_OBSERVATION_MAX_CONCURRENT` (default 24; 1–200)
+- `TROJAN_OBSERVATION_MIN_TRADES` (default 5)
+- `TROJAN_OBSERVATION_MIN_UNIQUE_BUYERS` (default 3)
+- `TROJAN_OBSERVATION_MIN_BUY_VOLUME_SOL` (default 0.5)
+- `TROJAN_OBSERVATION_MIN_BUY_SELL_RATIO` (default 1.25)
+- `TROJAN_OBSERVATION_MAX_SINGLE_BUYER_PCT` (default 60)
+- `TROJAN_OBSERVATION_MIN_PRICE_CHANGE_PCT` (default -2)
+- `TROJAN_OBSERVATION_MIN_SCORE` (default 55)
+
+The observation stage is not a trade executor. It does not sign, submit or broadcast transactions. Non-PumpPortal sources continue through the existing multi-window market filters, technical indicators, route-quality checks and risk gates; the observer does not invent buyer-level data for unsupported venues.
+
 ## Named strategy conditions
 
 The strategy rule tree supports both numeric field leaves and named conditions. The read-only `/api/strategy-catalog` endpoint exposes 24 named condition types: RSI, Bollinger Bands, buy pressure, candle size/streaks, drawdown/pullback, liquidity level/change/liquidity-to-size, moving-average cross and price-to-MA, position adds/holding time/profit/giveback, price breakout/change, UTC time window, token age, transaction velocity, ATR volatility, volume spike, and VWAP.
