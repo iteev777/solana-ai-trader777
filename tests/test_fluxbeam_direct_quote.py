@@ -43,6 +43,8 @@ class FluxbeamDirectQuoteTests(unittest.TestCase):
             data[45] = 1
             return {"owner": owner or chain.TOKEN_PROGRAM, "data": bytes(data)}
 
+        self.token_account = token_account
+        self.mint_account = mint_account
         self.accounts = [
             {"owner": chain.PROGRAMS["fluxbeam_amm"], "data": self.pool_data},
             token_account(self.base_mint, 1_000_000),
