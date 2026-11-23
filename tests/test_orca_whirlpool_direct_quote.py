@@ -4,6 +4,7 @@ from unittest.mock import patch
 import clmm_quote_math as mathx
 import solana_onchain as chain
 from orca_whirlpool_quote import quote_orca_whirlpool_pool
+import orca_whirlpool_builder as orca_builder
 
 
 class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
@@ -236,6 +237,72 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
             self.quote(accounts=accounts)
+
+    def test_token2022_fee_bearing_swap_uses_swap_v2_and_correct_program_accounts(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        quote = self.quote()
+        wallet = chain._b58encode(bytes([41]) * 32)
+        user_a = self.token_account(self.mint_a, 0)
+        user_a["data"] = bytearray(user_a["data"])
+        user_a["data"][32:64] = chain._b58decode(wallet)
+        user_a["data"] = bytes(user_a["data"])
+
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        mint_b = bytearray(166)
+        mint_b[44] = 9
+        mint_b[45] = 1
+        mint_b[165] = MINT_ACCOUNT_TYPE
+        mint_b.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        mint_b_account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_b)}
+
+        def token2022_account(mint, owner, amount, immutable_owner=False):
+            raw = bytearray(182 if immutable_owner else 178)
+            raw[:32] = chain._b58decode(mint)
+            raw[32:64] = chain._b58decode(owner)
+            raw[64:72] = amount.to_bytes(8, "little")
+            raw[108] = 1
+            raw[165] = 2
+            raw[166:168] = (2).to_bytes(2, "little")
+            raw[168:170] = (8).to_bytes(2, "little")
+            if immutable_owner:
+                raw[178:180] = (7).to_bytes(2, "little")
+                raw[180:182] = (0).to_bytes(2, "little")
+            return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+
+        vault_b = token2022_account(self.mint_b, self.pool, 10**12)
+        user_b = token2022_account(self.mint_b, wallet, 10**9, immutable_owner=True)
+        oracle = None
+        snapshot = [
+            self.accounts[0], self.vault_a_account, vault_b,
+            self.mint_a_account, mint_b_account, user_a, user_b,
+            None, None, None, oracle,
+        ]
+        with (
+            patch.object(orca_builder, "quote_orca_whirlpool_pool", return_value=quote),
+            patch.object(chain, "_account", return_value=self.accounts[0]),
+            patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(snapshot, 98765)),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": chain._b58encode(bytes([42]) * 32),
+                "lastValidBlockHeight": 999999,
+            }}),
+        ):
+            result = orca_builder.build_orca_whirlpool_swap(
+                quote, wallet, chain._b58encode(bytes([43]) * 32),
+                chain._b58encode(bytes([44]) * 32),
+            )
+        data = __import__("base64").b64decode(result["transaction"])
+        self.assertEqual(result["instruction"], "SwapV2")
+        self.assertEqual(result["instruction_discriminator"],
+                         list(orca_builder.SWAP_V2_DISCRIMINATOR))
+        self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_program_output"], chain.TOKEN_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(data[0], 1)  # one required signer
 
     def test_dynamic_tick_array_layout_is_rejected(self):
         accounts = list(self.accounts)
