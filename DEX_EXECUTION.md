@@ -340,3 +340,26 @@ rejected; this is not general approval for every Token-2022 feature.
 
 The ATA order is still unsigned and simulated only. The wallet must sign and
 submit it externally; no account is created by the server.
+
+
+## Token-2022 transfer-fee handling: Raydium CLMM
+
+The native Raydium CLMM quote and SwapV2 builder now support the same
+fee-aware Token-2022 subset as Raydium CPMM. Quotes apply the conservative
+per-amount fee from both epoch schedules to the input before the tick walk and
+to the output after the tick walk. Slippage minimums are calculated from the
+net amount received by the wallet. Transfer-hook and other unsupported mint
+extensions remain blocked.
+
+The CLMM builder validates the mint's token program against its vault and
+user token accounts, validates Token-2022 TransferFeeAmount and ImmutableOwner
+account extensions, and places the actual token program for each mint side in
+the SwapV2 account list. It also checks the token-program pair against both the
+supplied quote and its fresh confirmed snapshot. This avoids constructing a
+transaction with mismatched token-program accounts when a pool mixes legacy
+SPL Token and Token-2022.
+
+Token-2022 support is now implemented in the native Raydium CPMM and CLMM
+paths only. Other DEX venues retain their explicit legacy-only or unsupported
+checks until their own transfer-fee and account semantics are audited and
+covered by tests. Live signing and broadcasting remain disabled.
