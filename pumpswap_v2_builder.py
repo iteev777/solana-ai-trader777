@@ -73,7 +73,7 @@ def _validate_pool_identity(pool_id, raw, decoded):
         raise ValueError("PumpSwap pool state is truncated")
     index = int.from_bytes(raw[9:11], "little")
     creator = chain._key(raw, 11)
-    canonical, _ = chain._find_program_address(
+    canonical, canonical_bump = chain._find_program_address(
         [
             b"pool",
             index.to_bytes(2, "little"),
@@ -85,6 +85,8 @@ def _validate_pool_identity(pool_id, raw, decoded):
     )
     if canonical != pool_id:
         raise ValueError("PumpSwap pool address does not match its canonical PDA")
+    if raw[8] != canonical_bump:
+        raise ValueError("PumpSwap pool bump does not match its canonical PDA")
     return index, creator
 
 
