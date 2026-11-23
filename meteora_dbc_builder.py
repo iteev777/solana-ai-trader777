@@ -181,6 +181,15 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         raise ValueError("Meteora DBC fresh quote exceeds confirmed output vault balance")
     _token_account(user_in_acc, wallet, input_mint, "User input token account", amount)
     _token_account(user_out_acc, wallet, output_mint, "User output token account")
+    for mint, account_address in ((input_mint, user_input_token_account),
+                                  (output_mint, user_output_token_account)):
+        expected_ata, _ = chain._find_program_address(
+            [_key(wallet, "wallet"), _key(TOKEN_PROGRAM_ID, "token program"),
+             _key(mint, "mint")],
+            ASSOCIATED_TOKEN_PROGRAM_ID,
+        )
+        if account_address != expected_ata:
+            raise ValueError("Meteora DBC user token account is not the canonical associated token account")
     if fresh.get("fee_rate_numerator") != config["cliff_fee_numerator"]:
         raise ValueError("Meteora DBC fee rate changed since the fresh quote")
     expected_fee_on_input = config["collect_fee_mode"] == 0 and not input_is_base
