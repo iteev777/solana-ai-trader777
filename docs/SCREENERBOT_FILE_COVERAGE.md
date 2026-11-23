@@ -1293,7 +1293,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/positions/metrics.rs` | PENDING |  |
 | `src/positions/mod.rs` | PENDING |  |
 | `src/positions/operations/close.rs` | PENDING |  |
-| `src/positions/operations/dca.rs` | PENDING |  |
+| `src/positions/operations/dca.rs` | PARTIAL | Trojan `paper_trading.py` / `database.py` atomic paper DCA path | Inspected per-mint lock, pending-add guard, reconciliation and ownership gates; full operation path review still open. |
 | `src/positions/operations/exit_ladder.rs` | PENDING |  |
 | `src/positions/operations/exit_sizing.rs` | PENDING |  |
 | `src/positions/operations/force_close.rs` | PENDING |  |
@@ -1560,7 +1560,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/actions/mod.rs` | PENDING |  |
 | `src/trader/admission.rs` | PENDING |  |
 | `src/trader/config.rs` | PENDING |  |
-| `src/trader/constants.rs` | PENDING |  |
+| `src/trader/constants.rs` | MAPPED | Trojan `position_policy.py` | DCA maximum price age (30 seconds) and minimum native trade concept mapped; complete constants file disposition remains pending. |
 | `src/trader/controller.rs` | PENDING |  |
 | `src/trader/copy/analytics.rs` | PENDING |  |
 | `src/trader/copy/analytics_tests.rs` | PENDING |  |
@@ -1617,7 +1617,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/copy/workspace_tests.rs` | PENDING |  |
 | `src/trader/entry.rs` | PENDING |  |
 | `src/trader/error.rs` | PENDING |  |
-| `src/trader/evaluators/dca.rs` | PENDING |  |
+| `src/trader/evaluators/dca.rs` | MAPPED | Trojan `position_policy.py` + `paper_trading.py`; pure decision/gating logic implemented independently | Compared step selection, average/first-entry basis, waits, cooldown, stale prices, loss-stop, in-flight, first-buy sizing and minimum ticket. Trojan implementation commits `bee9ff1` / `6acfd66`; tests passed. |
 | `src/trader/evaluators/entry.rs` | PENDING |  |
 | `src/trader/evaluators/exit.rs` | PENDING |  |
 | `src/trader/evaluators/exit_break_even.rs` | PENDING |  |
@@ -1661,7 +1661,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/paper/run.rs` | PENDING |  |
 | `src/trader/paper/types.rs` | PENDING |  |
 | `src/trader/paper/types/tests.rs` | PENDING |  |
-| `src/trader/policy.rs` | PENDING |  |
+| `src/trader/policy.rs` | PARTIAL | Trojan `position_policy.py`, `exit_policy.py` | Compared DCA config snapshot fields and exit-policy ownership concept; full policy file and all policy types remain open. |
 | `src/trader/safety/blacklist.rs` | PENDING |  |
 | `src/trader/safety/cooldown.rs` | PENDING |  |
 | `src/trader/safety/limits.rs` | PENDING |  |
@@ -2591,7 +2591,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `tests/swap_routers_mainnet.rs` | PENDING |  |
 | `tests/swaps_chain_routing.rs` | PENDING |  |
 | `tests/token_blacklist_scope.rs` | PENDING |  |
-| `tests/trader_dca.rs` | PENDING |  |
+| `tests/trader_dca.rs` | PARTIAL | Trojan `tests/test_position_policy.py`, `tests/test_paper_fill_model.py` | Reference edge-case suite reviewed in part; Trojan added equivalent independent gate coverage. Full test-file-by-test-file coverage remains open. |
 | `tests/trader_exit_policy.rs` | PENDING |  |
 | `tests/trader_exits.rs` | PENDING |  |
 | `tests/trader_loss_limit.rs` | PENDING |  |
