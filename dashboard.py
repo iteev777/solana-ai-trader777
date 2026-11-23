@@ -1,6 +1,7 @@
 import hmac
 import os
 import threading
+import math
 import time
 from datetime import datetime, timezone
 
@@ -1568,7 +1569,7 @@ def start_dashboard():
 
     with _server_lock:
         if _server_thread and _server_thread.is_alive():
-            return True
+            return _server_thread
 
         host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
         port = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080")))
@@ -1586,4 +1587,32 @@ def start_dashboard():
         + " | AUTH: BASIC TOKEN | MODE: READ ONLY",
         flush=True
     )
+    return _server_thread
+
+
+def stop_dashboard(timeout=5.0):
+    """Stop the Werkzeug server and join its daemon thread gracefully."""
+    global _server, _server_thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a finite non-negative number")
+    if not math.isfinite(float(timeout)) or timeout < 0:
+        raise ValueError("timeout must be a finite non-negative number")
+    with _server_lock:
+        server = _server
+        thread = _server_thread
+    if server is not None:
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception as error:
+            print("[TROJAN V2] DASHBOARD SHUTDOWN ERROR:", repr(error), flush=True)
+            return False
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(float(timeout))
+        if thread.is_alive():
+            return False
+    with _server_lock:
+        if _server_thread is thread:
+            _server = None
+            _server_thread = None
     return True
