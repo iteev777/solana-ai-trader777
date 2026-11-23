@@ -118,6 +118,26 @@ class Token2022InspectorTests(unittest.TestCase):
         self.assertEqual(result["swap_eligibility"],
                          "BLOCKED_UNTIL_PROTOCOL_SPECIFIC_TOKEN_2022_SUPPORT")
 
+    def test_mint_inspection_exposes_transfer_fee_schedules_without_approval(self):
+        config = bytearray(108)
+        config[72:80] = (5).to_bytes(8, "little")
+        config[80:88] = (100).to_bytes(8, "little")
+        config[88:90] = (75).to_bytes(2, "little")
+        config[90:98] = (8).to_bytes(8, "little")
+        config[98:106] = (200).to_bytes(8, "little")
+        config[106:108] = (125).to_bytes(2, "little")
+        raw = mint_data(tlv(1, bytes(config)))
+        with patch("token2022_inspector._read_account",
+                   return_value={"owner": chain.TOKEN_2022_PROGRAM, "data": raw}):
+            result = inspector.inspect_token2022_mint(key(10))
+        self.assertEqual(result["transfer_fee_config"]["older"]["basis_points"], 75)
+        self.assertEqual(result["transfer_fee_config"]["newer"]["basis_points"], 125)
+        self.assertFalse(result["execution_enabled"])
+        self.assertEqual(
+            result["swap_eligibility"],
+            "BLOCKED_UNTIL_PROTOCOL_SPECIFIC_TOKEN_2022_SUPPORT",
+        )
+
     def test_inspect_reports_extension_but_never_approves_swap(self):
         raw = mint_data(tlv(14, bytes(64)))
         with patch("token2022_inspector._read_account",
