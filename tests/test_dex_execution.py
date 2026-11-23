@@ -187,6 +187,32 @@ class DexExecutionTests(unittest.TestCase):
         self.assertEqual(result["context_slot"], 456)
         self.assertEqual(result["mints"][0]["token_program"], solana_onchain.TOKEN_2022_PROGRAM)
 
+    def test_jupiter_preflight_accepts_transfer_fee_mint_and_reports_extension(self):
+        import solana_onchain
+        raw = bytearray(166)
+        raw[45] = 1
+        raw[165] = 1
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        legacy = bytearray(82)
+        legacy[45] = 1
+        accounts = [
+            {"owner": solana_onchain.TOKEN_2022_PROGRAM, "data": bytes(raw)},
+            {"owner": solana_onchain.TOKEN_PROGRAM, "data": bytes(legacy)},
+        ]
+        with patch.object(solana_onchain, "RPC_URL", "https://rpc.invalid"), patch.object(
+            solana_onchain, "_multiple_accounts_with_context",
+            return_value=(accounts, 458),
+        ):
+            result = dex_execution._inspect_order_mints(self.input_mint, self.output_mint)
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["mints"][0]["transfer_fee_configured"])
+        self.assertIn("TRANSFER_FEE_CONFIG", result["mints"][0]["extensions"])
+
     def test_jupiter_mint_preflight_rejects_unsupported_token2022_extensions(self):
         import solana_onchain
         raw = bytearray(166)
