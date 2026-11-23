@@ -892,11 +892,11 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/apis/solana_tracker/mod.rs` | PENDING |  |
 | `src/chains/solana/apis/solana_tracker/sources.rs` | PENDING |  |
 | `src/chains/solana/apis/solana_tracker/types.rs` | PENDING |  |
-| `src/chains/solana/assets/ata/balance.rs` | PENDING |  |
-| `src/chains/solana/assets/ata/close.rs` | PENDING |  |
-| `src/chains/solana/assets/ata/helpers.rs` | PENDING |  |
+| `src/chains/solana/assets/ata/balance.rs` | MAPPED | `wallet_preflight.py`, `ata_manager.py`, `token2022_inspector.py` | Legacy mint/token-account ownership, state and raw-balance checks; Token-2022 TLV extension parsing and extension-aware ATA size/rent are implemented. Full wallet-wide multi-account holdings aggregation, frozen aggregation and withheld-fee balance semantics are not yet equivalent. |
+| `src/chains/solana/assets/ata/close.rs` | IMPLEMENT | No direct equivalent; planned non-custodial unsigned close-order extension to `ata_manager.py` | ScreenerBot closes empty SPL/Token-2022 accounts and reclaims rent. Trojan must preserve external-wallet signing and never add server-held key material; first implement a read-only validated unsigned close order with zero-balance and mint/program checks. |
+| `src/chains/solana/assets/ata/helpers.rs` | IMPLEMENT | No direct equivalent for close locks; `ata_manager.py` covers unsigned ATA creation | Reference serializes concurrent close attempts per account and treats already-closed as a recoverable race. Trojan needs a non-custodial equivalent only if close orders are added; server-side signing/sending is not applicable. |
 | `src/chains/solana/assets/ata/mod.rs` | PENDING |  |
-| `src/chains/solana/assets/ata/wsol_sweep.rs` | PENDING |  |
+| `src/chains/solana/assets/ata/wsol_sweep.rs` | IMPLEMENT | No direct equivalent; planned post-swap WSOL cleanup proposal | Reference waits for settlement and idle trading, verifies canonical WSOL ATA and zero balance, rechecks activity, then closes. Trojan lacks scheduled sweep; design must emit an unsigned close order for the external wallet and never broadcast automatically. |
 | `src/chains/solana/assets/metaplex.rs` | PENDING |  |
 | `src/chains/solana/assets/mint.rs` | PENDING |  |
 | `src/chains/solana/assets/mod.rs` | PENDING |  |
