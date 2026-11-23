@@ -1,9 +1,10 @@
 """Unsigned native Raydium CPMM SwapBaseInput transaction builder.
 
-The builder returns a legacy Solana transaction with an empty signature slot.
-It never signs, stores keys, broadcasts, or enables live execution. Only legacy
-SPL Token pools are accepted until Token-2022 transfer-fee and extension
-handling is fully integrated into both quote and execution paths.
+Supports legacy SPL Token and the audited Token-2022 transfer-fee extension
+subset. The paired quote applies conservative input and output transfer fees;
+the builder revalidates mint owners, extension-aware vault/ATA layouts and
+per-side token-program accounts. Unsupported extensions remain fail-closed.
+Returns an unsigned transaction only; it never signs or broadcasts.
 """
 import base64
 import hashlib
