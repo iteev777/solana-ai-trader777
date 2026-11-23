@@ -78,7 +78,7 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertFalse(result["confirmed"])
         self.assertEqual(result["status"], "SUBMITTED_NOT_CONFIRMED")
         self.assertEqual(result["protocol"], "pumpswap")
-        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual(mocked.call_count, 4)
 
     def test_approval_is_single_use(self):
         approval = native.register_native_approval(
