@@ -148,7 +148,11 @@ def _subscribe_wallets(ws, wallets, timeout_seconds=15):
     failures = {}
     deadline = time.monotonic() + timeout_seconds
     while pending and time.monotonic() < deadline:
-        payload = json.loads(ws.recv())
+        try:
+            raw_payload = ws.recv()
+        except websocket.WebSocketTimeoutException:
+            break
+        payload = json.loads(raw_payload)
         if not isinstance(payload, dict):
             raise RuntimeError("Solana websocket returned a malformed subscription response")
         request_id = payload.get("id")
