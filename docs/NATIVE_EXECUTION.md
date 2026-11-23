@@ -19,9 +19,11 @@ Do not remove this lock during routine development.
 - The server does not broadcast native transactions while the hard lock is set.
 - Unsigned transaction preparation and simulation are not proof of a successful
   signed transaction.
-- Approval records are process-local and single-use; multi-replica deployments
-  need shared durable storage or enforced sticky routing before any future
-  broadcast release.
+- Approval records are currently process-local and single-use. The shared
+  durable, multi-server approval store is not implemented. A future release
+  requires transactional shared storage with atomic consume, expiry, replay
+  protection and restart recovery; sticky routing alone is not the preferred
+  long-term design.
 - A successful simulation is not a guarantee of execution or profitability.
 
 ## Supported subset and limitations
