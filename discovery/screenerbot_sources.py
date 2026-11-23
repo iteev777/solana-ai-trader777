@@ -63,10 +63,57 @@ def _candidate(mint, source, item=None, name=None, symbol=None):
         ("usdPrice", "priceUsd"), ("liquidity", "liquidity_usd"),
         ("mcap", "marketCap"), ("fdv", "fdv"),
         ("decimals", "decimals"),
+        ("creator", "creator"), ("mintAuthority", "mint_authority"),
+        ("freezeAuthority", "freeze_authority"), ("program", "token_program"),
+        ("createAt", "created_at"), ("updatedAt", "updated_at"),
+        ("tokenType", "token_type"),
     ):
         value = item.get(source_key)
         if value is not None and target_key not in result:
+            if target_key == "decimals":
+                if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255:
+                    result[target_key] = value
+            elif isinstance(value, str) and value.strip():
+                result[target_key] = value.strip()
+
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = item.get("tokenMeta")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for source_key, target_key in (
+        ("uri", "token_uri"), ("updateAuthority", "update_authority"),
+    ):
+        value = metadata.get(source_key)
+        if isinstance(value, str) and value.strip():
+            result[target_key] = value.strip()
+    if isinstance(metadata.get("mutable"), bool):
+        result["is_mutable"] = metadata["mutable"]
+
+    for source_key, target_key in (
+        ("score", "rugcheck_score"), ("user_visits", "rugcheck_user_visits"),
+        ("visits", "rugcheck_visits"), ("vote_count", "rugcheck_vote_count"),
+        ("up_count", "rugcheck_up_count"),
+    ):
+        value = item.get(source_key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             result[target_key] = value
+    for source_key, target_key in (
+        ("payer", "rugcheck_payer"), ("description", "rugcheck_description"),
+    ):
+        value = item.get(source_key)
+        if isinstance(value, str) and value.strip():
+            result[target_key] = value.strip()
+    for source_key, target_key in (
+        ("jup_verified", "jup_verified"), ("jup_strict", "jup_strict"),
+    ):
+        if isinstance(item.get(source_key), bool):
+            result[target_key] = item[source_key]
+    links = item.get("links")
+    if isinstance(links, (dict, list)) and len(links) <= 20:
+        result["rugcheck_links"] = links
+    events = item.get("events")
+    if isinstance(events, (dict, list)) and len(events) <= 20:
+        result["rugcheck_events"] = events
     return result
 
 
@@ -111,8 +158,8 @@ def scan_rugcheck():
                 mint = token["tokenAddress"]
                 if mint not in found:
                     found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
+                else:
+                    _merge_rugcheck_candidate(found[mint], token)
     print("RUGCHECK DISCOVERY TOKENS:", len(found), flush=True)
     return list(found.values())
 
@@ -165,7 +212,16 @@ def _scan_rugcheck_feed(source, endpoint):
 
 def _merge_rugcheck_candidate(existing, incoming):
     """Keep first useful metadata and union independent RugCheck feed labels."""
-    for key in ("name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv", "decimals"):
+    merge_keys = (
+        "name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv",
+        "decimals", "creator", "mint_authority", "freeze_authority", "token_program",
+        "created_at", "updated_at", "token_type", "token_uri", "update_authority",
+        "is_mutable", "rugcheck_score", "rugcheck_user_visits", "rugcheck_visits",
+        "rugcheck_vote_count", "rugcheck_up_count", "rugcheck_payer",
+        "rugcheck_description", "jup_verified", "jup_strict", "rugcheck_links",
+        "rugcheck_events",
+    )
+    for key in merge_keys:
         current = existing.get(key)
         value = incoming.get(key)
         if current in (None, "", "Unknown", 0) and value not in (None, "", "Unknown", 0):
