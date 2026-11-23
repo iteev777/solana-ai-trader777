@@ -37,12 +37,12 @@ live_execution.py	production	unreviewed
 live_trading.py	production	unreviewed
 main.py	production	unreviewed
 market_data.py	production	reviewed
-meteora_damm_quote.py	production	unreviewed
-meteora_dbc_quote.py	production	unreviewed
+meteora_damm_quote.py	production	reviewed
+meteora_dbc_quote.py	production	reviewed
 meteora_dlmm_quote.py	production	unreviewed
 ohlcv_integrity.py	production	unreviewed
 onchain_stream.py	production	reviewed
-orca_whirlpool_quote.py	production	unreviewed
+orca_whirlpool_quote.py	production	reviewed
 paper_fill_model.py	production	unreviewed
 paper_trading.py	production	unreviewed
 pool_account_fetcher.py	production	reviewed

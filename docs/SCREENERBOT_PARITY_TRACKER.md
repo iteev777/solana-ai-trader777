@@ -49,12 +49,16 @@ status in this review.
 | `clmm_quote_math.py` | `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` (targeted tick-walk comparison) | Both round input and fees conservatively and stop at coverage limits. Full reference tick-array traversal review remains open. | `4cfd422` Reject fractional fee rates, duplicate or out-of-coverage ticks and incorrect coverage direction. | Mock quote tests pass. |
 | `raydium_clmm_quote.py` | `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` (targeted snapshot/config comparison) | Both check layout and calculate from loaded accounts. Reference also models transfer fees and extension arrays. Trojan retains its read-only restrictions. | `15370ea` Require account discriminators for config and tick arrays. | 601 tests passed. |
 
+| `orca_whirlpool_quote.py` | `src/chains/solana/swaps/direct/venues/orca_whirlpool.rs` and `src/chains/solana/pools/layouts/orca_whirlpool.rs` (targeted oracle comparison) | Both reject active adaptive fees. Reference also decodes dynamic arrays; this remains open for Trojan. | `e93cd7a` Check present oracle discriminator and pool identity. Preserve the inclusive tick edge in the shared integer walk. | Mock oracle and tick boundary checks pass. |
+| `meteora_damm_quote.py` | `src/chains/solana/swaps/direct/venues/meteora_damm.rs` (targeted fee/activation comparison) | Both handle output fees and mode-dependent input fees. Reference models scheduler semantics in more detail and uses a separate current point for its scheduler. | `2627a1b` Gate activation on the same confirmed slot or its block time and reject invalid slot values. | Mock confirmed activation checks pass. |
+| `meteora_dbc_quote.py` | `src/chains/solana/swaps/direct/venues/meteora_dbc.rs` (targeted curve/vault comparison) | Both price using curve segments and guard output against the vault. Transfer-fee modeling and full reference venue review remain open. | `ccc314e` Reject aliased pool/config/mint/vault keys, reject invalid snapshot slots and use a monotonic elapsed-time check. | All 605 Trojan tests passed. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Twenty-eight of 61 production
+path in this branch, including review artifacts. Thirty-one of 61 production
 Python files have completed this review. The last completed file is
-`raydium_clmm_quote.py`. Resume at `orca_whirlpool_quote.py` for its read-only venue adapter.
+`meteora_dbc_quote.py`. Resume at `meteora_dlmm_quote.py` for its bin-based read-only venue adapter.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
@@ -63,7 +67,7 @@ are listed as well. Thirty-three source files are reviewed and 1,978 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 601 tests passed, including the process-level paper/dashboard and live
+All 605 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.
