@@ -128,10 +128,29 @@ class DiscoverySourceFailureTests(unittest.TestCase):
 
     def test_meme_listing_transport_error_propagates_to_aggregator(self):
         with patch.object(pumpfun_scanner, "API_KEY", "test-key"), \
-             patch.object(pumpfun_scanner, "_quota_disabled_until", 0), \
+             patch.object(birdeye_scanner, "_quota_disabled_until", 0), \
              patch.object(pumpfun_scanner, "get_json", side_effect=requests.Timeout("timeout")):
             with self.assertRaises(requests.Timeout):
                 pumpfun_scanner.scan_pumpfun()
+
+    def test_birdeye_quota_pause_applies_across_both_scanners(self):
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b"Compute units usage limit exceeded"
+        with (
+            patch.object(birdeye_scanner, "API_KEY", "test-key"),
+            patch.object(pumpfun_scanner, "API_KEY", "test-key"),
+            patch.object(birdeye_scanner, "_quota_disabled_until", 0),
+            patch.object(pumpfun_scanner, "get_json",
+                         side_effect=requests.HTTPError(response=response)) as listing,
+            patch.object(birdeye_scanner, "get_json") as token_list,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "quota exhausted"):
+                pumpfun_scanner.scan_pumpfun()
+            with self.assertRaisesRegex(RuntimeError, "cooldown"):
+                birdeye_scanner.scan_birdeye()
+        listing.assert_called_once()
+        token_list.assert_not_called()
 
     def test_meme_listing_missing_key_is_reported_as_unavailable(self):
         with patch.object(pumpfun_scanner, "API_KEY", None):

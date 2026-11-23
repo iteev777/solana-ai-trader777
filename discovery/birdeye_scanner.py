@@ -61,6 +61,18 @@ def _quota_exhausted(response):
     return "compute units usage limit exceeded" in text[:300].lower()
 
 
+def check_quota(source):
+    if time.monotonic() < _quota_disabled_until:
+        raise RuntimeError(f"{source}: quota cooldown active")
+
+
+def pause_if_quota_exhausted(error, source):
+    global _quota_disabled_until
+    if _quota_exhausted(error.response):
+        _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
+        raise RuntimeError(f"{source}: quota exhausted; paused for 1 hour") from None
+
+
 def extract_items(data):
 
     if not isinstance(data, dict):
@@ -113,14 +125,11 @@ def normalize_token(token):
 
 def scan_birdeye():
 
-    global _quota_disabled_until
-
     found_tokens = []
 
     if not API_KEY:
         raise RuntimeError("Birdeye: BIRDEYE_API_KEY is missing")
-    if time.monotonic() < _quota_disabled_until:
-        raise RuntimeError("Birdeye: quota cooldown active")
+    check_quota("Birdeye")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -213,9 +222,7 @@ def scan_birdeye():
         print("================================", flush=True)
 
     except requests.HTTPError as error:
-        if _quota_exhausted(error.response):
-            _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
-            raise RuntimeError("Birdeye: quota exhausted; paused for 1 hour") from None
+        pause_if_quota_exhausted(error, "Birdeye")
         raise
 
     return found_tokens
