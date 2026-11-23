@@ -19,13 +19,17 @@ MAX_SLIPPAGE_BPS = 300
 
 
 def _decode_whirlpool(raw, chain):
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 245:
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 653:
         raise ValueError("Orca Whirlpool account is truncated")
     if raw[:8] != chain._discriminator("Whirlpool"):
         raise ValueError("Orca Whirlpool discriminator is invalid")
     state = {
         "tick_spacing": chain._u16(raw, 41),
+        "fee_tier_index": chain._u16(raw, 43),
         "fee_rate": chain._u16(raw, 45),
+        "protocol_fee_rate": chain._u16(raw, 47),
+        "protocol_fee_owed_a": chain._u64(raw, 85),
+        "protocol_fee_owed_b": chain._u64(raw, 93),
         "liquidity": chain._u128(raw, 49),
         "sqrt_price_x64": chain._u128(raw, 65),
         "tick_current": chain._i32(raw, 81),
@@ -40,8 +44,12 @@ def _decode_whirlpool(raw, chain):
         raise ValueError("Orca Whirlpool pool mints must differ")
     if state["liquidity"] <= 0:
         raise ValueError("Orca Whirlpool has no active liquidity")
-    if state["fee_rate"] >= mathx.FEE_DENOMINATOR:
-        raise ValueError("Orca Whirlpool fee rate is invalid")
+    if state["fee_tier_index"] != state["tick_spacing"]:
+        raise ValueError("Orca adaptive-fee tier is not supported")
+    if state["fee_rate"] > 60_000:
+        raise ValueError("Orca Whirlpool fee rate exceeds the static fee cap")
+    if state["protocol_fee_rate"] > 2_500:
+        raise ValueError("Orca Whirlpool protocol fee rate exceeds the protocol cap")
     if not mathx.MIN_TICK <= state["tick_current"] < mathx.MAX_TICK:
         raise ValueError("Orca Whirlpool current tick is outside supported range")
     lower = mathx.sqrt_price_at_tick(state["tick_current"])
@@ -156,8 +164,10 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     if pool_acc is None or pool_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Orca Whirlpool pool account is unavailable or has an invalid owner")
     state = _decode_whirlpool(pool_acc.get("data"), chain)
-    for field in ("tick_spacing", "fee_rate", "liquidity", "sqrt_price_x64",
-                  "tick_current", "mint_a", "mint_b", "vault_a", "vault_b"):
+    for field in ("tick_spacing", "fee_tier_index", "fee_rate", "protocol_fee_rate",
+                  "protocol_fee_owed_a", "protocol_fee_owed_b", "liquidity",
+                  "sqrt_price_x64", "tick_current", "mint_a", "mint_b",
+                  "vault_a", "vault_b"):
         if state[field] != first[field]:
             raise ValueError("Orca Whirlpool state changed between discovery and confirmed snapshot")
 
@@ -168,10 +178,14 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         raise ValueError("Orca Whirlpool Token-2022 mints are refused until transfer fees and hooks are modelled")
     if vault_a_acc.get("owner") != chain.TOKEN_PROGRAM or vault_b_acc.get("owner") != chain.TOKEN_PROGRAM:
         raise ValueError("Orca Whirlpool vaults must use the legacy SPL Token program")
-    reserve_a = chain._token_amount(vault_a_acc, state["mint_a"])
-    reserve_b = chain._token_amount(vault_b_acc, state["mint_b"])
+    vault_balance_a = chain._token_amount(vault_a_acc, state["mint_a"])
+    vault_balance_b = chain._token_amount(vault_b_acc, state["mint_b"])
+    # Protocol fees owed are held in the vaults but are not spendable swap
+    # liquidity. Subtract them before applying the output-reserve guard.
+    reserve_a = vault_balance_a - state["protocol_fee_owed_a"]
+    reserve_b = vault_balance_b - state["protocol_fee_owed_b"]
     if reserve_a <= 0 or reserve_b <= 0:
-        raise ValueError("Orca Whirlpool vault reserves are empty")
+        raise ValueError("Orca Whirlpool spendable vault reserves are empty")
 
     oracle_acc = accounts[5]
     if oracle_acc is not None:
