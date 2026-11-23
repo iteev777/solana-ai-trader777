@@ -7,6 +7,7 @@ import time
 import queue
 import threading
 import os
+import math
 
 from collections import OrderedDict
 from urllib.parse import quote
@@ -34,6 +35,8 @@ seen_lock = threading.Lock()
 
 listener_lock = threading.Lock()
 listener_started = False
+_listener_thread = None
+_listener_stop_event = threading.Event()
 _subscription_lock = threading.RLock()
 _active_ws = None
 _watched_tokens = set()
@@ -236,7 +239,7 @@ def run_sniper_listener():
     else:
         url = BASE_URL
 
-    while True:
+    while not _listener_stop_event.is_set():
         try:
             print("TROJAN V2 CONNECTING TO PUMPPORTAL...")
 
@@ -256,23 +259,23 @@ def run_sniper_listener():
         except Exception as error:
             print("SNIPER ERROR:", repr(error))
 
-        print(
-            "RECONNECTING IN",
-            RECONNECT_DELAY,
-            "SECONDS..."
-        )
-
-        time.sleep(RECONNECT_DELAY)
+        if not _listener_stop_event.is_set():
+            print(
+                "RECONNECTING IN",
+                RECONNECT_DELAY,
+                "SECONDS..."
+            )
+            _listener_stop_event.wait(RECONNECT_DELAY)
 
 
 def start_sniper_listener():
-    global listener_started
+    global listener_started, _listener_thread
 
     with listener_lock:
-        if listener_started:
+        if _listener_thread is not None and _listener_thread.is_alive():
             print("SNIPER LISTENER ALREADY STARTED")
-            return
-
+            return _listener_thread
+        _listener_stop_event.clear()
         listener_started = True
 
     def start_thread():
@@ -291,15 +294,49 @@ def start_sniper_listener():
             name="TrojanV2SniperListener"
         )
 
+        with listener_lock:
+            _listener_thread = thread
         thread.start()
 
         print("TROJAN V2 SNIPER THREAD STARTED")
+        return thread
 
     except Exception as error:
         with listener_lock:
             listener_started = False
 
         print("SNIPER THREAD START ERROR:", repr(error))
+        return None
+
+
+def stop_listener(timeout=5.0):
+    """Stop the reconnect loop, close the active socket and join its worker."""
+    global listener_started, _listener_thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a finite non-negative number")
+    if not math.isfinite(float(timeout)) or timeout < 0:
+        raise ValueError("timeout must be a finite non-negative number")
+
+    _listener_stop_event.set()
+    with _subscription_lock:
+        ws = _active_ws
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception as error:
+            print("SNIPER SOCKET CLOSE ERROR:", repr(error))
+
+    with listener_lock:
+        thread = _listener_thread
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(float(timeout))
+        if thread.is_alive():
+            return False
+    with listener_lock:
+        listener_started = False
+        if _listener_thread is thread:
+            _listener_thread = None
+    return True
 
 
 # Compatibility with main.py
