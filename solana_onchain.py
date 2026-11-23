@@ -1227,7 +1227,7 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
 
 def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
                               slippage_bps=100, max_snapshot_age=5.0):
-    """Read-only Pump bonding-curve quote for SOL-paired legacy SPL mints."""
+    """Read-only Pump bonding-curve quote for SOL-paired legacy and supported Token-2022 mints."""
     if not isinstance(pool_address, str) or not pool_address.strip():
         raise ValueError("Pump.fun bonding curve address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
