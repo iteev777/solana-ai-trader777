@@ -195,6 +195,24 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fee collection mode"):
             self.quote(pair_data=bytes(pair))
 
+    def test_invalid_clock_owner_is_rejected(self):
+        original = self.clock_account
+        try:
+            self.clock_account = dict(original, owner=chain.TOKEN_PROGRAM)
+            with self.assertRaisesRegex(ValueError, "Clock sysvar owner"):
+                self.quote()
+        finally:
+            self.clock_account = original
+
+    def test_invalid_clock_data_type_is_rejected(self):
+        original = self.clock_account
+        try:
+            self.clock_account = dict(original, data="not bytes")
+            with self.assertRaisesRegex(ValueError, "Clock sysvar is truncated"):
+                self.quote()
+        finally:
+            self.clock_account = original
+
     def test_invalid_confirmed_slot_is_rejected(self):
         for slot in (0, -1, True, "123"):
             with self.subTest(slot=slot):
