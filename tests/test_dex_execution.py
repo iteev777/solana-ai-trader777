@@ -17,7 +17,7 @@ class FakeResponse:
 
 
 def test_order_returns_unsigned_transaction_and_route(monkeypatch):
-    transaction = base64.b64encode(b"\\x00" * 120).decode()
+    transaction = base64.b64encode(bytes([0]) * 120).decode()
     captured = {}
 
     def fake_get(url, params, headers, timeout):
@@ -64,7 +64,7 @@ def test_order_rejects_missing_transaction(monkeypatch):
 
 
 def test_order_rejects_mismatched_input_amount(monkeypatch):
-    transaction = base64.b64encode(b"\\x00" * 120).decode()
+    transaction = base64.b64encode(bytes([0]) * 120).decode()
     monkeypatch.setattr(
         dex_execution.requests, "get",
         lambda *args, **kwargs: FakeResponse({
@@ -89,14 +89,14 @@ def test_execute_is_locked_by_default(monkeypatch):
 
 def test_execute_requires_explicit_confirmation(monkeypatch):
     monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
-    signed = base64.b64encode(b"\\x00" * 120).decode()
+    signed = base64.b64encode(bytes([0]) * 120).decode()
     with pytest.raises(dex_execution.ExecutionLocked, match="confirmation"):
         dex_execution.execute_signed_order(signed, "req", confirmed=False)
 
 
 def test_execute_posts_only_signed_transaction_and_request_id(monkeypatch):
     monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
-    signed = base64.b64encode(b"\\x00" * 120).decode()
+    signed = base64.b64encode(bytes([0]) * 120).decode()
     captured = {}
 
     def fake_post(url, json, headers, timeout):
