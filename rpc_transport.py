@@ -6,6 +6,8 @@ TRITON_RPC_URL and ALCHEMY_RPC_URL. Endpoint URLs are never logged or exposed.
 """
 import os
 import json
+import ipaddress
+import math
 import subprocess
 import select
 import threading
@@ -14,9 +16,32 @@ from urllib.parse import urlparse
 
 import requests
 
-_TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
-_MIN_INTERVAL = float(os.getenv("SOLANA_RPC_MIN_INTERVAL", "0.12"))
+def _env_float(name, default, minimum, maximum):
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+    if not math.isfinite(value) or value < minimum or value > maximum:
+        return float(default)
+    return value
+
+
+_TIMEOUT = _env_float("SOLANA_RPC_TIMEOUT", 8.0, 1.0, 60.0)
+_MIN_INTERVAL = _env_float("SOLANA_RPC_MIN_INTERVAL", 0.12, 0.0, 5.0)
 _MAX_COOLDOWN = 60.0
+READ_ONLY_METHODS = frozenset({
+    "getAccountInfo", "getBalance", "getBlock", "getBlockHeight",
+    "getBlockTime", "getBlocks", "getClusterNodes", "getEpochInfo",
+    "getEpochSchedule", "getFeeForMessage", "getFirstAvailableBlock",
+    "getGenesisHash", "getHealth", "getHighestSnapshotSlot",
+    "getIdentity", "getLargestAccounts", "getLatestBlockhash",
+    "getLeaderSchedule", "getMaxShredInsertSlot", "getMinimumBalanceForRentExemption",
+    "getMinimumLedgerSlot", "getMultipleAccounts", "getProgramAccounts",
+    "getRecentPrioritizationFees", "getSignatureStatuses", "getSignaturesForAddress",
+    "getSlot", "getSlotLeader", "getSlotLeaders", "getSupply", "getTokenAccountsByOwner",
+    "getTokenLargestAccounts", "getTokenSupply", "getTransaction", "getVersion",
+    "getVoteAccounts", "simulateTransaction",
+})
 _guard = threading.RLock()
 _endpoint_locks = {}
 _state = {}
@@ -83,6 +108,27 @@ def _rust_rpc_call(url, method, params):
         return result
 
 
+def _valid_endpoint_url(url):
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host or parsed.username or parsed.password or parsed.fragment:
+            return False
+        # Remote RPC traffic must be encrypted. Plain HTTP is only permitted
+        # for a local node/sidecar bound to loopback.
+        if parsed.scheme == "https":
+            return parsed.port is None or 1 <= parsed.port <= 65535
+        if parsed.scheme != "http":
+            return False
+        if host == "localhost":
+            return parsed.port is None or 1 <= parsed.port <= 65535
+        return ipaddress.ip_address(host).is_loopback and (
+            parsed.port is None or 1 <= parsed.port <= 65535
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _urls():
     raw = []
     raw.extend(os.getenv("SOLANA_RPC_URLS", "").split(","))
@@ -92,7 +138,7 @@ def _urls():
     result, seen = [], set()
     for item in raw:
         url = item.strip()
-        if url and url not in seen and url.startswith(("https://", "http://")):
+        if url and url not in seen and _valid_endpoint_url(url):
             seen.add(url)
             result.append(url)
     return result
@@ -132,6 +178,10 @@ def _retry_after(response):
 
 def rpc_call(method, params):
     global _cursor
+    if not isinstance(method, str) or method not in READ_ONLY_METHODS:
+        raise ValueError("RPC method is not permitted by the read-only transport")
+    if not isinstance(params, (list, dict)):
+        raise ValueError("JSON-RPC params must be an array or object")
     endpoints = _urls()
     if not endpoints:
         raise RuntimeError("No Solana RPC endpoint configured; set SOLANA_RPC_URL or SOLANA_RPC_URLS")
@@ -190,7 +240,7 @@ def rpc_call(method, params):
                 if not isinstance(payload, dict):
                     raise ValueError("Invalid JSON-RPC response")
                 rpc_error = payload.get("error")
-                if rpc_error:
+                if "error" in payload and rpc_error is not None:
                     code = rpc_error.get("code") if isinstance(rpc_error, dict) else None
                     message = str(rpc_error)[:180]
                     if code in (-32005, 429) or "rate limit" in message.lower():
@@ -200,11 +250,13 @@ def rpc_call(method, params):
                     state["last_error"] = "JSON-RPC error " + str(code)
                     errors.append(_host(url) + " JSON-RPC error " + str(code))
                     continue
+                if "result" not in payload:
+                    raise ValueError("JSON-RPC response is missing the result field")
                 state["successes"] += 1
                 state["last_latency_ms"] = round((time.monotonic() - started) * 1000, 1)
                 state["last_error"] = None
                 state["next_request"] = time.monotonic() + _MIN_INTERVAL
-                return payload.get("result")
+                return payload["result"]
             except Exception as error:
                 state["failures"] += 1
                 state["last_error"] = type(error).__name__
@@ -212,6 +264,39 @@ def rpc_call(method, params):
                 errors.append(_host(url) + " " + type(error).__name__)
 
     raise RuntimeError("All configured Solana RPC endpoints failed: " + "; ".join(errors[:6]))
+
+
+def shutdown_rpc_sidecars(timeout=5.0):
+    """Terminate all lazily-created Rust RPC sidecars during service shutdown."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0:
+        raise ValueError("RPC sidecar shutdown timeout must be non-negative")
+    with _guard:
+        items = list(_rust_sidecars.items())
+    stopped = True
+    for url, process in items:
+        lock = _rust_sidecar_locks.get(url)
+        if lock is None:
+            continue
+        with lock:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=float(timeout))
+                except subprocess.TimeoutExpired:
+                    try:
+                        process.kill()
+                        process.wait(timeout=1)
+                    except Exception:
+                        stopped = False
+                except Exception:
+                    stopped = False
+            if process.poll() is None:
+                stopped = False
+            else:
+                with _guard:
+                    if _rust_sidecars.get(url) is process:
+                        _rust_sidecars.pop(url, None)
+    return stopped
 
 
 def get_rpc_status():
