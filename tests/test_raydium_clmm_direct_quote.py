@@ -262,6 +262,66 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
                          [self.bitmap_extension, self.tick_array])
         self.assertEqual(result["execution"], "LOCKED")
 
+    def test_native_builder_binds_token_programs_to_each_token2022_mint(self):
+        quote = self.quote()
+        wallet = chain._b58encode(bytes([31]) * 32)
+        user_in = chain._b58encode(bytes([32]) * 32)
+        user_out = chain._b58encode(bytes([33]) * 32)
+        mint1 = bytearray(82)
+        mint1[44] = 6
+        mint1[45] = 1
+        mint1_account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint1)}
+        vault1 = self.token_account(self.mint1, 10**12, self.pool)
+        vault1["owner"] = chain.TOKEN_2022_PROGRAM
+        input_account = self.token_account(self.mint1, 10**9, wallet)
+        input_account["owner"] = chain.TOKEN_2022_PROGRAM
+        output_account = self.token_account(self.mint0, 0, wallet)
+        observation = chain._b58encode(bytes([34]) * 32)
+        observation_raw = bytearray(40)
+        observation_raw[8:40] = chain._b58decode(self.pool)
+        observation_account = {
+            "owner": chain.PROGRAMS["raydium_clmm"], "data": bytes(observation_raw)
+        }
+        builder_accounts = [
+            self.accounts[0], self.accounts[1], self.accounts[2], vault1,
+            self.accounts[4], mint1_account, None, observation_account,
+            input_account, output_account, self.tick_account,
+        ]
+
+        def pda(seeds, program):
+            if seeds[0] == dlmm.BITMAP_EXTENSION_SEED:
+                return self.bitmap_extension, 255
+            if seeds[0] == b"observation":
+                return observation, 254
+            return self.tick_array, 253
+
+        def account(address):
+            if address == self.pool:
+                return {"owner": chain.PROGRAMS["raydium_clmm"], "data": self.state}
+            return None
+
+        with (
+            patch.object(clmm_builder.clmm, "quote_raydium_clmm_pool", return_value=quote),
+            patch.object(chain, "_account", side_effect=account),
+            patch.object(chain, "_find_program_address", side_effect=pda),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         return_value=(builder_accounts, 123456)),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": chain._b58encode(bytes([35]) * 32),
+                "lastValidBlockHeight": 999999,
+            }}),
+        ):
+            result = clmm_builder.build_raydium_clmm_swap(
+                quote, wallet, user_in, user_out
+            )
+        self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_program_output"], chain.TOKEN_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(
+            result["instruction_accounts"][8:10],
+            [chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM],
+        )
+
     def test_bitmap_extension_decodes_positive_and_negative_array_ranges(self):
         raw = bytearray(40 + 2 * dlmm.BITMAP_EXTENSION_BLOCKS * 64)
         raw[:8] = chain._discriminator("TickArrayBitmapExtension")
