@@ -61,10 +61,16 @@ class OnchainDecoderTests(unittest.TestCase):
         struct.pack_into("<Q", config, 28, 100000)
         struct.pack_into("<Q", config, 108, 1000)
 
+        pool_authority, _ = solana_onchain._find_program_address(
+            [b"vault_and_lp_mint_auth_seed"], PROGRAMS["raydium_cpmm"]
+        )
+
         def token_account(mint_byte, amount):
             raw = bytearray(165)
             raw[:32] = bytes([mint_byte]) * 32
+            raw[32:64] = _b58decode(pool_authority)
             struct.pack_into("<Q", raw, 64, amount)
+            raw[108] = 1
             return {"owner": TOKEN_PROGRAM, "data": bytes(raw)}
 
         def mint_account(decimals):
