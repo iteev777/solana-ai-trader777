@@ -778,11 +778,6 @@ def api_raydium_cpmm_order():
             order["transaction"], "raydium_cpmm", order["last_valid_block_height"]
         )
         order.update(approval)
-        from native_execution import register_native_approval
-        approval = register_native_approval(
-            order["transaction"], "pumpswap", order["last_valid_block_height"]
-        )
-        order.update(approval)
         order["simulation"] = simulation
         order["created"] = True
         order["execution"] = "LOCKED"
@@ -843,6 +838,11 @@ def api_pumpswap_v2_order():
                 "signing": "DISABLED",
                 "broadcast": "DISABLED",
             }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "pumpswap", order["last_valid_block_height"]
+        )
+        order.update(approval)
         order["simulation"] = simulation
         order["created"] = True
         order["execution"] = "LOCKED"
