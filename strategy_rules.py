@@ -20,6 +20,7 @@ import json
 import os
 import time
 import math
+import threading
 import strategy_conditions
 
 ALLOWED_FIELDS = {
@@ -35,6 +36,18 @@ ALLOWED_FIELDS = {
     "consecutive_red_candles", "volume_spike", "position_holding_minutes"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
+
+
+def _evaluation_concurrency_limit():
+    try:
+        value = int(os.getenv("TROJAN_STRATEGY_MAX_CONCURRENT_EVALUATIONS", "10"))
+    except (TypeError, ValueError, OverflowError):
+        value = 10
+    return max(1, min(value, 100))
+
+
+MAX_CONCURRENT_EVALUATIONS = _evaluation_concurrency_limit()
+_EVALUATION_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
 
 
 def _number(value):
@@ -303,7 +316,15 @@ def evaluate_strategy_rules(token, score, strategy):
     if not math.isfinite(timeout_ms) or not 1.0 <= timeout_ms <= 1000.0:
         timeout_ms = 50.0
     deadline = time.monotonic() + timeout_ms / 1000.0
-    state, reasons = _evaluate(rule, _context(token, score), deadline=deadline)
+    # Bound concurrent evaluations as well as the work inside each rule tree.
+    # Waiting for capacity consumes the same deadline; saturation fails closed.
+    remaining = max(0.0, deadline - time.monotonic())
+    if not _EVALUATION_SEMAPHORE.acquire(timeout=remaining):
+        return False, "Custom strategy evaluation timeout: concurrency capacity unavailable"
+    try:
+        state, reasons = _evaluate(rule, _context(token, score), deadline=deadline)
+    finally:
+        _EVALUATION_SEMAPHORE.release()
     passed = state == "true"
     return passed, "Custom rules passed" if passed else "; ".join(reasons)
 
