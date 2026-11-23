@@ -91,6 +91,17 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         self.pool_account = {"owner": chain.PROGRAMS["meteora_dbc"], "data": self.pool_data}
         self.accounts[0] = self.pool_account
 
+    def test_fixture_fee_and_vault_accounting_offsets(self):
+        state = dbc._decode_virtual_pool(self.pool_data, chain)
+        self.assertEqual(state["protocol_base_fee"], 100)
+        self.assertEqual(state["protocol_quote_fee"], 200)
+        self.assertEqual(state["partner_base_fee"], 300)
+        self.assertEqual(state["partner_quote_fee"], 400)
+        self.assertEqual(state["creator_base_fee"], 0)
+        self.assertEqual(state["creator_quote_fee"], 0)
+        self.assertEqual(chain._token_amount(self.accounts[4], self.base_mint), 10**12)
+        self.assertEqual(chain._token_amount(self.accounts[5], self.quote_mint), 10**12)
+
     def test_confirmed_snapshot_quotes_base_and_quote_directions(self):
         base_sell = self.quote()
         quote_buy = self.quote(input_mint=self.quote_mint, output_mint=self.base_mint)
