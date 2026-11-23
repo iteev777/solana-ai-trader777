@@ -13,6 +13,12 @@ ACCOUNT_B = solana_onchain._b58encode(bytes([4]) * 32)
 
 
 class TokenSecurityTests(unittest.TestCase):
+    def setUp(self):
+        token_security.clear_cache()
+
+    def tearDown(self):
+        token_security.clear_cache()
+
     def test_active_authority_rejected(self):
         report = {"source": "solana_rpc", "mint_authority": "ACTIVE",
                   "freeze_authority": "DISABLED", "warnings": []}
