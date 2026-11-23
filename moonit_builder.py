@@ -9,7 +9,7 @@ import base64
 import struct
 
 import solana_onchain as chain
-from raydium_cpmm_builder import _compile_legacy_message
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["moonit_amm"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
@@ -244,6 +244,8 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid,
         "config_bump": config_bump,
         "curve_token_bump": curve_token_bump,
