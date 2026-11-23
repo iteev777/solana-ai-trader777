@@ -235,5 +235,39 @@ class RouteComparisonTests(unittest.TestCase):
             route_comparison.compare_quotes("in", "out", 500, 301)
 
 
+
+    def test_moonit_fee_amount_and_mint_are_normalized(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "moonit_direct", "protocol": "moonit_amm",
+            "output_mint": "out", "fee_mint": "So11111111111111111111111111111111111111112",
+            "out_amount": 1200, "minimum_out_amount": 1180,
+            "price_impact_percent": 0.2, "slot": 777, "pool_id": "curve",
+            "fee_amount": 100,
+        }
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "curve")
+        quote = result["quotes"]["direct_pool"]
+        self.assertEqual(quote["fee_mint"], direct["fee_mint"])
+        self.assertEqual(quote["fee_amounts"]["fee"], 100)
+        self.assertEqual(quote["fee_amounts"]["total"], 100)
+
+
+
 if __name__ == "__main__":
     unittest.main()
