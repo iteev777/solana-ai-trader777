@@ -99,6 +99,7 @@ jobs:
               "/api/dex-status",
               "/api/performance",
               "/api/database",
+              "/api/observation",
           }
           missing = sorted(required - paths)
           assert not missing, f"Dashboard routes missing: {missing}"
