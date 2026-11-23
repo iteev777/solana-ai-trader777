@@ -51,6 +51,27 @@ X-Trojan-Confirm-Live: 1
 }
 ```
 
+## Multi-route DEX ranking confidence
+
+The read-only multi-pool route endpoint compares eligible Jupiter, Raptor and
+verified direct-pool quotes. It ranks routes using minimum output after
+subtracting only explicitly supplied network-fee estimates denominated in the
+same output mint.
+
+The response exposes:
+- `ranking_confidence: COST_ADJUSTED` when every eligible route has a
+  comparable output-mint network-fee estimate;
+- `ranking_confidence: PROVISIONAL_UNPRICED_NETWORK_COSTS` when one or more
+  eligible routes lack that estimate;
+- `ranking_is_provisional`, `unpriced_eligible_route_count`, and
+  `unpriced_eligible_route_keys` to identify the affected comparison;
+- `ranking_note` to explain whether the selected route is provisional.
+
+A provisional selection is only the best result under currently available
+cost data; unpriced fees may change the route order. Trojan does not invent
+fee conversions or present an incomplete comparison as cost-adjusted. Route
+selection remains read-only and does not authorize signing or broadcasting.
+
 ## Safety gates
 
 - Execution is **disabled by default**.
