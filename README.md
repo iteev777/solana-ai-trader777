@@ -384,3 +384,14 @@ The read-only direct quote path supports legacy SOL-paired Pump.fun curves using
 ## Pool-count and reserve filtering
 
 The candidate filter can optionally enforce the number of distinct pools known to the multi-source pool registry with `TROJAN_FILTER_MIN_POOL_COUNT` and `TROJAN_FILTER_MAX_POOL_COUNT`. A stale or empty registry is treated as unknown, not as zero. GeckoTerminal normalized market snapshots preserve `reserve_in_usd`; an optional `TROJAN_FILTER_MIN_POOL_RESERVE_USD` floor returns WAIT if that measurement is unavailable and rejects a measured reserve below the floor. All three controls are disabled by default.
+
+
+## Persistent token, pool and account blacklist
+
+Trojan maintains a local SQLite denylist for Solana token mints, pool accounts and token-account/authority addresses. Entries are durable across process restarts and can be added, listed or deactivated through the authenticated dashboard API:
+
+- `GET /api/blacklist?entry_type=token|pool|account`
+- `POST /api/blacklist` with `X-Trojan-Action: 1` and JSON `{ "entry_type": "token|pool|account", "address": "<base58>", "reason": "<reason>" }`
+- `DELETE /api/blacklist/{entry_type}/{address}`
+
+Every address is validated as a 32-byte base58 Solana public key. Entries are soft-deactivated rather than erased; re-adding an existing entry reactivates it and updates its reason/source. Candidate mints and selected pool addresses are checked before strategy evaluation. When confirmed RPC security data is available, the largest token-account addresses and their parsed authorities are checked as well. The account list is limited to the provider's largest-account response and is not a complete holder census. Blacklist lookup errors fail closed for candidate approval.
