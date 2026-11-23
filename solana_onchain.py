@@ -1341,6 +1341,12 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100, out
             pool_address, input_mint, amount_in, slippage_bps,
             output_mint=output_mint,
         )
+    if protocol == "orca_whirlpool":
+        from orca_whirlpool_quote import quote_orca_whirlpool_pool
+        return quote_orca_whirlpool_pool(
+            pool_address, input_mint, amount_in, slippage_bps,
+            output_mint=output_mint,
+        )
     if protocol == "raydium_cpmm":
         return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_amm_v4":

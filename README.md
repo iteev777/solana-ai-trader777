@@ -260,7 +260,7 @@ Named conditions can be nested in the existing `all`, `any`, and `not` groups. P
 
 ## Native direct quote adapters
 
-The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
+The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, Orca Whirlpool, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
 
 
 ## Configurable paper exit policy
@@ -416,3 +416,8 @@ Paper entries, DCA adds, partial exits and full exits apply a conservative price
 ## Strategy indicator freshness
 
 Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, candle structure, ATR/volatility, volume spike, VWAP and indicator-derived pullbacks) now require an explicitly ready OHLCV indicator series with a valid timestamp. The default maximum age is 180 seconds, configurable from 30 to 3600 seconds with `TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS`. Missing, stale or future-dated indicator snapshots fail closed with an auditable condition reason. Market-only and direct position metrics do not require an OHLCV timestamp. Token age and time-of-day conditions use the same evaluation timestamp.
+
+
+## Orca Whirlpool direct quote adapter
+
+The read-only Orca Whirlpool adapter uses the pool fee_rate and the same integer Q64.64 concentrated-liquidity step math as Raydium CLMM, with Orca's distinct 88-tick fixed-array layout and decimal-string tick-array PDA seeds. It reads the pool, vaults, legacy SPL mints, optional oracle and direction-specific tick-array sequence at one confirmed RPC slot. Active adaptive-fee oracles, DynamicTickArray layouts and Token-2022 mints are refused. An absent fixed tick array is treated as an empty sequence element; quotes are capped at the derived sequence boundary. No transaction is built or signed.
