@@ -1,6 +1,9 @@
 import base64
 import os
+import sqlite3
+import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import dashboard
@@ -77,6 +80,64 @@ class DatabaseDashboardApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["error"], "keep invalid")
+
+    def test_unavailable_database_health_returns_service_unavailable(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}), \
+             patch.object(dashboard.database, "get_database_health",
+                          side_effect=sqlite3.DatabaseError("private path")):
+            response = self.client.get("/api/database", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["integrity"], "unknown")
+        self.assertNotIn("private path", response.get_data(as_text=True))
+
+    def test_backup_rejects_non_object_json_and_form_requests(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}), \
+             patch.object(dashboard.database, "backup_database") as backup:
+            response = self.client.post("/api/database/backup", json=[1], headers=self.headers)
+            self.assertEqual(response.status_code, 400)
+            response = self.client.post("/api/database/backup", data={"keep": 1}, headers=self.headers)
+            self.assertEqual(response.status_code, 400)
+        backup.assert_not_called()
+
+    def test_dashboard_can_stop_and_restart_on_the_same_port(self):
+        with patch.dict(os.environ, {
+            "TROJAN_DASHBOARD_TOKEN": "secret", "DASHBOARD_HOST": "127.0.0.1", "PORT": "0"
+        }):
+            self.addCleanup(dashboard.stop_dashboard)
+            self.assertTrue(dashboard.start_dashboard())
+            port = dashboard._server.server_port
+            dashboard.stop_dashboard()
+            self.assertIsNone(dashboard._server)
+            os.environ["PORT"] = str(port)
+            self.assertTrue(dashboard.start_dashboard())
+            self.assertEqual(dashboard._server.server_port, port)
+
+    def test_daily_performance_counts_only_recent_paper_exits(self):
+        today = datetime.now(timezone.utc).date()
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(dashboard.database, "DATABASE", os.path.join(tmp, "trades.db")), \
+             patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}):
+            dashboard.database.initialize_database()
+            rows = [
+                ("SELL", "paper", 4, today.isoformat(), "main"),
+                ("SELL", "paper", -1.5, today.isoformat(), "sniper"),
+                ("BUY", "paper", 20, today.isoformat(), "main"),
+                ("SELL", "live", 10, today.isoformat(), "main"),
+                ("SELL", "paper", 10, (today - timedelta(days=30)).isoformat(), "main"),
+            ]
+            with dashboard.database.connect() as connection:
+                connection.executemany("""
+                    INSERT INTO trades (token_address, price, amount, action, mode,
+                                        profit_loss, timestamp, strategy)
+                    VALUES ('test', 1, 1, ?, ?, ?, ?, ?)
+                """, rows)
+            response = self.client.get("/api/performance", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["live_execution"], "locked")
+        self.assertEqual(data["daily"], [{
+            "day": today.isoformat(), "closed_trades": 2, "wins": 1, "realized_pnl": 2.5,
+        }])
 
 
     def test_blacklist_api_requires_dashboard_authentication(self):

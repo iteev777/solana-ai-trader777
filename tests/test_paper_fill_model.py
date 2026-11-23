@@ -32,6 +32,10 @@ class PaperFillModelTests(unittest.TestCase):
                 paper_fill_model.DEFAULT_SLIPPAGE_BPS,
             )
 
+    def test_large_finite_route_impact_is_capped_before_conversion(self):
+        metadata = {"entry_intelligence": {"quote": {"price_impact_percent": 1e308}}}
+        self.assertEqual(paper_fill_model.entry_slippage_bps(metadata), 300)
+
     def test_nonfinite_or_nonpositive_marks_are_rejected(self):
         for value in (0, -1, float("nan"), float("inf"), None):
             with self.subTest(value=value):
@@ -105,11 +109,10 @@ class PaperFillIntegrationTests(unittest.TestCase):
         with (
             patch.object(paper_trading, "refresh_account"),
             patch.object(paper_trading, "get_dca_steps", return_value=[{"drop_pct": 5, "add_usd": 2.5}]),
-            patch.object(paper_trading.exit_policy, "get_exit_policy", return_value={"stop_loss_pct": 9}),
             patch.object(paper_trading, "get_exit_steps", return_value=[]),
             patch.object(paper_trading.database, "add_position_investment_atomic", return_value={"result": "DCA ADDED"}) as add,
             patch.object(paper_trading.database, "update_position_metadata"),
-            patch.dict(os.environ, {"TROJAN_PAPER_SLIPPAGE_BPS": "25"}),
+            patch.dict(os.environ, {"TROJAN_PAPER_SLIPPAGE_BPS": "25", "TROJAN_MAX_HOLD_SECONDS": "0"}),
         ):
             result = paper_trading.update_position("MintDca", 95.0)
         self.assertEqual(result["slippage_bps"], 25)
@@ -126,7 +129,6 @@ class PaperFillIntegrationTests(unittest.TestCase):
         with (
             patch.object(paper_trading, "refresh_account"),
             patch.object(paper_trading, "get_dca_steps", return_value=[]),
-            patch.object(paper_trading.exit_policy, "get_exit_policy", return_value={"stop_loss_pct": 9}),
             patch.object(paper_trading, "get_exit_steps", return_value=[{"profit_pct": 5, "sell_fraction": 0.5}]),
             patch.object(paper_trading.database, "update_position_metadata"),
             patch.object(
@@ -134,7 +136,7 @@ class PaperFillIntegrationTests(unittest.TestCase):
                 "partial_close_position_atomic",
                 return_value={"result": "PARTIAL", "profit_loss": 1.0},
             ) as partial,
-            patch.dict(os.environ, {"TROJAN_PAPER_SLIPPAGE_BPS": "25"}),
+            patch.dict(os.environ, {"TROJAN_PAPER_SLIPPAGE_BPS": "25", "TROJAN_MAX_HOLD_SECONDS": "0"}),
         ):
             result = paper_trading.update_position("MintPartial", 110.0)
         self.assertAlmostEqual(partial.call_args.args[2], 109.725)

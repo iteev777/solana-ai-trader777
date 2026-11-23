@@ -1,7 +1,8 @@
+import json
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import copy_trade
 import database
@@ -80,6 +81,36 @@ class CopyWalletWatchlistTests(unittest.TestCase):
         self.assertTrue(second["enabled"])
         self.assertEqual(second["label"], "Renamed")
         self.assertEqual(len(database.list_copy_watch_wallets()), 1)
+
+    def test_monitor_delivers_paper_signal_after_transient_rpc_failure(self):
+        ws = Mock()
+        ws.recv.side_effect = [
+            json.dumps({"id": 1, "result": 99}),
+            json.dumps({"params": {"subscription": 99, "result": {"value": {"signature": "first"}}}}),
+            json.dumps({"params": {"subscription": 99, "result": {"value": {"signature": "next"}}}}),
+            KeyboardInterrupt,
+        ]
+        event = {
+            "wallet": ENV_WALLET, "signature": "next", "action": "BUY",
+            "token_mint": "test-mint", "token_delta": 5, "sol_delta": -1, "logs": [],
+        }
+        on_paper_signal = Mock(return_value=True)
+        with (
+            patch.dict(os.environ, {
+                "TROJAN_COPY_WALLETS": ENV_WALLET,
+                "SOLANA_RPC_URL": "https://test.invalid",
+                "TROJAN_COPY_PAPER_ENABLED": "true",
+            }),
+            patch.dict(copy_trade._status),
+            patch.object(copy_trade.websocket, "create_connection", return_value=ws) as connect,
+            patch.object(copy_trade, "_fetch_wallet_transaction", side_effect=[copy_trade.requests.Timeout, event]),
+            patch.object(copy_trade, "send_alert"),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            copy_trade._monitor_loop(on_paper_signal)
+        connect.assert_called_once()
+        on_paper_signal.assert_called_once_with(event)
+        ws.close.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -66,6 +66,14 @@ def get_exit_steps():
     return result
 
 
+def completed_exit_steps(metadata):
+    """Read ladder tiers while preserving the original one-shot completion flag."""
+    completed = metadata.get("exit_ladder_completed")
+    if isinstance(completed, list):
+        return [tier for tier in completed if type(tier) is int and tier >= 0]
+    return [0] if metadata.get("partial_take_profit_done") is True else []
+
+
 def policy_status():
     return {
         "dca_enabled": os.getenv("TROJAN_DCA_ENABLED", "false").lower() == "true",

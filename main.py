@@ -6,6 +6,8 @@
 import time
 import queue
 import math
+import signal
+from threading import Event
 from concurrent.futures import ThreadPoolExecutor
 
 import paper_trading as paper
@@ -24,7 +26,8 @@ from liquidity_monitor import check_liquidity
 from market_data import (
     get_market_data,
     get_market_data_batch,
-    get_gecko_pool_data_batch
+    get_gecko_pool_data_batch,
+    start_batch_worker
 )
 from indicators import fetch_pool_indicators
 from solana_onchain import decode_pool_snapshot, get_onchain_status
@@ -1172,7 +1175,7 @@ def process_completed_tasks():
 # DISCOVERY
 # ==========================================
 
-def add_discovery_tokens():
+def collect_discovery_candidates(stop_requested):
 
     tokens = []
 
@@ -1183,12 +1186,18 @@ def add_discovery_tokens():
     except Exception as error:
         log_event("SCANNER ERROR", reason=repr(error))
 
+    if stop_requested.is_set():
+        return None
+
     try:
         result = collect_tokens()
         if isinstance(result, (list, tuple)):
             tokens.extend(result)
     except Exception as error:
         log_event("AGGREGATOR ERROR", reason=repr(error))
+
+    if stop_requested.is_set():
+        return None
 
     # Merge all feeds before scheduling so a DexScreener candidate does not
     # hide useful GeckoTerminal pool metadata for the same mint.
@@ -1241,8 +1250,12 @@ def add_discovery_tokens():
             log_event("DISCOVERY MARKET ENRICHMENT ERROR", reason=repr(error))
 
     candidates = rank_candidates(candidates, market_enrichment)
-    quality_status = get_quality_status(candidates)
+    return candidates, len(tokens), invalid
 
+
+def queue_discovery_candidates(candidates, scanned, invalid):
+    quality_status = get_quality_status(candidates)
+    open_positions = paper.get_positions()
     added = 0
     already_seen = 0
     already_pending = 0
@@ -1259,7 +1272,7 @@ def add_discovery_tokens():
             log_event(
                 "DISCOVERY CANDIDATE REJECTED",
                 reason=" | ".join(quality.get("reasons", []))[:240],
-                token=address
+                address=address
             )
             continue
         if address in pending_tasks:
@@ -1268,7 +1281,7 @@ def add_discovery_tokens():
         if address in seen_tokens:
             already_seen += 1
             continue
-        if address in paper.get_positions():
+        if address in open_positions:
             already_open += 1
             continue
         if time.time() < rejected_tokens_until.get(address, 0):
@@ -1283,8 +1296,8 @@ def add_discovery_tokens():
         "DISCOVERY TOKENS QUEUED",
         reason=(
             "queued=" + str(added)
-            + " | scanned=" + str(len(tokens))
-            + " | unique=" + str(len(merged))
+            + " | scanned=" + str(scanned)
+            + " | unique=" + str(len(candidates))
             + " | invalid=" + str(invalid)
             + " | already_seen=" + str(already_seen)
             + " | already_pending=" + str(already_pending)
@@ -1647,11 +1660,14 @@ def print_statistics():
 # MAIN LOOP
 # ==========================================
 
-def run_bot():
+def run_bot(stop_requested=None):
 
     global last_scan_time
     global last_statistics_time
     global discovery_future
+
+    if stop_requested is None:
+        stop_requested = Event()
 
     print("====================================")
     print("TROJAN V2 - SOLANA AI TRADING BOT")
@@ -1665,6 +1681,7 @@ def run_bot():
 
     initialize_database()
     paper.refresh_account()
+    start_batch_worker()
 
     try:
         from dashboard import start_dashboard
@@ -1676,16 +1693,16 @@ def run_bot():
 
     try:
         from copy_trade import start_copy_monitor
-        start_copy_monitor()
+        start_copy_monitor(on_paper_signal=queue_copy_signal)
     except Exception as copy_error:
         log_event("COPY WATCH START ERROR", reason=repr(copy_error))
 
     log_event("SNIPER THREAD STARTED")
     log_event("BOT STARTED")
 
-    while True:
+    while not stop_requested.is_set():
 
-        loop_start = time.time()
+        loop_start = time.monotonic()
 
         try:
 
@@ -1705,7 +1722,9 @@ def run_bot():
             if discovery_future is not None and discovery_future.done():
 
                 try:
-                    discovery_future.result()
+                    discovery = discovery_future.result()
+                    if discovery is not None and not stop_requested.is_set():
+                        queue_discovery_candidates(*discovery)
                 except Exception as error:
                     log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
 
@@ -1713,11 +1732,12 @@ def run_bot():
 
             if (
                 discovery_future is None
+                and not stop_requested.is_set()
                 and time.time() - last_scan_time >= SCAN_INTERVAL
             ):
 
                 discovery_future = discovery_executor.submit(
-                    add_discovery_tokens
+                    collect_discovery_candidates, stop_requested
                 )
 
                 last_scan_time = time.time()
@@ -1738,9 +1758,9 @@ def run_bot():
 
             log_event("MAIN LOOP ERROR", reason=repr(error))
 
-        elapsed = time.time() - loop_start
+        elapsed = time.monotonic() - loop_start
 
-        time.sleep(
+        stop_requested.wait(
             max(1, POSITION_CHECK_INTERVAL - elapsed)
         )
 
@@ -1749,22 +1769,23 @@ def run_bot():
 # STARTUP
 # ==========================================
 
-if __name__ == "__main__":
+def main():
+    stop_requested = Event()
 
+    def request_stop(_signum, _frame):
+        stop_requested.set()
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
     try:
-
-        run_bot()
-
-    except KeyboardInterrupt:
-
+        run_bot(stop_requested)
+    finally:
         log_event("BOT SHUTTING DOWN")
+        executor.shutdown(wait=False, cancel_futures=True)
+        discovery_executor.shutdown(wait=False, cancel_futures=True)
+        from dashboard import stop_dashboard
+        stop_dashboard()
 
-        executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
 
-        discovery_executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
+if __name__ == "__main__":
+    main()

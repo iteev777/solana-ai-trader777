@@ -45,8 +45,8 @@ def entry_slippage_bps(metadata=None):
         impact = None
     if impact is None or not math.isfinite(impact) or impact < 0:
         return base
-    impact_bps = int(math.ceil(impact * 100.0))
-    return max(base, min(impact_bps, MAX_SLIPPAGE_BPS))
+    impact_bps = math.ceil(min(impact, MAX_SLIPPAGE_BPS / 100.0) * 100.0)
+    return max(base, impact_bps)
 
 
 def buy_fill_price(market_price, metadata=None):

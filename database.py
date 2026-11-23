@@ -2,9 +2,14 @@ import os
 import sqlite3
 import json
 import math
+import re
+import tempfile
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
+from position_policy import completed_exit_steps
+from pathlib import Path
 
 
 # ==========================================
@@ -718,7 +723,7 @@ def open_position_atomic(
 # ==========================================
 
 def add_position_investment_atomic(
-    mode, token_address, current_price, additional_investment, metadata=None
+    mode, token_address, current_price, additional_investment, metadata=None, *, dca_tier=None
 ):
     validate_mode(mode)
     current_price = validate_number(current_price, "current_price")
@@ -738,16 +743,34 @@ def add_position_investment_atomic(
             return "Position or account not found"
         old_invested = float(position["invested"])
         old_entry = float(position["entry_price"])
+        if old_entry <= 0 or old_invested <= 0:
+            return "Invalid existing DCA cost basis"
         fee = additional_investment * PAPER_FEE_RATE
         if float(account["balance"]) < additional_investment + fee:
             return "Insufficient balance for DCA including estimated fee"
-        new_invested = old_invested + additional_investment
-        new_entry = ((old_entry * old_invested) + (current_price * additional_investment)) / new_invested
         try:
             stored = json.loads(position["metadata"] or "{}")
         except (ValueError, TypeError):
             stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        if dca_tier is not None:
+            try:
+                current_tier = max(0, int(stored.get("dca_count", 0) or 0))
+            except (ValueError, TypeError, OverflowError):
+                current_tier = 0
+            if dca_tier != current_tier:
+                return "DCA tier changed"
+        new_invested = old_invested + additional_investment
+        quantity = old_invested / old_entry + additional_investment / current_price
+        if not math.isfinite(quantity) or quantity <= 0:
+            return "Invalid DCA token quantity"
+        new_entry = new_invested / quantity
+        if not math.isfinite(new_entry) or new_entry <= 0:
+            return "Invalid DCA cost basis"
         stored.update(metadata or {})
+        if dca_tier is not None:
+            stored["dca_count"] = dca_tier + 1
         stored["paper_fee_rate"] = PAPER_FEE_RATE
         connection.execute("""
             UPDATE positions SET entry_price = ?, invested = ?, metadata = ?
@@ -769,7 +792,8 @@ def add_position_investment_atomic(
 
 
 def partial_close_position_atomic(
-    mode, token_address, current_price, fraction=0.5, reason="PARTIAL TAKE PROFIT"
+    mode, token_address, current_price, fraction=0.5, reason="PARTIAL TAKE PROFIT",
+    *, exit_tier=None, slippage_bps=None
 ):
     validate_mode(mode)
     current_price = validate_number(current_price, "current_price")
@@ -797,6 +821,17 @@ def partial_close_position_atomic(
             metadata = json.loads(position["metadata"] or "{}")
         except (ValueError, TypeError):
             metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if exit_tier is not None:
+            completed = completed_exit_steps(metadata)
+            if exit_tier in completed:
+                return "Exit ladder tier already completed"
+            metadata["exit_ladder_completed"] = completed + [exit_tier]
+            metadata["partial_take_profit_done"] = True
+        if slippage_bps is not None:
+            metadata["paper_exit_slippage_bps"] = slippage_bps
+            metadata["paper_fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
         entry_fee_rate = validate_number(metadata.get("paper_fee_rate", PAPER_FEE_RATE), "paper_fee_rate")
         entry_fee_allocated = sold_investment * entry_fee_rate
         exit_fee = gross_return * PAPER_FEE_RATE
@@ -806,7 +841,11 @@ def partial_close_position_atomic(
         new_daily_loss = float(account["daily_loss"]) + max(0, -profit_loss)
         new_daily_pnl = float(account["daily_realized_pnl"]) + profit_loss
         metadata["paper_fee_rate"] = entry_fee_rate
-        metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0)) + 1
+        try:
+            partial_exit_count = max(0, int(metadata.get("partial_exit_count", 0) or 0))
+        except (ValueError, TypeError, OverflowError):
+            partial_exit_count = 0
+        metadata["partial_exit_count"] = partial_exit_count + 1
         connection.execute("""
             UPDATE positions SET invested = ?, metadata = ?
             WHERE mode = ? AND token_address = ?
@@ -1701,18 +1740,22 @@ def get_recent_copy_trade_events(limit=50):
 # HEALTH CHECK
 # ==========================================
 
+_BACKUP_FILENAME = re.compile(r"trojan-\d{8}T\d{12}Z\.sqlite3")
+_backup_lock = threading.Lock()
+
+
 def list_database_backups(backup_dir=None):
     directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
     if not os.path.isdir(directory):
         return []
     backups = []
     for name in os.listdir(directory):
-        if not name.endswith(".sqlite3"):
+        if not _BACKUP_FILENAME.fullmatch(name):
             continue
         path = os.path.join(directory, name)
         try:
             stat = os.stat(path)
-            if not os.path.isfile(path):
+            if os.path.islink(path) or not os.path.isfile(path):
                 continue
             backups.append({
                 "name": name,
@@ -1723,7 +1766,36 @@ def list_database_backups(backup_dir=None):
             })
         except OSError:
             continue
-    return sorted(backups, key=lambda item: item["created_at"], reverse=True)
+    return sorted(backups, key=lambda item: item["name"], reverse=True)
+
+
+def _validated_database_copy(source, destination):
+    source_uri = Path(source).resolve().as_uri() + "?mode=ro"
+    Path(destination).touch(mode=0o600, exist_ok=False)
+    with closing(sqlite3.connect(source_uri, uri=True, timeout=30)) as reader, \
+         closing(sqlite3.connect(destination, timeout=30)) as target:
+        reader.backup(target, pages=256, sleep=0.01)
+        if target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise sqlite3.DatabaseError("Database copy failed integrity check")
+        if target.execute("PRAGMA foreign_key_check").fetchone():
+            raise sqlite3.DatabaseError("Database copy has foreign key violations")
+        tables = {row[0] for row in target.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )}
+        if not {"schema_meta", "account_state", "positions", "trades"} <= tables:
+            raise sqlite3.DatabaseError("Snapshot is missing core Trojan tables")
+        version = target.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        try:
+            supported = version is not None and 1 <= int(version[0]) <= SCHEMA_VERSION
+        except (TypeError, ValueError):
+            supported = False
+        if not supported:
+            raise sqlite3.DatabaseError("Snapshot schema version is unsupported")
+        target.execute("PRAGMA journal_mode = DELETE")
+    with open(destination, "rb") as snapshot:
+        os.fsync(snapshot.fileno())
 
 
 def backup_database(backup_dir=None, keep=7):
@@ -1735,52 +1807,40 @@ def backup_database(backup_dir=None, keep=7):
 
     directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
     os.makedirs(directory, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    destination = os.path.join(directory, "trojan-" + stamp + ".sqlite3")
-    temporary = destination + ".tmp"
+    with _backup_lock, tempfile.TemporaryDirectory(prefix=".backup-", dir=directory) as staging:
+        temporary = os.path.join(staging, "snapshot.sqlite3")
+        _validated_database_copy(DATABASE, temporary)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        name = "trojan-" + stamp + ".sqlite3"
+        os.link(temporary, os.path.join(directory, name))
+        backups = list_database_backups(directory)
+        obsolete_backups = [item for item in backups if item["name"] != name][keep - 1:]
+        for obsolete in obsolete_backups:
+            try:
+                os.remove(os.path.join(directory, obsolete["name"]))
+            except OSError:
+                pass
+        return {
+            "created": True,
+            "backup": name,
+            "size_bytes": os.path.getsize(temporary),
+            "integrity": "ok",
+            "retained": len(list_database_backups(directory)),
+        }
 
-    source = None
-    target = None
-    try:
-        source = sqlite3.connect(DATABASE, timeout=30)
-        target = sqlite3.connect(temporary, timeout=30)
-        source.backup(target, pages=256, sleep=0.01)
-        check = target.execute("PRAGMA integrity_check").fetchone()
-        if not check or check[0] != "ok":
-            raise sqlite3.DatabaseError("Backup integrity check failed")
-        target.commit()
-    except Exception:
-        if target is not None:
-            target.close()
-            target = None
-        if source is not None:
-            source.close()
-            source = None
-        try:
-            os.remove(temporary)
-        except OSError:
-            pass
-        raise
-    finally:
-        if target is not None:
-            target.close()
-        if source is not None:
-            source.close()
 
-    os.replace(temporary, destination)
-    backups = list_database_backups(directory)
-    for obsolete in backups[keep:]:
-        try:
-            os.remove(os.path.join(directory, obsolete["name"]))
-        except OSError:
-            pass
-    return {
-        "created": True,
-        "backup": os.path.basename(destination),
-        "size_bytes": os.path.getsize(destination),
-        "integrity": "ok",
-        "retained": len(list_database_backups(directory)),
-    }
+def restore_database_backup(snapshot, destination):
+    """Verify and restore a backup into a new offline database file."""
+    destination = Path(destination)
+    if destination.resolve() == Path(DATABASE).resolve():
+        raise ValueError("Restore requires a separate destination from the configured database")
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        if os.path.lexists(os.fspath(destination) + suffix):
+            raise FileExistsError("Restore destination or a SQLite sidecar already exists")
+    with tempfile.TemporaryDirectory(prefix=".restore-", dir=destination.parent) as staging:
+        temporary = os.path.join(staging, "restore.sqlite3")
+        _validated_database_copy(snapshot, temporary)
+        os.link(temporary, destination)
 
 
 def get_database_health():
@@ -1839,6 +1899,21 @@ def get_database_health():
 # ==========================================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Trojan V2 SQLite maintenance")
+    commands = parser.add_subparsers(dest="command")
+    restore = commands.add_parser("restore", help="Verify a snapshot and copy it to a new file")
+    restore.add_argument("snapshot", type=Path)
+    restore.add_argument("destination", type=Path)
+    args = parser.parse_args()
+    if args.command == "restore":
+        try:
+            restore_database_backup(args.snapshot, args.destination)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            parser.exit(1, f"Restore failed: {error}\n")
+        print(f"Verified database restored to {args.destination}")
+        raise SystemExit(0)
 
     initialize_database()
 
