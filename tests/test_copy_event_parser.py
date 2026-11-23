@@ -127,7 +127,7 @@ class CopyEventParserTests(unittest.TestCase):
         )
         event = parse_wallet_transaction(tx, WALLET)
         self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
-        self.assertEqual(event["classification_reason"], "SWAP_PROGRAM_WITH_AMBIGUOUS_BALANCE_FLOW")
+        self.assertEqual(event["classification_reason"], "MULTIPLE_QUOTE_LEGS")
 
     def test_unknown_if_swap_program_has_no_opposing_quote_flow(self):
         tx = transaction([], [balance(MINT, WALLET, 1_000_000, 6)], PROGRAMS["orca_whirlpool"])
