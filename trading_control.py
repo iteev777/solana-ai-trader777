@@ -4,7 +4,6 @@ The halt is deliberately independent of live execution configuration: live execu
 remains hard-locked, while this control stops paper entries and paper exits alike.
 """
 import threading
-import time
 from datetime import datetime, timezone
 
 _lock = threading.RLock()
