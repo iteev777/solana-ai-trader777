@@ -59,6 +59,26 @@ class StrategyConditionTests(unittest.TestCase):
         self.assertEqual(len(strategy_conditions.CONDITION_TYPES), 24)
         self.assertEqual(len(strategy_conditions.get_condition_catalog()), 24)
 
+    def test_indicator_conditions_can_select_each_published_timeframe(self):
+        self.context["indicators"]["timeframes"] = {
+            "1h": dict(self.context["indicators"], rsi_14=75, timestamp=time.time())
+        }
+        passed, _ = self.evaluate("Rsi", {
+            "comparison": "ABOVE", "threshold": 60, "timeframe": "1h"
+        })
+        self.assertTrue(passed)
+        passed, reasons = self.evaluate("Rsi", {
+            "comparison": "ABOVE", "threshold": 60, "timeframe": "12h"
+        })
+        self.assertFalse(passed)
+        self.assertIn("timeframe data unavailable", reasons[0])
+
+    def test_indicator_condition_rejects_unsupported_timeframe(self):
+        with self.assertRaises(ValueError):
+            strategy_conditions.validate_condition({
+                "condition": "Rsi", "params": {"timeframe": "2h"}
+            })
+
     def test_rsi_and_bollinger_conditions(self):
         self.assertTrue(self.evaluate("Rsi", {"comparison": "ABOVE", "threshold": 30})[0])
         self.assertTrue(self.evaluate("BollingerBands", {"comparison": "ABOVE", "threshold": 0.5})[0])
