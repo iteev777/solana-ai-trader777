@@ -1483,36 +1483,70 @@ def get_recent_filter_events(limit=100):
 # MARKET CANDLES + STRATEGY CONFIG + COPY FEED
 # ==========================================
 
+MARKET_CANDLE_TIMEFRAMES = ("1m", "3m", "5m", "15m", "30m", "1h", "4h")
+
+
 def save_market_candles(pool_address, timeframe, candles):
-    if not pool_address or not isinstance(candles, list):
+    """Persist only normalized OHLCV rows; duplicate timestamps replace older values."""
+    if (not isinstance(pool_address, str) or not pool_address.strip()
+            or timeframe not in MARKET_CANDLE_TIMEFRAMES
+            or not isinstance(candles, list)):
         return 0
+    from ohlcv_integrity import normalize_ohlcv_rows
+    rows, _quality = normalize_ohlcv_rows(candles)
     saved = 0
     with connect() as connection:
-        for candle in candles:
-            try:
-                values = [float(candle[key]) for key in ("open", "high", "low", "close", "volume")]
-                timestamp = int(candle["timestamp"])
-                if min(values[:4]) <= 0 or values[4] < 0:
-                    continue
-            except (KeyError, TypeError, ValueError, OverflowError):
-                continue
+        for candle in rows:
+            values = [candle[key] for key in ("open", "high", "low", "close", "volume")]
             connection.execute("""
                 INSERT OR REPLACE INTO market_candles
                 (pool_address, timeframe, open_time, open, high, low, close, volume)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (str(pool_address), str(timeframe), timestamp, *values))
+            """, (pool_address.strip(), timeframe, candle["timestamp"], *values))
             saved += 1
     return saved
 
 
+def prune_market_candles(retention_days=None):
+    """Delete historical OHLCV older than the configured bounded retention period."""
+    import time
+    raw_days = (
+        retention_days if retention_days is not None
+        else os.getenv("TROJAN_OHLCV_RETENTION_DAYS", "30")
+    )
+    if isinstance(raw_days, bool):
+        raise ValueError("OHLCV retention days must be an integer")
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError("OHLCV retention days must be an integer") from error
+    if not 1 <= days <= 3650:
+        raise ValueError("OHLCV retention days must be between 1 and 3650")
+    cutoff = int(time.time()) - days * 86400
+    with connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM market_candles WHERE open_time < ?", (cutoff,)
+        )
+        return max(0, cursor.rowcount)
+
+
 def get_market_candles(pool_address, timeframe="1m", limit=200):
-    limit = max(1, min(int(limit), 1000))
+    if (not isinstance(pool_address, str) or not pool_address.strip()
+            or timeframe not in MARKET_CANDLE_TIMEFRAMES):
+        return []
+    if isinstance(limit, bool):
+        limit = 200
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError, OverflowError):
+        limit = 200
+    limit = max(1, min(limit, 1000))
     with connect() as connection:
         rows = connection.execute("""
             SELECT open_time AS timestamp, open, high, low, close, volume
             FROM market_candles WHERE pool_address = ? AND timeframe = ?
             ORDER BY open_time DESC LIMIT ?
-        """, (str(pool_address), str(timeframe), limit)).fetchall()
+        """, (pool_address.strip(), timeframe, limit)).fetchall()
     return [dict(row) for row in reversed(rows)]
 
 
