@@ -33,8 +33,10 @@ non-custodial preparation path only: it does not sign, send, or confirm swaps.
 - The quote must be recent relative to the final account snapshot (maximum 32
   slots by default); the quote is independently refreshed before construction.
 - The wallet signs externally. No private key enters the Trojan server.
-- There is no native CPMM broadcast or execute endpoint. Live execution,
-  signing and broadcast remain disabled.
+- The server never signs. A separate default-off, single-use external-signature
+  broadcast gate is documented in `docs/NATIVE_EXECUTION.md`; it requires
+  `TROJAN_NATIVE_EXECUTE_ENABLED=true` and explicit confirmation. Live execution
+  remains disabled by default.
 - The returned legacy transaction is a preparation artifact, not proof that a
   wallet will accept it or that a later network submission will land. The pool
   can change after simulation; the on-chain minimum-output check remains the
