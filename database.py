@@ -156,6 +156,32 @@ def initialize_database():
 
     with connect() as connection:
 
+        # Refuse a database written by a newer Trojan schema before changing
+        # journal mode, creating tables or applying additive migrations.
+        schema_table = connection.execute("""
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_meta'
+        """).fetchone()
+        if schema_table:
+            try:
+                version_row = connection.execute(
+                    "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+                ).fetchone()
+            except sqlite3.DatabaseError as error:
+                raise RuntimeError("Database schema metadata is unreadable") from error
+            if version_row is not None:
+                try:
+                    stored_version = int(version_row["value"])
+                except (TypeError, ValueError, OverflowError) as error:
+                    raise RuntimeError("Database schema version is invalid") from error
+                if stored_version < 0:
+                    raise RuntimeError("Database schema version cannot be negative")
+                if stored_version > SCHEMA_VERSION:
+                    raise RuntimeError(
+                        "Database schema is newer than this Trojan build "
+                        f"({stored_version} > {SCHEMA_VERSION}); refusing to modify it"
+                    )
+
         connection.execute("PRAGMA journal_mode = WAL")
 
         connection.execute("""
