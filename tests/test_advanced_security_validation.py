@@ -34,7 +34,7 @@ class TokenSecurityTests(unittest.TestCase):
             {"value": [{"data": {"parsed": {"info": {"owner": "11111111111111111111111111111111"}}}}]},
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("MintAddress")
+            report = token_security.get_token_security_report("1" * 32)
         self.assertEqual(report["mint_authority"], "DISABLED")
         self.assertEqual(report["freeze_authority"], "DISABLED")
         self.assertEqual(report["top10_token_account_pct"], 30.0)
@@ -61,6 +61,23 @@ class TokenSecurityTests(unittest.TestCase):
         self.assertEqual(report["largest_token_account_details"][0]["amount"], raw_amount)
         self.assertFalse(token_security.evaluate_token_security(report)["allowed"])
 
+    @patch("solana_onchain._rpc")
+    def test_mint_snapshot_supplies_exact_amount_without_second_lookup(self, rpc):
+        mint = "1" * 32
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"type": "mint", "info": {
+                           "isInitialized": True, "decimals": 6, "supply": str(2**53 + 1),
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": [{"address": mint, "amount": "1"}]},
+            {"value": []},
+        ]
+        report = token_security.get_token_security_report(mint)
+        self.assertEqual(report["supply_raw"], 2**53 + 1)
+        self.assertEqual([call.args[0] for call in rpc.call_args_list],
+                         ["getAccountInfo", "getTokenLargestAccounts", "getMultipleAccounts"])
+
     def test_missing_report_fails_closed(self):
         self.assertFalse(token_security.evaluate_token_security(None)["allowed"])
 
@@ -80,7 +97,7 @@ class TokenSecurityTests(unittest.TestCase):
             RuntimeError("optional owner RPC unavailable"),
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("MintAddress")
+            report = token_security.get_token_security_report("1" * 32)
         self.assertEqual(len(report["largest_token_account_details"]), 1)
         self.assertIsNone(report["largest_token_account_details"][0]["authority"])
         self.assertEqual(report["top_owner_account_authorities"], [])

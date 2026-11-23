@@ -25,7 +25,8 @@ def get_token_security_report(mint, largest_limit=20):
     if not isinstance(mint, str) or not mint.strip():
         raise ValueError("Mint address is required")
     import solana_onchain as chain
-    if len(chain._b58decode(mint)) != 32:
+    mint = mint.strip()
+    if not 32 <= len(mint) <= 44 or len(chain._b58decode(mint)) != 32:
         raise ValueError("Mint address is not a valid Solana public key")
 
     mint_result = chain._rpc(
@@ -38,9 +39,11 @@ def get_token_security_report(mint, largest_limit=20):
     token_program = mint_account.get("owner")
     if token_program not in TOKEN_PROGRAMS:
         raise ValueError("Mint account owner is not a supported SPL Token program")
-    parsed = (
-        (mint_account.get("data") or {}).get("parsed") or {}
-    ).get("info") or {}
+    data = mint_account.get("data")
+    account = data.get("parsed") if isinstance(data, dict) else None
+    if not isinstance(account, dict) or account.get("type", "mint") != "mint":
+        raise ValueError("Account is not a parsed mint")
+    parsed = account.get("info")
     if not isinstance(parsed, dict) or parsed.get("isInitialized") is not True:
         raise ValueError("Mint account is not initialized or parsed")
     if "mintAuthority" not in parsed or "freezeAuthority" not in parsed:
@@ -52,11 +55,16 @@ def get_token_security_report(mint, largest_limit=20):
     if type(decimals) is not int or not 0 <= decimals <= 18:
         raise ValueError("Mint decimals are invalid")
 
-    supply_result = chain._rpc(
-        "getTokenSupply", [mint, {"commitment": "confirmed"}]
-    )
-    supply_info = (supply_result or {}).get("value") or {}
-    supply_raw = _raw_amount(supply_info.get("amount"))
+    if "supply" in parsed:
+        supply_raw = _raw_amount(parsed["supply"])
+    else:
+        supply_result = chain._rpc(
+            "getTokenSupply", [mint, {"commitment": "confirmed"}]
+        )
+        supply_info = (supply_result or {}).get("value") or {}
+        if supply_info.get("decimals", decimals) != decimals:
+            raise ValueError("Mint supply decimals do not match the mint account")
+        supply_raw = _raw_amount(supply_info.get("amount"))
     if not supply_raw:
         raise ValueError("Mint supply is unavailable or zero")
 
@@ -141,6 +149,7 @@ def get_token_security_report(mint, largest_limit=20):
         "mint": mint,
         "token_program": token_program,
         "decimals": decimals,
+        "supply_raw": supply_raw,
         "supply": supply_raw / (10 ** decimals),
         "mint_authority": "DISABLED" if mint_authority is None else "ACTIVE",
         "freeze_authority": "DISABLED" if freeze_authority is None else "ACTIVE",
