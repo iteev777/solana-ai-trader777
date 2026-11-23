@@ -1083,6 +1083,8 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100):
         return quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "fluxbeam_amm":
         return quote_fluxbeam_pool(pool_address, input_mint, amount_in, slippage_bps)
+    if protocol == "moonit_amm":
+        return quote_moonit_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol is None:
         raise ValueError("Pool owner is not a supported Solana DEX program")
     raise ValueError("Direct quote adapter is not implemented for " + protocol)
