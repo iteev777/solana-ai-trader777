@@ -17,7 +17,7 @@ def report(**overrides):
             {"address": "d", "pct": 4, "insider": False},
         ],
         "graphInsidersDetected": 0,
-        "totalHolders": 100,
+        "totalHolders": 250,
         "tokenType": "standard",
     }
     data.update(overrides)
