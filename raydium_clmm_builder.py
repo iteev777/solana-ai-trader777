@@ -200,8 +200,11 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         {"pubkey": input_vault, "is_signer": False, "is_writable": True},
         {"pubkey": output_vault, "is_signer": False, "is_writable": True},
         {"pubkey": observation, "is_signer": False, "is_writable": True},
-        {"pubkey": token_program_0, "is_signer": False, "is_writable": False},
-        {"pubkey": token_program_1, "is_signer": False, "is_writable": False},
+        # swap_v2 carries both canonical token-program accounts in fixed
+        # order, regardless of which program owns either mint. The mint
+        # ownership checks above still bind each side to its actual program.
+        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
+        {"pubkey": TOKEN_2022_PROGRAM_ID, "is_signer": False, "is_writable": False},
         {"pubkey": MEMO_PROGRAM_ID, "is_signer": False, "is_writable": False},
         {"pubkey": input_mint, "is_signer": False, "is_writable": False},
         {"pubkey": output_mint, "is_signer": False, "is_writable": False},
