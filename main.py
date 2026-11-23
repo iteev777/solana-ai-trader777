@@ -163,6 +163,18 @@ def merge_candidate_metadata(market_data, candidate):
     if image and not useful(info.get("imageUrl")) and not useful(merged.get("logoURI")):
         merged["logoURI"] = image
 
+    market_website_list = merged.get("websites")
+    if not isinstance(market_website_list, list):
+        market_website_list = info.get("websites")
+    market_website = merged.get("website") or merged.get("website_url")
+    has_market_website = useful(market_website) or (
+        isinstance(market_website_list, list)
+        and any(
+            isinstance(item, dict) and useful(item.get("url"))
+            for item in market_website_list
+        )
+    )
+
     candidate_websites = candidate.get("websites")
     if isinstance(candidate_websites, list) and candidate_websites:
         existing_info = dict(info)
@@ -174,18 +186,7 @@ def merge_candidate_metadata(market_data, candidate):
             merged["info"] = existing_info
             merged["websites"] = candidate_websites
     direct_website = candidate.get("website") or candidate.get("website_url")
-    existing_website = merged.get("website") or merged.get("website_url")
-    existing_website_list = merged.get("websites")
-    if not isinstance(existing_website_list, list):
-        existing_website_list = info.get("websites")
-    has_existing_website = useful(existing_website) or (
-        isinstance(existing_website_list, list)
-        and any(
-            isinstance(item, dict) and useful(item.get("url"))
-            for item in existing_website_list
-        )
-    )
-    if useful(direct_website) and not has_existing_website:
+    if useful(direct_website) and not has_market_website:
         merged["website"] = direct_website.strip()
 
     for key in (
