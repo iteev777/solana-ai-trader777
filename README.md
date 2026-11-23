@@ -374,3 +374,8 @@ LP-lock requirements can be configured separately: `TROJAN_RUGCHECK_MIN_PUMPFUN_
 
 
 RugCheck also supports `TROJAN_RUGCHECK_MIN_LP_PROVIDERS` for a minimum reported LP-provider count, `TROJAN_RUGCHECK_BLOCK_TRANSFER_FEE_TOKENS=true` to reject every positive transfer-fee percentage, and `TROJAN_RUGCHECK_REQUIRE_TRANSFER_FEE_DATA=true` to hold a candidate when that field is unavailable. Invalid negative or over-100% transfer-fee values are rejected; malformed present values remain UNKNOWN. These are optional policy gates and remain disabled unless explicitly configured.
+
+## Pump.fun legacy bonding-curve direct quote
+
+The read-only direct quote path supports legacy SOL-paired Pump.fun curves using the on-chain Global and Pump Fees configuration. It verifies the bonding-curve PDA against the requested token mint, reads curve/global/fee/mint accounts at one confirmed slot, selects the market-cap fee tier, and validates both virtual pricing reserves and real settlement reserves. Mayhem, cashback, holder-reward, custom creator-fee, custom quote-mint, completed, truncated and Token-2022 curves are refused until their exact fee/settlement behavior is implemented. The route comparison forwards the requested output mint to this adapter; no instruction is constructed or signed.
+
