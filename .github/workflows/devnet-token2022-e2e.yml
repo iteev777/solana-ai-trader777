@@ -2,8 +2,7 @@ name: Trojan Token-2022 Devnet E2E
 
 on:
   workflow_dispatch:
-  push:
-    branches:
+  branches:
       - feature/dex-jupiter-noncustodial-execution-current
     paths:
       - devnet_token2022_e2e.py
