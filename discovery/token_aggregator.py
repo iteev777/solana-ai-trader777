@@ -59,6 +59,29 @@ def _rugcheck_scanners_from_env():
     ]
 
 
+def _jupiter_scanners_from_env():
+    if not _env_enabled("TROJAN_JUPITER_ENABLED", True):
+        return []
+    configured = [
+        ("TROJAN_JUPITER_RECENT_ENABLED", "jupiter_recent", scan_jupiter_recent),
+        ("TROJAN_JUPITER_ORGANIC_ENABLED", "jupiter_organic", scan_jupiter_organic),
+        ("TROJAN_JUPITER_TRADED_ENABLED", "jupiter_traded", scan_jupiter_traded),
+        ("TROJAN_JUPITER_TRENDING_ENABLED", "jupiter_trending", scan_jupiter_trending),
+    ]
+    return [(label, scanner) for env, label, scanner in configured if _env_enabled(env, True)]
+
+
+def _coingecko_scanners_from_env():
+    if not _env_enabled("TROJAN_COINGECKO_ENABLED", True) or not _env_enabled("TROJAN_COINGECKO_MARKETS_ENABLED", True):
+        return []
+    return [("coingecko_markets", scan_coingecko)]
+
+
+def _defillama_scanners_from_env():
+    if not _env_enabled("TROJAN_DEFILLAMA_ENABLED", True) or not _env_enabled("TROJAN_DEFILLAMA_PROTOCOLS_ENABLED", True):
+        return []
+    return [("defillama_protocols", scan_defillama)]
+
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
@@ -66,12 +89,9 @@ SCANNERS = [
     ("birdeye", scan_birdeye),
     *_dexscreener_scanners_from_env(),
     *_rugcheck_scanners_from_env(),
-    ("jupiter_recent", scan_jupiter_recent),
-    ("jupiter_organic", scan_jupiter_organic),
-    ("jupiter_traded", scan_jupiter_traded),
-    ("jupiter_trending", scan_jupiter_trending),
-    ("coingecko", scan_coingecko),
-    ("defillama", scan_defillama),
+    *_jupiter_scanners_from_env(),
+    *_coingecko_scanners_from_env(),
+    *_defillama_scanners_from_env(),
 ]
 MAX_RESULTS = 500
 MAX_WORKERS = max(1, len(SCANNERS))
