@@ -36,7 +36,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_broadcast_requires_environment_gate(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 200
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
             with self.assertRaises(native.NativeExecutionLocked):
@@ -46,7 +46,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_broadcast_requires_explicit_confirmation(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 200
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
             with self.assertRaises(native.NativeExecutionLocked):
@@ -56,7 +56,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_successful_external_signature_is_simulated_then_broadcast_once(self):
         approval = native.register_native_approval(
-            self.unsigned, "pumpswap", 200
+            self.unsigned, "pumpswap", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         def rpc(method, params):
             if method == "getBlockHeight":
@@ -82,7 +82,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_approval_is_single_use(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 200
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         def rpc(method, params):
             if method == "getBlockHeight":
@@ -103,7 +103,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_rejects_message_modified_after_simulation(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 200
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         changed = bytearray(base64.b64decode(self.signed))
         changed[-1] ^= 1
@@ -117,7 +117,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_rejects_expired_blockhash(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 100
+            self.unsigned, "raydium_cpmm", 100, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
              patch.object(chain, "_rpc", return_value=101):
@@ -128,7 +128,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_signed_simulation_failure_never_broadcasts(self):
         approval = native.register_native_approval(
-            self.unsigned, "pumpswap", 200
+            self.unsigned, "pumpswap", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
              patch.object(chain, "_rpc", side_effect=[
@@ -142,7 +142,7 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_rejects_zero_signature(self):
         approval = native.register_native_approval(
-            self.unsigned, "raydium_cpmm", 200
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
             with self.assertRaisesRegex(ValueError, "signature is missing"):
