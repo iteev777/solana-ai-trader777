@@ -1,8 +1,8 @@
-"""Read-only Token-2022 mint extension inspection.
+"""Token-2022 extension inspection and narrow zero-fee swap compatibility checks.
 
-This module deliberately does not authorize swaps. It validates the canonical
-Token-2022 account layout and TLV framing, then reports extensions that require
-specialized quote, account sizing, transfer, or risk handling.
+General inspection never authorizes a swap. The explicit compatibility helper
+only approves mints with no transfer fee, no transfer hook and no unsupported
+mint/account extensions; protocol builders must still validate their own layouts.
 """
 import base64
 
@@ -251,6 +251,91 @@ def inspect_token2022_account(address):
         "signing": "NOT_PERFORMED",
         "broadcast": "NOT_PERFORMED",
     }
+
+def validate_zero_fee_mint_data(raw):
+    """Allow only Token-2022 mints whose current and future transfer fees are zero."""
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 82 or raw[45] != 1:
+        raise Token2022LayoutError("Token-2022 mint base state is invalid or uninitialized")
+    if len(raw) == 82:
+        return {"extensions": [], "transfer_fee_config": None}
+    extensions = parse_tlv_extensions(raw, MINT_ACCOUNT_TYPE)
+    allowed = {1, 18, 19, 20, 21, 22, 23}
+    if any(extension["type"] not in allowed for extension in extensions):
+        raise Token2022LayoutError("Token-2022 mint has an extension unsupported by native swap builders")
+    transfer_config = decode_transfer_fee_config(raw)
+    if transfer_config is not None:
+        for schedule_name in ("older", "newer"):
+            schedule = transfer_config[schedule_name]
+            if schedule["basis_points"] != 0 or schedule["maximum_fee"] != 0:
+                raise Token2022LayoutError("Token-2022 transfer fees must be zero for this native swap path")
+        offset = TLV_START
+        while offset + 4 <= len(raw):
+            extension_type = int.from_bytes(raw[offset:offset + 2], "little")
+            value_length = int.from_bytes(raw[offset + 2:offset + 4], "little")
+            if extension_type == 0:
+                break
+            value_start = offset + 4
+            value_end = value_start + value_length
+            if value_end > len(raw):
+                raise Token2022LayoutError("Token-2022 transfer fee TLV is truncated")
+            if extension_type == 1:
+                value = raw[value_start:value_end]
+                if len(value) != 108 or any(value[:32]):
+                    raise Token2022LayoutError("Token-2022 transfer fee authority must be permanently disabled")
+                break
+            offset = value_end
+    return {"extensions": extensions, "transfer_fee_config": transfer_config}
+
+
+def validate_token2022_account_data(account, mint, authority, label="Token-2022 account",
+                                    min_balance=0):
+    """Validate a Token-2022 token account and return its spendable raw balance."""
+    if not isinstance(account, dict) or account.get("owner") != chain.TOKEN_2022_PROGRAM:
+        raise Token2022LayoutError(label + " is not owned by Token-2022")
+    raw = account.get("data", b"")
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 165:
+        raise Token2022LayoutError(label + " base token-account layout is truncated")
+    if chain._key(raw, 0) != mint or chain._key(raw, 32) != authority:
+        raise Token2022LayoutError(label + " mint or authority does not match")
+    if raw[108] != 1:
+        raise Token2022LayoutError(label + " is not initialized or is frozen")
+    if len(raw) > 165:
+        extensions = parse_tlv_extensions(raw, TOKEN_ACCOUNT_TYPE)
+        if any(extension["type"] not in {2, 7} for extension in extensions):
+            raise Token2022LayoutError(label + " has an unsupported Token-2022 account extension")
+    balance = int.from_bytes(raw[64:72], "little")
+    if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
+        raise ValueError("Minimum token balance must be a non-negative integer")
+    if balance < min_balance:
+        raise Token2022LayoutError(label + " has insufficient spendable token balance")
+    return balance
+
+
+def validate_token_account_for_program(account, token_program, mint, authority,
+                                       label="token account", min_balance=0):
+    """Validate either legacy SPL Token or the narrow zero-fee Token-2022 path."""
+    if token_program == chain.TOKEN_2022_PROGRAM:
+        return validate_token2022_account_data(
+            account, mint, authority, label, min_balance
+        )
+    if token_program != chain.TOKEN_PROGRAM:
+        raise Token2022LayoutError(label + " uses an unsupported token program")
+    if not isinstance(account, dict) or account.get("owner") != token_program:
+        raise Token2022LayoutError(label + " token program owner does not match")
+    raw = account.get("data", b"")
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
+        raise Token2022LayoutError(label + " legacy token-account layout is invalid")
+    if chain._key(raw, 0) != mint or chain._key(raw, 32) != authority:
+        raise Token2022LayoutError(label + " mint or authority does not match")
+    if raw[108] != 1:
+        raise Token2022LayoutError(label + " is not initialized or is frozen")
+    balance = int.from_bytes(raw[64:72], "little")
+    if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
+        raise ValueError("Minimum token balance must be a non-negative integer")
+    if balance < min_balance:
+        raise Token2022LayoutError(label + " has insufficient token balance")
+    return balance
+
 
 def inspect_token2022_mint(mint):
     if not isinstance(mint, str) or not mint:
