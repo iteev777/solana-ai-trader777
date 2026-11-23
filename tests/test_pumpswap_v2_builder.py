@@ -233,7 +233,7 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
     def test_rejects_token_2022_mint_until_extension_aware_support_exists(self):
         accounts = dict(self.account_map)
         accounts[self.base_mint] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(166)}
-        with self.assertRaisesRegex(ValueError, "unsupported token program"):
+        with self.assertRaisesRegex(ValueError, "mint owner changed"):
             self.call_builder(account_map=accounts)
 
     def test_rejects_pool_state_with_wrong_pda_bump(self):
