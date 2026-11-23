@@ -353,6 +353,8 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
 
     if any(item is None for item in (reserve_x_acc, reserve_y_acc, mint_x_acc, mint_y_acc, clock_acc)):
         raise ValueError("Meteora DLMM confirmed snapshot is missing a mint, vault or Clock sysvar")
+    if bitmap_acc is not None and bitmap_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
+        raise ValueError("Meteora DLMM bitmap-extension owner is invalid")
     if mint_x_acc.get("owner") != chain.TOKEN_PROGRAM or mint_y_acc.get("owner") != chain.TOKEN_PROGRAM:
         raise ValueError("Meteora DLMM Token-2022 mints are refused until transfer hooks and fees are modelled")
     if reserve_x_acc.get("owner") != chain.TOKEN_PROGRAM or reserve_y_acc.get("owner") != chain.TOKEN_PROGRAM:
