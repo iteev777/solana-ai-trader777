@@ -339,3 +339,8 @@ The current adapter deliberately uses the highest total fee found across the on-
 ## RugCheck request resilience
 
 RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used cache, and measures cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 60 seconds, accepted range 0–3,600; set 0 to disable caching). Failed, rate-limited and invalid responses are never cached, and stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
+
+
+## Paper position input safety
+
+Paper entry and exit paths reject non-finite or non-positive prices before reaching the database. Persisted trailing peaks are normalized before use, and DCA/exit policy configuration is fully parsed before a monitoring cycle mutates position state. Invalid policy configuration returns a controlled wait/error result rather than interrupting the position monitor. Reserved engine, strategy and adaptive-sizing metadata cannot be overwritten by caller metadata.
