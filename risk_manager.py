@@ -71,8 +71,8 @@ MAX_TRADE_BALANCE_FRACTION = min(
     _env_number("TROJAN_MAX_TRADE_BALANCE_FRACTION", 0.10, 0.01)
 )
 
-STOP_LOSS_PERCENT = _env_number("TROJAN_STOP_LOSS_PERCENT", 20.0, 0.1)
-TAKE_PROFIT_PERCENT = _env_number("TROJAN_TAKE_PROFIT_PERCENT", 30.0, 0.1)
+STOP_LOSS_PERCENT = min(95.0, _env_number("TROJAN_STOP_LOSS_PERCENT", 20.0, 0.1))
+TAKE_PROFIT_PERCENT = min(10000.0, _env_number("TROJAN_TAKE_PROFIT_PERCENT", 30.0, 0.1))
 
 VALID_STRATEGIES = ("main", "sniper")
 
@@ -141,11 +141,11 @@ def _check_history_guards(token_address, mode, strategy):
     if float(period_loss) >= MAX_PERIOD_LOSS:
         return False, "ROLLING PERIOD LOSS LIMIT REACHED"
 
-    # A missing mint cannot be used to bypass the account-wide loss limit.
-    if token_address is None:
-        return True, None
+    # Per-token re-entry protection is mandatory for every entry decision.
+    # A missing mint must never silently bypass the cooldown check.
     if not isinstance(token_address, str) or not token_address.strip():
-        return False, "INVALID TOKEN ADDRESS FOR HISTORY GUARDS"
+        return False, "TOKEN ADDRESS REQUIRED FOR HISTORY GUARDS"
+    token_address = token_address.strip()
 
     if REENTRY_COOLDOWN_MINUTES > 0:
         try:
@@ -212,6 +212,10 @@ def check_trade_risk(
     if sniper_positions is not None:
         if not valid_count(sniper_positions):
             return False, "INVALID SNIPER POSITION COUNT"
+
+    if main_positions is not None and sniper_positions is not None:
+        if int(main_positions) + int(sniper_positions) != int(open_positions):
+            return False, "INCONSISTENT TOTAL AND STRATEGY POSITION COUNTS"
 
     balance = float(balance)
     daily_loss = float(daily_loss)
