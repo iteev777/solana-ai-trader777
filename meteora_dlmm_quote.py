@@ -18,6 +18,7 @@ FEE_PRECISION = 1_000_000_000
 MAX_FEE_RATE = 100_000_000
 BASIS_POINT_MAX = 10_000
 MAX_SLIPPAGE_BPS = 300
+MAX_BIN_ARRAYS = 8
 MAX_SNAPSHOT_AGE_SECONDS = 5.0
 CLOCK_SYSVAR = "SysvarC1ock11111111111111111111111111111111"
 
@@ -127,11 +128,15 @@ def _fee_rate(state, active_bin_id):
     return min(base + variable, MAX_FEE_RATE), volatility
 
 
-def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id):
+def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id,
+                   max_arrays=MAX_BIN_ARRAYS):
+    if (isinstance(max_arrays, bool) or not isinstance(max_arrays, int)
+            or not 1 <= max_arrays <= MAX_BIN_ARRAYS):
+        raise ValueError("Meteora DLMM bin-array traversal limit is invalid")
     active_index = active_id // BINS_PER_ARRAY
     direction = -1 if zero_for_one else 1
     indices = []
-    for offset in range(3):
+    for offset in range(max_arrays):
         index = active_index + direction * offset
         first_bin = index * BINS_PER_ARRAY
         last_bin = first_bin + BINS_PER_ARRAY - 1
