@@ -25,7 +25,9 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         state = bytearray(653)
         state[:8] = chain._discriminator("Whirlpool")
         state[41:43] = (1).to_bytes(2, "little")
+        state[43:45] = (1).to_bytes(2, "little")
         state[45:47] = (400).to_bytes(2, "little")
+        state[47:49] = (300).to_bytes(2, "little")
         state[49:65] = (1_000_000_000).to_bytes(16, "little")
         state[65:81] = (mathx.sqrt_price_at_tick(10) + 1000).to_bytes(16, "little")
         state[81:85] = (10).to_bytes(4, "little", signed=True)
@@ -105,6 +107,46 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         }):
             with self.assertRaisesRegex(ValueError, "not owned"):
                 quote_orca_whirlpool_pool(self.pool, self.mint_b, 1000, output_mint=self.mint_a)
+
+    def test_adaptive_fee_tier_index_mismatch_is_rejected(self):
+        state = bytearray(self.state)
+        state[43:45] = (64).to_bytes(2, "little")
+        self.state = bytes(state)
+        self.accounts[0] = {
+            "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+        }
+        with self.assertRaisesRegex(ValueError, "adaptive-fee tier"):
+            self.quote()
+
+    def test_static_fee_rate_cap_is_enforced(self):
+        state = bytearray(self.state)
+        state[45:47] = (60_001).to_bytes(2, "little")
+        self.state = bytes(state)
+        self.accounts[0] = {
+            "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+        }
+        with self.assertRaisesRegex(ValueError, "static fee cap"):
+            self.quote()
+
+    def test_protocol_fee_rate_cap_is_enforced(self):
+        state = bytearray(self.state)
+        state[47:49] = (2_501).to_bytes(2, "little")
+        self.state = bytes(state)
+        self.accounts[0] = {
+            "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+        }
+        with self.assertRaisesRegex(ValueError, "protocol fee rate"):
+            self.quote()
+
+    def test_protocol_fees_are_subtracted_from_spendable_vault_reserves(self):
+        state = bytearray(self.state)
+        state[85:93] = (10**12 + 1).to_bytes(8, "little")
+        self.state = bytes(state)
+        self.accounts[0] = {
+            "owner": chain.PROGRAMS["orca_whirlpool"], "data": self.state
+        }
+        with self.assertRaisesRegex(ValueError, "spendable vault reserves"):
+            self.quote()
 
     def test_active_adaptive_fee_oracle_is_rejected(self):
         accounts = list(self.accounts)
