@@ -87,8 +87,12 @@ def scan_rugcheck():
         for item in _items(payload):
             if not isinstance(item, dict):
                 continue
-            metadata = item.get("tokenMeta")
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = item.get("tokenMeta")
             metadata = metadata if isinstance(metadata, dict) else {}
+            if source == "rugcheck_recent" and not metadata:
+                continue
             token = _candidate(
                 item.get("mint") or item.get("address"),
                 source, item,
