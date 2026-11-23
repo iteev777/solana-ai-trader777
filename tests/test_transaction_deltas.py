@@ -61,6 +61,7 @@ class TransactionDeltaTests(unittest.TestCase):
         self.assertEqual(by_mint[MINT].delta_raw, 500)
         self.assertEqual(by_mint[USDC].delta_raw, -100_000)
         self.assertEqual(by_mint[NATIVE_SOL_SENTINEL].delta_raw, -999_995_000)
+        self.assertEqual(by_mint[NATIVE_SOL_SENTINEL].fee_native_raw, 5000)
         self.assertEqual(by_mint[MINT].kind, DeltaKind.TRADE)
         self.assertEqual(by_mint[MINT].venue, "raydium_cpmm")
         self.assertEqual(by_mint[MINT].signature, "signature-1")
@@ -70,8 +71,8 @@ class TransactionDeltaTests(unittest.TestCase):
         tx = transaction(subject_is_fee_payer=False, native_delta=0)
         rows = extract_subject_deltas(WALLET, tx)
         by_mint = {row.mint: row for row in rows}
-        self.assertEqual(by_mint[USDC].fee_native_raw, 5000)
-        self.assertEqual(by_mint[MINT].fee_native_raw, 5000)
+        self.assertEqual(by_mint[USDC].fee_native_raw, 0)
+        self.assertEqual(by_mint[MINT].fee_native_raw, 0)
         self.assertNotIn(NATIVE_SOL_SENTINEL, by_mint)
 
     def test_native_delta_corrects_subject_owned_ata_rent(self):
