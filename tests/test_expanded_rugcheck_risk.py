@@ -17,6 +17,7 @@ def safe_report(**overrides):
         ],
         "rugged": False,
         "token": {"mutable": True},
+        "totalHolders": 250,
         "totalLPProviders": 25,
         "totalMarketLiquidity": 25000,
         "graphInsidersDetected": 0,
