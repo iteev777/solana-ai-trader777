@@ -59,12 +59,22 @@ _batch_thread_lock = threading.Lock()
 # ==========================================
 
 def valid_address(address):
-
-    return (
-        isinstance(address, str)
-        and bool(address.strip())
-        and "," not in address
-    )
+    """Accept only canonical 32-byte Solana public keys for URL path inputs."""
+    if not isinstance(address, str):
+        return False
+    value = address.strip()
+    if not value or value != address or "," in value:
+        return False
+    try:
+        import solana_onchain
+        decoded = solana_onchain._b58decode(value)
+        return (
+            isinstance(decoded, (bytes, bytearray))
+            and len(decoded) == 32
+            and solana_onchain._b58encode(decoded) == value
+        )
+    except Exception:
+        return False
 
 
 def safe_float(value):
@@ -335,8 +345,7 @@ def get_gecko_pool_data_batch(pool_addresses):
     if not isinstance(pool_addresses, (list, tuple, set)):
         return {}
     unique = list(dict.fromkeys(
-        item.strip() for item in pool_addresses
-        if isinstance(item, str) and item.strip() and "," not in item
+        item.strip() for item in pool_addresses if valid_address(item)
     ))
     results = {}
     for start in range(0, len(unique), 30):
@@ -370,6 +379,9 @@ def get_gecko_pool_data_batch(pool_addresses):
 
 def refresh_market_data_from_pool_registry(address):
     """Re-select and cache a token's canonical pair after asynchronous source enrichment."""
+    if not valid_address(address):
+        return None
+    address = address.strip()
     from pool_registry import get_pool_candidates
     candidates = get_pool_candidates(address)
     selected = select_best_pairs(candidates, [address]).get(address)
@@ -379,7 +391,11 @@ def refresh_market_data_from_pool_registry(address):
 
 
 def fetch_batch(addresses):
-    addresses = list(dict.fromkeys(addresses))
+    if not isinstance(addresses, (list, tuple, set)):
+        return {}
+    addresses = list(dict.fromkeys(
+        address.strip() for address in addresses if valid_address(address)
+    ))
     if not addresses:
         return {}
 
@@ -581,7 +597,11 @@ def start_batch_worker():
 # ==========================================
 
 def request_addresses(addresses):
-
+    if not isinstance(addresses, (list, tuple, set)):
+        return {}
+    addresses = list(dict.fromkeys(
+        address.strip() for address in addresses if valid_address(address)
+    ))
     if not addresses:
         return {}
 
