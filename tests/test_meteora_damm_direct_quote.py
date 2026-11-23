@@ -185,6 +185,15 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "activation point"):
             self.quote(accounts=accounts)
 
+    def test_activation_uses_the_confirmed_pool_slot(self):
+        pool = bytearray(self.state)
+        pool[472:480] = (765433).to_bytes(8, "little")
+        pool[480] = 0
+        self.state = bytes(pool)
+        self.accounts[0] = dict(self.accounts[0], data=self.state)
+        with self.assertRaisesRegex(ValueError, "activation point"):
+            self.quote()
+
     def test_unknown_activation_type_is_rejected(self):
         state = bytearray(self.state)
         state[480] = 2

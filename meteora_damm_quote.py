@@ -202,6 +202,8 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = abs(after_price - before_price) / before_price * 100.0 if before_price > 0 else float("nan")
     if not math.isfinite(impact):
         raise ValueError("Meteora DAMM price impact is invalid")
+    if type(slot) is not int or slot < 0:
+        raise ValueError("Meteora DAMM confirmed snapshot slot is invalid")
     block_time = chain._rpc("getBlockTime", [slot])
     if isinstance(block_time, bool) or not isinstance(block_time, (int, float)) or not math.isfinite(float(block_time)):
         raise ValueError("Meteora DAMM confirmed slot block time is unavailable")
@@ -209,16 +211,8 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DAMM confirmed snapshot is stale")
 
-    if state["activation_type"] == 0:
-        current_point = chain._rpc("getSlot", [])
-    else:
-        current_point = int(time.time())
-    if (
-        isinstance(current_point, bool)
-        or not isinstance(current_point, (int, float))
-        or not math.isfinite(float(current_point))
-        or float(current_point) < state["activation_point"]
-    ):
+    current_point = slot if state["activation_type"] == 0 else block_time
+    if current_point < state["activation_point"]:
         raise ValueError("Meteora DAMM pool has not reached its activation point")
 
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
