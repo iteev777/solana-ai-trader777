@@ -1,9 +1,9 @@
-"""Unsigned classic Orca Whirlpool exact-input swap transaction builder.
+"""Unsigned Orca Whirlpool Swap / SwapV2 exact-input transaction builder.
 
-Only static-fee classic Whirlpool pools and legacy SPL Token are supported.
-The builder re-quotes from confirmed on-chain state, validates all supplied
-accounts, compiles the official Whirlpool Swap instruction, and simulates
-without signing or broadcasting.
+Supports static-fee pools with legacy SPL Token or the audited Token-2022
+transfer-fee extension subset. The builder re-quotes from confirmed on-chain
+state, validates all supplied accounts, and simulates without signing or
+broadcasting. Adaptive-fee pools and transfer-hook mints remain blocked.
 """
 import base64
 import struct
@@ -16,9 +16,13 @@ from orca_whirlpool_quote import (
     _derive_address, quote_orca_whirlpool_pool, TICK_ARRAY_SIZE,
 )
 import clmm_quote_math as mathx
+import token2022_inspector as token2022
 
 ORCA_PROGRAM_ID = chain.PROGRAMS["orca_whirlpool"]
 SWAP_DISCRIMINATOR = bytes([248, 198, 158, 145, 225, 117, 135, 200])
+SWAP_V2_DISCRIMINATOR = bytes([43, 4, 237, 11, 26, 201, 30, 98])
+MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+TOKEN_2022_PROGRAM_ID = chain.TOKEN_2022_PROGRAM
 MIN_SQRT_PRICE = 4295048016
 MAX_SQRT_PRICE = 79226673515401279992447579055
 MAX_QUOTE_SLOT_LAG = 32
@@ -57,19 +61,10 @@ def _compile_message(wallet, blockhash, metas, data):
     )
 
 
-def _decode_user_token(account, wallet, mint, label):
-    if not isinstance(account, dict) or account.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " has an invalid legacy token-account layout")
-    if chain._key(raw, 0) != mint:
-        raise ValueError(label + " mint does not match the requested swap")
-    if chain._key(raw, 32) != wallet:
-        raise ValueError(label + " is not owned by the signing wallet")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    return chain._u64(raw, 64)
+def _decode_user_token(account, token_program, wallet, mint, label, minimum=0):
+    return token2022.validate_token_account_for_program(
+        account, token_program, mint, wallet, label, minimum
+    )
 
 
 def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
@@ -103,6 +98,9 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
             or fresh.get("output_mint") != output_mint or fresh.get("input_amount") != amount
             or fresh.get("slot", 0) < quote_slot):
         raise ValueError("Fresh Orca quote does not validate the requested pool, pair and amount")
+    for field in ("token_program_input", "token_program_output"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("Orca token program state changed since the supplied quote")
     minimum_out = fresh.get("minimum_out_amount")
     if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= 2**64 - 1:
         raise ValueError("Fresh Orca quote minimum output is invalid")
@@ -146,17 +144,36 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
             raise ValueError("Whirlpool state changed during transaction snapshot")
     if slot < fresh.get("slot", 0) or slot - fresh.get("slot", 0) > max_quote_slot_lag:
         raise ValueError("Fresh Orca quote is stale relative to transaction snapshot")
-    if any(a.get("owner") != chain.TOKEN_PROGRAM for a in (mint_a, mint_b, vault_a, vault_b)):
-        raise ValueError("Orca native builder supports legacy SPL Token mints and vaults only")
-    if chain._key(vault_a.get("data", b""), 32) != pool or chain._key(vault_b.get("data", b""), 32) != pool:
-        raise ValueError("Orca vault authority does not match Whirlpool address")
-    chain._token_amount(vault_a, state["mint_a"])
-    chain._token_amount(vault_b, state["mint_b"])
-    input_balance = _decode_user_token(user_input_token_account and (
-        user_a_acc if a_to_b else user_b_acc
-    ), wallet, input_mint, "Input token account")
-    _decode_user_token(user_a_acc, wallet, state["mint_a"], "Token A account")
-    _decode_user_token(user_b_acc, wallet, state["mint_b"], "Token B account")
+    token_program_a = mint_a.get("owner")
+    token_program_b = mint_b.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, TOKEN_2022_PROGRAM_ID)
+    if token_program_a not in supported_programs or token_program_b not in supported_programs:
+        raise ValueError("Orca mint uses an unsupported token program")
+    if vault_a.get("owner") != token_program_a or vault_b.get("owner") != token_program_b:
+        raise ValueError("Orca vault token program does not match its mint")
+    for mint_account, token_program in ((mint_a, token_program_a), (mint_b, token_program_b)):
+        mint_raw = mint_account.get("data", b"")
+        if token_program == TOKEN_2022_PROGRAM_ID:
+            token2022.validate_swap_compatible_mint_data(mint_raw)
+        elif not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
+            raise ValueError("Orca mint is not an initialized legacy SPL Token mint")
+    token2022.validate_token_account_for_program(
+        vault_a, token_program_a, state["mint_a"], pool, "Orca vault A", 1
+    )
+    token2022.validate_token_account_for_program(
+        vault_b, token_program_b, state["mint_b"], pool, "Orca vault B", 1
+    )
+    token_program_input = token_program_a if a_to_b else token_program_b
+    token_program_output = token_program_b if a_to_b else token_program_a
+    if (fresh.get("token_program_input") != token_program_input
+            or fresh.get("token_program_output") != token_program_output):
+        raise ValueError("Orca token program state changed during transaction preparation")
+    input_balance = _decode_user_token(
+        user_input_token_account, token_program_input, wallet, input_mint,
+        "Input token account", amount,
+    )
+    _decode_user_token(user_a_acc, token_program_a, wallet, state["mint_a"], "Token A account")
+    _decode_user_token(user_b_acc, token_program_b, wallet, state["mint_b"], "Token B account")
     if input_balance < amount:
         raise ValueError("Wallet input token account has insufficient balance")
 
@@ -171,19 +188,38 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
         if len(raw_oracle) < 58 or int.from_bytes(raw_oracle[54:58], "little") != 0:
             raise ValueError("Orca adaptive-fee oracle layout or state is unsupported")
 
-    # Orca classic swap instruction: official discriminator + Borsh args.
+    # Orca SwapV2 is required whenever either mint uses Token-2022.
+    uses_token_2022 = TOKEN_2022_PROGRAM_ID in (token_program_a, token_program_b)
     sqrt_limit = MIN_SQRT_PRICE + 1 if a_to_b else MAX_SQRT_PRICE - 1
-    data = (SWAP_DISCRIMINATOR + struct.pack("<QQ", amount, minimum_out)
+    discriminator = SWAP_V2_DISCRIMINATOR if uses_token_2022 else SWAP_DISCRIMINATOR
+    data = (discriminator + struct.pack("<QQ", amount, minimum_out)
             + sqrt_limit.to_bytes(16, "little") + bytes([1, int(a_to_b)]))
-    metas = [
-        {"pubkey": chain.TOKEN_PROGRAM, "is_signer": False, "is_writable": False},
-        {"pubkey": wallet, "is_signer": True, "is_writable": False},
-        {"pubkey": pool, "is_signer": False, "is_writable": True},
-        {"pubkey": user_a, "is_signer": False, "is_writable": True},
-        {"pubkey": state["vault_a"], "is_signer": False, "is_writable": True},
-        {"pubkey": user_b, "is_signer": False, "is_writable": True},
-        {"pubkey": state["vault_b"], "is_signer": False, "is_writable": True},
-    ]
+    if uses_token_2022:
+        # Option<RemainingAccountsInfo> = None; transfer hooks are refused.
+        data += bytes([0])
+        metas = [
+            {"pubkey": token_program_a, "is_signer": False, "is_writable": False},
+            {"pubkey": token_program_b, "is_signer": False, "is_writable": False},
+            {"pubkey": MEMO_PROGRAM_ID, "is_signer": False, "is_writable": False},
+            {"pubkey": wallet, "is_signer": True, "is_writable": False},
+            {"pubkey": pool, "is_signer": False, "is_writable": True},
+            {"pubkey": state["mint_a"], "is_signer": False, "is_writable": False},
+            {"pubkey": state["mint_b"], "is_signer": False, "is_writable": False},
+            {"pubkey": user_a, "is_signer": False, "is_writable": True},
+            {"pubkey": state["vault_a"], "is_signer": False, "is_writable": True},
+            {"pubkey": user_b, "is_signer": False, "is_writable": True},
+            {"pubkey": state["vault_b"], "is_signer": False, "is_writable": True},
+        ]
+    else:
+        metas = [
+            {"pubkey": chain.TOKEN_PROGRAM, "is_signer": False, "is_writable": False},
+            {"pubkey": wallet, "is_signer": True, "is_writable": False},
+            {"pubkey": pool, "is_signer": False, "is_writable": True},
+            {"pubkey": user_a, "is_signer": False, "is_writable": True},
+            {"pubkey": state["vault_a"], "is_signer": False, "is_writable": True},
+            {"pubkey": user_b, "is_signer": False, "is_writable": True},
+            {"pubkey": state["vault_b"], "is_signer": False, "is_writable": True},
+        ]
     metas.extend({"pubkey": address, "is_signer": False, "is_writable": True}
                  for address in tick_addresses)
     metas.append({"pubkey": oracle, "is_signer": False, "is_writable": False})
@@ -200,7 +236,11 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
         "fresh_quote_slot": fresh["slot"], "quote_slot_lag": slot - fresh["slot"],
         "input_mint": input_mint, "output_mint": output_mint,
         "input_amount": amount, "minimum_output_amount": minimum_out,
-        "instruction": "Swap", "instruction_discriminator": list(SWAP_DISCRIMINATOR),
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_fee_aware_supported": uses_token_2022,
+        "instruction": "SwapV2" if uses_token_2022 else "Swap",
+        "instruction_discriminator": list(discriminator),
         "a_to_b": a_to_b, "sqrt_price_limit": str(sqrt_limit),
         "account_keys": account_keys,
         "required_signers": [wallet],
