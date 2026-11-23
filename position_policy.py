@@ -243,20 +243,57 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
 
 
 def get_exit_steps():
-    """Fractions apply to the remaining position, not the original size."""
+    """Normalize exit tiers to shares of the remaining position.
+
+    Legacy sell_fraction remains a fraction of the remaining position.
+    ScreenerBot-style sell_pct is a percentage of the original position;
+    it is converted to the equivalent remaining-position fraction. A final
+    sell_pct tier may therefore normalize to 1.0 and close the runner.
+    """
     default = [{"profit_pct": 8.0, "sell_fraction": 0.5}]
     rows = _load_json_env("TROJAN_EXIT_LADDER_JSON", default)
     result = []
     previous_profit = 0.0
+    previous_mode = None
+    sold_pct = 0.0
+    tolerance = 1e-9
+
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Exit step must be an object")
         profit = _number(row.get("profit_pct"), "Exit profit", 0.1)
-        fraction = _number(row.get("sell_fraction"), "Exit fraction", 0.01)
+        has_fraction = "sell_fraction" in row
+        has_pct = "sell_pct" in row
+        if has_fraction == has_pct:
+            raise ValueError("Exit step must define exactly one of sell_fraction or sell_pct")
+        mode = "remaining" if has_fraction else "original"
+        if previous_mode is not None and mode != previous_mode:
+            raise ValueError("Exit ladder cannot mix sell_fraction and sell_pct sizing")
+        previous_mode = mode
+
         if profit <= previous_profit or profit >= 10000:
             raise ValueError("Exit profit tiers must increase")
-        if fraction >= 1:
-            raise ValueError("Partial exit fraction must be below 1")
+
+        if has_fraction:
+            fraction = _number(row.get("sell_fraction"), "Exit fraction", 0.01)
+            if fraction >= 1:
+                raise ValueError("Legacy sell_fraction must be below 1")
+        else:
+            sell_pct = _number(row.get("sell_pct"), "Exit percentage", 0.01)
+            if sell_pct > 100:
+                raise ValueError("Exit percentage cannot exceed 100")
+            remaining_pct = 100.0 - sold_pct
+            if remaining_pct <= tolerance or sell_pct > remaining_pct + tolerance:
+                raise ValueError("Exit ladder sells more than the original position")
+            fraction = sell_pct / remaining_pct
+            if fraction > 1.0 + tolerance:
+                raise ValueError("Exit ladder step exceeds the remaining position")
+            if abs(fraction - 1.0) <= tolerance:
+                fraction = 1.0
+            sold_pct += sell_pct
+            if sold_pct > 100.0 + tolerance:
+                raise ValueError("Exit ladder sells more than 100 percent")
+
         result.append({"profit_pct": profit, "sell_fraction": fraction})
         previous_profit = profit
     return result
