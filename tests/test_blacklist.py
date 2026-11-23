@@ -78,5 +78,19 @@ class PersistentBlacklistTests(unittest.TestCase):
         self.assertEqual(blacklist.match_token_security_accounts({}), [])
 
 
+    def test_initialize_creates_blacklist_table_and_schema_version(self):
+        with database.connect() as connection:
+            tables = {
+                row["name"] for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key='schema_version'"
+            ).fetchone()["value"]
+        self.assertIn("blacklist_entries", tables)
+        self.assertEqual(version, str(database.SCHEMA_VERSION))
+
+
 if __name__ == "__main__":
     unittest.main()
