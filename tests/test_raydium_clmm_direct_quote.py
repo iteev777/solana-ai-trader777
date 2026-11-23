@@ -94,7 +94,7 @@ class RaydiumClmmMathTests(unittest.TestCase):
 
     def test_output_is_saturated_to_instruction_u64_width(self):
         output = mathx.amount_out_for_move(
-            True, mathx.U128_MAX, mathx.U128_MAX, 1
+            True, 1 << 100, 1 << 100, (1 << 100) - mathx.Q64
         )
         self.assertEqual(output, mathx.U64_MAX)
 
