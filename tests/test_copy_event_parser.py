@@ -16,20 +16,51 @@ def balance(mint, owner, raw, decimals):
 
 
 def transaction(pre, post, program=None, pre_sol=10_000_000_000, post_sol=10_000_000_000, fee=5000):
-    pre = [dict(item, accountIndex=index) for index, item in enumerate(pre)]
-    post = [dict(item, accountIndex=index) for index, item in enumerate(post)]
+    pre = [dict(item) for item in pre]
+    post = [dict(item) for item in post]
+    max_accounts = {}
+    for rows in (pre, post):
+        counts = {}
+        for item in rows:
+            mint = item["mint"]
+            counts[mint] = counts.get(mint, 0) + 1
+        for mint, count in counts.items():
+            max_accounts[mint] = max(max_accounts.get(mint, 0), count)
+    account_bases = {}
+    next_index = 1
+    for mint, count in max_accounts.items():
+        account_bases[mint] = next_index
+        next_index += count
+
+    def assign_indices(rows):
+        counts = {}
+        result = []
+        for item in rows:
+            mint = item["mint"]
+            occurrence = counts.get(mint, 0)
+            counts[mint] = occurrence + 1
+            result.append(dict(item, accountIndex=account_bases[mint] + occurrence))
+        return result
+
+    pre = assign_indices(pre)
+    post = assign_indices(post)
+    account_keys = [{"pubkey": WALLET, "signer": True}] + [
+        {"pubkey": "TokenAccount" + str(index)} for index in range(1, next_index)
+    ]
+    pre_balances = [pre_sol] + [0] * (next_index - 1)
+    post_balances = [post_sol] + [0] * (next_index - 1)
     instructions = []
     if program:
         instructions.append({"programId": program, "accounts": []})
     return {
         "blockTime": 123,
         "transaction": {"message": {
-            "accountKeys": [{"pubkey": WALLET, "signer": True}] ,
+            "accountKeys": account_keys,
             "instructions": instructions
         }},
         "meta": {
             "err": None, "fee": fee,
-            "preBalances": [pre_sol], "postBalances": [post_sol],
+            "preBalances": pre_balances, "postBalances": post_balances,
             "preTokenBalances": pre, "postTokenBalances": post,
             "logMessages": ["swap"]
         }
@@ -63,6 +94,30 @@ class CopyEventParserTests(unittest.TestCase):
     def test_native_sol_flow_has_fee_removed(self):
         tx = transaction(
             [], [balance(MINT, WALLET, 1_000_000, 6)],
+            PROGRAMS["pumpswap"], pre_sol=10_000_000_000,
+            post_sol=9_000_000_000, fee=5000
+        )
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "BUY")
+        self.assertAlmostEqual(event["economic_sol_delta"], -0.999995)
+
+
+    def test_native_sol_quote_corrects_rent_in_subject_owned_token_accounts(self):
+        tx = transaction(
+            [], [balance(MINT, WALLET, 1_000_000, 6)],
+            PROGRAMS["pumpswap"], pre_sol=10_000_000_000,
+            post_sol=8_997_995_000, fee=5000
+        )
+        tx["meta"]["postBalances"][1] = 2_000_000  # 0.002 SOL ATA rent
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "BUY")
+        self.assertAlmostEqual(event["economic_sol_delta"], -1.0)
+
+    def test_wrapped_sol_account_is_not_counted_as_ata_rent(self):
+        tx = transaction(
+            [balance(SOL_MINT, WALLET, 0, 9)],
+            [balance(SOL_MINT, WALLET, 1_000_000_000, 9),
+             balance(MINT, WALLET, 1_000_000, 6)],
             PROGRAMS["pumpswap"], pre_sol=10_000_000_000,
             post_sol=9_000_000_000, fee=5000
         )
@@ -111,6 +166,9 @@ class CopyEventParserTests(unittest.TestCase):
         )
         tx["meta"]["preBalances"].insert(0, 5_000_000_000)
         tx["meta"]["postBalances"].insert(0, 5_000_000_000)
+        for rows in (tx["meta"]["preTokenBalances"], tx["meta"]["postTokenBalances"]):
+            for item in rows:
+                item["accountIndex"] += 1
         event = parse_wallet_transaction(tx, WALLET)
         self.assertEqual(event["action"], "BUY")
         self.assertEqual(event["classification_reason"], "TOKEN_IN_QUOTE_OUT")
