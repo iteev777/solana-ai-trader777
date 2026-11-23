@@ -137,6 +137,11 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         if seeds[0] == b"__event_authority":
             return self.event_authority, 251
         if program == builder.ASSOCIATED_TOKEN_PROGRAM_ID:
+            if seeds[0] == chain._b58decode(self.wallet):
+                if seeds[2] == chain._b58decode(self.base_mint):
+                    return self.user_base, 249
+                if seeds[2] == chain._b58decode(self.quote_mint):
+                    return self.user_quote, 249
             for recipient, ata in zip(self.recipients, self.buyback_atas):
                 if seeds[0] == chain._b58decode(recipient):
                     return ata, 250
