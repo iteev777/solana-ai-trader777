@@ -146,9 +146,10 @@ def merge_candidate_metadata(market_data, candidate):
             and value.strip().lower() not in {"unknown", "n/a", "none", "null"}
         )
 
+    base_token = merged.get("baseToken") if isinstance(merged.get("baseToken"), dict) else {}
     for key in ("name", "symbol"):
         incoming = candidate.get(key)
-        current = merged.get(key)
+        current = merged.get(key) if useful(merged.get(key)) else base_token.get(key)
         if useful(incoming) and not useful(current):
             merged[key] = incoming.strip()
 
