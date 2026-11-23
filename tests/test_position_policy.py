@@ -170,5 +170,60 @@ class DcaPolicyTests(unittest.TestCase):
         self.assertIn("First investment", no_base["reason"])
 
 
+class ExitLadderPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ, {}, clear=True)
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def test_legacy_remaining_fraction_configuration_is_unchanged(self):
+        with patch.dict(os.environ, {
+            "TROJAN_EXIT_LADDER_JSON": '[{"profit_pct":8,"sell_fraction":0.5}]',
+        }):
+            self.assertEqual(
+                position_policy.get_exit_steps(),
+                [{"profit_pct": 8.0, "sell_fraction": 0.5}],
+            )
+
+    def test_original_position_percentages_normalize_to_remaining_shares(self):
+        with patch.dict(os.environ, {
+            "TROJAN_EXIT_LADDER_JSON": (
+                '[{"profit_pct":20,"sell_pct":30},'
+                '{"profit_pct":50,"sell_pct":30},'
+                '{"profit_pct":100,"sell_pct":40}]'
+            ),
+        }):
+            steps = position_policy.get_exit_steps()
+        self.assertAlmostEqual(steps[0]["sell_fraction"], 0.30)
+        self.assertAlmostEqual(steps[1]["sell_fraction"], 30.0 / 70.0)
+        self.assertEqual(steps[2]["sell_fraction"], 1.0)
+
+    def test_original_position_percentages_cannot_overallocate(self):
+        for raw in (
+            '[{"profit_pct":10,"sell_pct":60},{"profit_pct":20,"sell_pct":50}]',
+            '[{"profit_pct":10,"sell_pct":100},{"profit_pct":20,"sell_pct":1}]',
+        ):
+            with patch.dict(os.environ, {"TROJAN_EXIT_LADDER_JSON": raw}):
+                with self.assertRaises(ValueError):
+                    position_policy.get_exit_steps()
+
+    def test_exit_ladder_rejects_mixed_sizing_bases(self):
+        raw = '[{"profit_pct":10,"sell_pct":30},{"profit_pct":20,"sell_fraction":0.5}]'
+        with patch.dict(os.environ, {"TROJAN_EXIT_LADDER_JSON": raw}):
+            with self.assertRaises(ValueError):
+                position_policy.get_exit_steps()
+
+    def test_exit_step_requires_exactly_one_sizing_field(self):
+        for row in (
+            '{"profit_pct":10,"sell_pct":30,"sell_fraction":0.3}',
+            '{"profit_pct":10}',
+        ):
+            with patch.dict(os.environ, {"TROJAN_EXIT_LADDER_JSON": "[" + row + "]"}):
+                with self.assertRaises(ValueError):
+                    position_policy.get_exit_steps()
+
+
 if __name__ == "__main__":
     unittest.main()
