@@ -328,8 +328,13 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
 
 def get_engine_status():
     import solana_onchain
+    import pool_registry
     routers = route_comparison.get_router_status()
     chain = solana_onchain.get_onchain_status()
+    try:
+        registry_status = pool_registry.get_pool_registry_status()
+    except Exception as error:
+        registry_status = {"available": False, "error": str(error)[:160]}
     return {
         "engine": "trojan_multi_pool_dex_engine_v2",
         "mode": "READ_ONLY_ROUTE_SELECTION",
@@ -338,6 +343,11 @@ def get_engine_status():
             "raptor": routers.get("raptor"),
         },
         "direct_pool": routers.get("direct_pool"),
+        "pool_discovery": {
+            "automatic_pair_matching": True,
+            "max_candidates_per_pair": MAX_POOL_CANDIDATES,
+            "registry": registry_status,
+        },
         "onchain_supported_protocols": chain.get("supported_protocols", []),
         "execution_locked": True,
         "signing_available": False,
