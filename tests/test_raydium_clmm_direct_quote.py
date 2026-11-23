@@ -203,11 +203,11 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             return None
         return None
 
-    def quote(self, input_mint=None, output_mint=None, amount=10_000, **kwargs):
+    def quote(self, input_mint=None, output_mint=None, amount=10_000, slot=123456, **kwargs):
         with (
             patch.object(chain, "_account", side_effect=self._account),
             patch.object(chain, "_find_program_address", side_effect=self._pda),
-            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 123456)),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, slot)),
         ):
             return quote_raydium_clmm_pool(
                 self.pool, input_mint or self.mint1, amount,
@@ -225,6 +225,21 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.assertEqual(buy["execution"], "DISABLED")
         self.assertEqual(sell["output_mint"], self.mint1)
         self.assertGreater(sell["out_amount"], 0)
+
+    def test_snapshot_requires_a_positive_confirmed_slot(self):
+        with self.assertRaisesRegex(ValueError, "positive confirmed slot"):
+            self.quote(slot=None)
+
+    def test_quote_refuses_output_equal_to_vault_reserve(self):
+        with patch.object(dlmm.mathx, "quote_exact_input", return_value={
+            "out_amount": 10**12,
+            "fee_amount": 1,
+            "sqrt_price_after_x64": mathx.sqrt_price_at_tick(10),
+            "liquidity_after": 1_000_000_000,
+            "tick_crossings": 0,
+        }):
+            with self.assertRaisesRegex(ValueError, "output vault reserve"):
+                self.quote()
 
     def test_wrong_requested_output_mint_is_rejected_before_rpc(self):
         with patch.object(chain, "_account", return_value={
