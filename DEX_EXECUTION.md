@@ -51,6 +51,43 @@ X-Trojan-Confirm-Live: 1
 }
 ```
 
+## Read-only wallet preflight
+
+Before requesting a native Raydium CPMM or PumpSwap order, the dashboard can
+check the wallet and token accounts using one confirmed
+`getMultipleAccounts` snapshot.
+
+```http
+POST /api/wallet-preflight
+Content-Type: application/json
+X-Trojan-Action: 1
+
+{
+  "wallet": "<PUBLIC_WALLET_ADDRESS>",
+  "input_mint": "<INPUT_MINT>",
+  "output_mint": "<OUTPUT_MINT>",
+  "input_token_account": "<EXISTING_INPUT_TOKEN_ACCOUNT>",
+  "output_token_account": "<EXISTING_OUTPUT_TOKEN_ACCOUNT>",
+  "input_amount": "1000000"
+}
+```
+
+The preflight validates the wallet account, legacy SPL Token mint layouts,
+token-account mint and authority, initialized state, raw input balance, and a
+configurable minimum SOL reserve. The reserve defaults to 10,000,000 lamports
+(0.01 SOL) and can be changed with `TROJAN_MIN_SOL_RESERVE_LAMPORTS`.
+
+A missing output token account is reported with
+`CREATE_OUTPUT_TOKEN_ACCOUNT_AND_RETRY`; Trojan does not create it or spend
+SOL. Token-2022 is explicitly unsupported by this native preflight because
+the current native builders require the legacy SPL Token program.
+
+This is a funding/account readiness check, not an exact fee or rent quote. The
+response explicitly reports `network_fee_estimate: NOT_ESTIMATED`. It is
+read-only: it does not sign, build, create accounts, or broadcast transactions.
+A READY result only means the checked prerequisites passed at the returned
+confirmed slot; balances and account state can change immediately afterward.
+
 ## Multi-route DEX ranking confidence
 
 The read-only multi-pool route endpoint compares eligible Jupiter, Raptor and
