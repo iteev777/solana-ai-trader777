@@ -84,6 +84,7 @@ def _jupiter(input_mint, output_mint, amount, slippage_bps):
     return {
         "provider": "jupiter",
         "status": "QUOTED",
+        "output_mint": output_mint,
         "out_amount": output,
         "minimum_out_amount": minimum,
         "price_impact_percent": quote.get("price_impact_percent"),
@@ -122,16 +123,24 @@ def _raptor(input_mint, output_mint, amount, slippage_bps):
             raise ValueError("Raptor price impact is invalid")
         if impact <= 1:
             impact *= 100
+    route_data = payload.get("dexes") or payload.get("route") or []
+    hop_count = payload.get("hopCount", payload.get("hops"))
+    if hop_count is None:
+        if isinstance(route_data, list) and route_data:
+            hop_count = len(route_data)
+        elif isinstance(route_data, dict):
+            hop_count = route_data.get("hops", route_data.get("hop_count"))
     return {
         "provider": "raptor",
         "status": "QUOTED",
+        "output_mint": output_mint,
         "out_amount": output,
         "minimum_out_amount": minimum,
         "price_impact_percent": impact,
         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "route": {
-            "dexes": payload.get("dexes") or payload.get("route") or [],
-            "hops": payload.get("hopCount"),
+            "dexes": route_data,
+            "hops": hop_count,
             "jit_routing": payload.get("jitRouting"),
         },
         "quoted_at": time.time(),
