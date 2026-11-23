@@ -456,6 +456,8 @@ def get_pool_registry_status():
             "pool_stale_ttl_seconds": POOL_STALE_TTL_SECONDS,
             "persisted_tokens": len(_persisted_at),
             "max_pools_per_token": MAX_POOLS_PER_TOKEN,
+            "worker_running": bool(_worker_thread and _worker_thread.is_alive()),
+            "worker_stopping": _stop_event.is_set(),
         }
 
 
