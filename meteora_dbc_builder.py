@@ -1,14 +1,15 @@
 """Unsigned native Meteora DBC exact-input swap builder.
 
-Mirrors ScreenerBot's direct DBC swap account order. It only accepts the
-flat-fee, non-migrated, legacy SPL Token pool shapes already supported by the
-paired confirmed-snapshot quote adapter. Signing and broadcast remain disabled.
+Mirrors the direct DBC swap account order and supports the audited Token-2022
+transfer-fee subset for flat-fee, non-migrated pools. Transfer-hook pools and
+unsupported mint extensions remain blocked. Signing and broadcast are disabled.
 """
 import base64
 import struct
 
 import solana_onchain as chain
 import meteora_dbc_quote as dbc
+import token2022_inspector as token2022
 from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["meteora_dbc"]
@@ -32,20 +33,10 @@ def _key(value, label):
     return raw
 
 
-def _token_account(account, owner, mint, label, minimum=0):
-    if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " has an invalid token account layout")
-    if chain._key(raw, 0) != mint or chain._key(raw, 32) != owner:
-        raise ValueError(label + " mint or authority does not match")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    amount = int.from_bytes(raw[64:72], "little")
-    if amount < minimum:
-        raise ValueError(label + " has insufficient balance")
-    return amount
+def _token_account(account, token_program, owner, mint, label, minimum=0):
+    return token2022.validate_token_account_for_program(
+        account, token_program, mint, owner, label, minimum
+    )
 
 
 def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
@@ -83,6 +74,9 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
             or fresh.get("output_mint") != output_mint
             or fresh.get("input_amount") != amount):
         raise ValueError("Fresh Meteora DBC quote did not validate pool, pair and amount")
+    for field in ("token_program_input", "token_program_output"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("Meteora DBC token program state changed since the supplied quote")
     minimum_out = fresh.get("minimum_out_amount")
     if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= 2**64 - 1:
         raise ValueError("Fresh DBC minimum output must be a positive u64")
@@ -157,12 +151,22 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
             raise ValueError("Meteora DBC PoolConfig changed during transaction preparation")
     if slot < fresh_slot or slot - fresh_slot > max_quote_slot_lag:
         raise ValueError("Fresh DBC quote is stale relative to transaction snapshot")
-    if any(item.get("owner") != TOKEN_PROGRAM_ID
-           for item in (base_mint_acc, quote_mint_acc, base_vault_acc, quote_vault_acc)):
-        raise ValueError("Native DBC builder currently requires legacy SPL Token")
-    for mint_account, label in ((base_mint_acc, "base"), (quote_mint_acc, "quote")):
+    base_token_program = base_mint_acc.get("owner")
+    quote_token_program = quote_mint_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM)
+    if base_token_program not in supported_programs or quote_token_program not in supported_programs:
+        raise ValueError("Meteora DBC mint uses an unsupported token program")
+    if (base_vault_acc.get("owner") != base_token_program
+            or quote_vault_acc.get("owner") != quote_token_program):
+        raise ValueError("Meteora DBC vault token program does not match its mint")
+    for mint_account, token_program, label in (
+        (base_mint_acc, base_token_program, "base"),
+        (quote_mint_acc, quote_token_program, "quote"),
+    ):
         raw = mint_account.get("data", b"")
-        if not isinstance(raw, (bytes, bytearray)) or len(raw) != 82 or raw[45] != 1:
+        if token_program == chain.TOKEN_2022_PROGRAM:
+            token2022.validate_swap_compatible_mint_data(raw)
+        elif not isinstance(raw, (bytes, bytearray)) or len(raw) != 82 or raw[45] != 1:
             raise ValueError("Meteora DBC " + label + " mint is not an initialized legacy SPL Token mint")
     base_decimals = chain._mint_decimals(base_mint_acc)
     quote_decimals = chain._mint_decimals(quote_mint_acc)
@@ -171,20 +175,29 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
 
     pool_authority = POOL_AUTHORITY
     base_balance = _token_account(
-        base_vault_acc, pool_authority, current["base_mint"], "DBC base vault", 1
+        base_vault_acc, base_token_program, pool_authority, current["base_mint"], "DBC base vault", 1
     )
     quote_balance = _token_account(
-        quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault", 1
+        quote_vault_acc, quote_token_program, pool_authority, config["quote_mint"], "DBC quote vault", 1
     )
     output_reserve = quote_balance if input_is_base else base_balance
     if fresh.get("output_amount_gross", 0) >= output_reserve:
         raise ValueError("Meteora DBC fresh quote exceeds confirmed output vault balance")
-    _token_account(user_in_acc, wallet, input_mint, "User input token account", amount)
-    _token_account(user_out_acc, wallet, output_mint, "User output token account")
-    for mint, account_address in ((input_mint, user_input_token_account),
-                                  (output_mint, user_output_token_account)):
+    token_program_input = base_token_program if input_is_base else quote_token_program
+    token_program_output = quote_token_program if input_is_base else base_token_program
+    if (fresh.get("token_program_input") != token_program_input
+            or fresh.get("token_program_output") != token_program_output):
+        raise ValueError("Meteora DBC token program state changed during transaction preparation")
+    _token_account(user_in_acc, token_program_input, wallet, input_mint,
+                   "User input token account", amount)
+    _token_account(user_out_acc, token_program_output, wallet, output_mint,
+                   "User output token account")
+    for mint, account_address, token_program in (
+        (input_mint, user_input_token_account, token_program_input),
+        (output_mint, user_output_token_account, token_program_output),
+    ):
         expected_ata, _ = chain._find_program_address(
-            [_key(wallet, "wallet"), _key(TOKEN_PROGRAM_ID, "token program"),
+            [_key(wallet, "wallet"), _key(token_program, "token program"),
              _key(mint, "mint")],
             ASSOCIATED_TOKEN_PROGRAM_ID,
         )
@@ -209,8 +222,8 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         {"pubkey": current["base_mint"], "is_signer": False, "is_writable": False},
         {"pubkey": config["quote_mint"], "is_signer": False, "is_writable": False},
         {"pubkey": wallet, "is_signer": True, "is_writable": False},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
+        {"pubkey": base_token_program, "is_signer": False, "is_writable": False},
+        {"pubkey": quote_token_program, "is_signer": False, "is_writable": False},
         {"pubkey": PROGRAM_ID, "is_signer": False, "is_writable": False},
         {"pubkey": event_authority, "is_signer": False, "is_writable": False},
         {"pubkey": PROGRAM_ID, "is_signer": False, "is_writable": False},
@@ -234,6 +247,9 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         "output_mint": output_mint,
         "input_amount": amount,
         "minimum_output_amount": minimum_out,
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_fee_aware_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
         "instruction": "swap_exact_input",
         "instruction_data_base64": base64.b64encode(data).decode("ascii"),
         "instruction_accounts": [meta["pubkey"] for meta in metas],
