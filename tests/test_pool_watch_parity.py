@@ -33,9 +33,9 @@ class CandidatePoolWatchTests(unittest.TestCase):
     def test_candidate_watch_expires_after_ttl(self):
         candidate = ("pool-expiring", "pumpswap", "mint-expiring")
         with patch.object(stream, "_ensure_thread_locked"), \
-             patch.object(stream.time, "time", return_value=100.0):
+             patch.object(stream.time, "monotonic", return_value=100.0):
             stream.watch_pool_price(*candidate)
-        with patch.object(stream.time, "time",
+        with patch.object(stream.time, "monotonic",
                           return_value=100.0 + stream.CANDIDATE_WATCH_TTL + 1):
             self.assertNotIn(candidate, stream.get_watched_pools())
         self.assertEqual(stream.get_stream_status()["candidate_watches"], 0)
@@ -43,7 +43,7 @@ class CandidatePoolWatchTests(unittest.TestCase):
     def test_candidate_watch_registry_is_bounded_lru(self):
         with patch.object(stream, "_ensure_thread_locked"), \
              patch.object(stream, "MAX_CANDIDATE_WATCHES", 10), \
-             patch.object(stream.time, "time", return_value=100.0):
+             patch.object(stream.time, "monotonic", return_value=100.0):
             for index in range(11):
                 stream.watch_pool_price("pool-" + str(index), "pumpswap", "mint-" + str(index))
             watched = stream.get_watched_pools()
@@ -78,6 +78,7 @@ class CandidatePoolWatchTests(unittest.TestCase):
         pool_b = ("pool", "raydium_cpmm", "mint-b")
         ws = Mock()
         ws.recv.side_effect = [
+            "malformed frame",
             json.dumps({"id": 1, "result": 55}),
             json.dumps({"method": "accountNotification", "params": {
                 "subscription": 55, "result": {}
@@ -122,10 +123,14 @@ class CandidatePoolWatchTests(unittest.TestCase):
         with patch.object(stream, "_ensure_thread_locked"), \
              patch.object(stream.time, "time", return_value=100):
             stream.sync_watched_pools([pool])
-            verified = {"onchainVerified": True, "observedAt": 100}
+            verified = {"onchainVerified": True, "observedAt": 100, "snapshotSlot": 12, "baseToken": {"address": "mint"}}
             self.assertTrue(stream.store_pool_snapshot(pool, verified))
             self.assertFalse(stream.store_pool_snapshot(pool, dict(verified, observedAt=98)))
-            self.assertEqual(stream.get_latest_snapshot(*pool)["observedAt"], 100)
+            self.assertFalse(stream.store_pool_snapshot(pool, dict(verified, snapshotSlot=11)))
+            snapshot = stream.get_latest_snapshot(*pool)
+            self.assertEqual(snapshot["observedAt"], 100)
+            snapshot["baseToken"]["address"] = "mutated"
+            self.assertEqual(stream.get_latest_snapshot(*pool)["baseToken"]["address"], "mint")
             stream.sync_watched_pools([])
             self.assertFalse(stream.store_pool_snapshot(pool, verified))
             self.assertIsNone(stream.get_latest_snapshot(*pool))

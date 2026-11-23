@@ -4,6 +4,7 @@ Pool state and reserve vault accounts are subscribed together. Candidate watches
 expire automatically; open-position watches remain until the position monitor
 removes them. All RPC reads remain read-only.
 """
+import copy
 import json
 import math
 import os
@@ -61,7 +62,7 @@ def _remove_snapshot_if_unwatched_locked(key):
 
 
 def _prune_candidate_watches_locked(now=None):
-    now = time.time() if now is None else float(now)
+    now = time.monotonic() if now is None else float(now)
     expired = [
         key for key, seen_at in _candidate_watches.items()
         if now - seen_at > CANDIDATE_WATCH_TTL
@@ -117,7 +118,7 @@ def watch_pool_price(pool_address, protocol, token_mint):
         return False
     key = (pool_address.strip(), protocol.strip(), token_mint.strip())
     with _lock:
-        _candidate_watches[key] = time.time()
+        _candidate_watches[key] = time.monotonic()
         _candidate_watches.move_to_end(key)
         _prune_candidate_watches_locked()
         _status["configured"] = bool(_rpc_ws_url())
@@ -139,7 +140,7 @@ def get_latest_snapshot(pool_address, protocol, token_mint, max_age=1.0):
         age = time.time() - item["observed_at"]
         if age < 0 or age > max_age:
             return None
-        result = dict(item["data"])
+        result = copy.deepcopy(item["data"])
         result["streamAgeMs"] = round(age * 1000, 1)
         result["snapshotAgeSeconds"] = round(age, 3)
         return result
@@ -194,10 +195,15 @@ def store_pool_snapshot(key, snapshot):
         if normalized_key not in _active_watch_keys_locked():
             return False
         previous = _snapshots.get(normalized_key)
-        if previous and observed < previous["observed_at"]:
-            return False
-        _snapshots[normalized_key] = {"data": dict(snapshot), "observed_at": observed}
-        _status["last_update"] = observed
+        if previous:
+            old_slot = previous["data"].get("snapshotSlot")
+            slot = snapshot.get("snapshotSlot")
+            if observed < previous["observed_at"] or (
+                type(slot) is int and type(old_slot) is int and slot < old_slot
+            ):
+                return False
+        _snapshots[normalized_key] = {"data": copy.deepcopy(snapshot), "observed_at": observed}
+        _status["last_update"] = max(observed, _status["last_update"] or 0)
         _status["last_error"] = None
     return True
 
@@ -219,7 +225,7 @@ def _refresh(key):
     except Exception as error:
         with _lock:
             _status["refresh_errors"] += 1
-            _status["last_error"] = str(error)[:200]
+            _status["last_error"] = type(error).__name__
     finally:
         with _lock:
             _refreshing.discard(key)
@@ -243,7 +249,7 @@ def _refresh_many(keys, prune_unwatched=False):
     except Exception as error:
         with _lock:
             _status["refresh_errors"] += 1
-            _status["last_error"] = "BATCH POOL REFRESH: " + str(error)[:180]
+            _status["last_error"] = "BATCH POOL REFRESH: " + type(error).__name__
     finally:
         with _lock:
             _batch_refreshing = False
@@ -306,7 +312,7 @@ def _watch_connection(ws):
                 discovery_retry_after[key] = time.monotonic() + 5
                 with _lock:
                     _status["last_error"] = (
-                        "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
+                        "POOL WATCH ACCOUNT DISCOVERY: " + type(error).__name__
                     )
 
         desired_accounts = {}
@@ -338,7 +344,7 @@ def _watch_connection(ws):
 
         try:
             payload = json.loads(ws.recv())
-        except websocket.WebSocketTimeoutException:
+        except (websocket.WebSocketTimeoutException, json.JSONDecodeError, UnicodeDecodeError):
             continue
 
         if not isinstance(payload, dict):
@@ -348,16 +354,14 @@ def _watch_connection(ws):
             account, _ = pending.pop(response_id)
             pending_accounts.remove(account)
             subscription_id = payload.get("result")
-            if type(subscription_id) is int and subscription_id >= 0:
+            if payload.get("error") is None and type(subscription_id) is int and subscription_id >= 0:
                 subscriptions[subscription_id] = account
                 account_subscriptions[account] = subscription_id
                 subscription_retry_after.pop(account, None)
             elif account in desired_accounts:
                 subscription_retry_after[account] = time.monotonic() + 5
                 with _lock:
-                    _status["last_error"] = (
-                        "ACCOUNT SUBSCRIPTION REJECTED: " + str(payload.get("error"))[:150]
-                    )
+                    _status["last_error"] = "ACCOUNT SUBSCRIPTION REJECTED"
             continue
 
         if payload.get("method") != "accountNotification":
@@ -404,7 +408,7 @@ def _run():
             with _lock:
                 _status.update({
                     "running": False, "subscriptions": 0,
-                    "last_error": str(error)[:200]
+                    "last_error": type(error).__name__
                 })
         finally:
             if ws is not None:
