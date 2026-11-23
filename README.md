@@ -334,3 +334,14 @@ The read-only direct quote router now recognises PumpSwap pools from the on-chai
 
 The current adapter deliberately uses the highest total fee found across the on-chain flat, standard-tier, stable-tier and exotic fee entries. This conservative policy avoids assuming an unverified pool classification or a cheaper market-cap tier, but can understate the output of pools whose actual fee tier is lower. Token-2022, cashback pools and holder-reward pools remain refused until their extra token/fee behavior is independently modelled. This is a quote-only adapter: signing, transaction construction and broadcast remain disabled.
 
+
+
+## OHLCV integrity, freshness and retention
+
+GeckoTerminal candle rows are normalized, sorted and deduplicated before indicators or storage use them. Rows with non-finite values, invalid OHLC geometry, negative volume, fractional/future timestamps are discarded. The indicator pipeline records invalid/duplicate rows, missing-minute gaps, largest gap and latest-candle age. A stale series (default maximum age 180 seconds) or a discontinuity larger than five minutes is marked not-ready across timeframes; no synthetic candles are inserted and strategy conditions fail closed when the indicator snapshot is unavailable.
+
+- `TROJAN_OHLCV_MAX_AGE_SECONDS` (default 180; bounded to 30–3600)
+- `TROJAN_OHLCV_MAX_GAP_SECONDS` (default 300; bounded to 60–3600)
+- `TROJAN_OHLCV_RETENTION_DAYS` (default 30; bounded to 1–3650)
+
+SQLite candle writes validate and deduplicate the same way, and the fetch worker prunes expired rows at most once per hour. Historical candles may still be stored even when the latest series is too stale to trade; storage does not make stale data strategy-ready.
