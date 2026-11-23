@@ -1,5 +1,6 @@
 """Validation and quality metrics for externally sourced OHLCV candle rows."""
 import math
+import os
 import time
 
 
@@ -11,9 +12,25 @@ def _finite(value):
         return None
 
 
-def normalize_ohlcv_rows(raw, now=None):
+def normalize_ohlcv_rows(raw, now=None, max_age_seconds=None, max_gap_seconds=None):
     """Accept Gecko-style arrays or candle dictionaries; reject malformed bars."""
     current_time = time.time() if now is None else float(now)
+    try:
+        max_age_seconds = float(
+            os.getenv("TROJAN_OHLCV_MAX_AGE_SECONDS", "180")
+            if max_age_seconds is None else max_age_seconds
+        )
+    except (TypeError, ValueError, OverflowError):
+        max_age_seconds = 180.0
+    try:
+        max_gap_seconds = int(
+            os.getenv("TROJAN_OHLCV_MAX_GAP_SECONDS", "300")
+            if max_gap_seconds is None else max_gap_seconds
+        )
+    except (TypeError, ValueError, OverflowError):
+        max_gap_seconds = 300
+    max_age_seconds = min(3600.0, max(30.0, max_age_seconds))
+    max_gap_seconds = min(3600, max(60, max_gap_seconds))
     source = list(raw or [])
     by_timestamp = {}
     invalid = 0
@@ -32,6 +49,9 @@ def normalize_ohlcv_rows(raw, now=None):
             invalid += 1
             continue
         timestamp, open_price, high, low, close, volume = parsed
+        if not timestamp.is_integer():
+            invalid += 1
+            continue
         timestamp = int(timestamp)
         if (timestamp <= 0 or timestamp > current_time + 60
                 or min(open_price, high, low, close) <= 0 or volume < 0
@@ -59,8 +79,6 @@ def normalize_ohlcv_rows(raw, now=None):
             gaps.append(delta)
     latest_age = max(0.0, current_time - rows[-1]["timestamp"]) if rows else None
     largest_gap = max(gaps) if gaps else 0
-    max_age = 180.0
-    max_gap = 300
     quality = {
         "input_count": len(source),
         "valid_count": len(rows),
@@ -69,8 +87,8 @@ def normalize_ohlcv_rows(raw, now=None):
         "gap_count": sum(max(0, int(gap // 60) - 1) for gap in gaps),
         "largest_gap_seconds": largest_gap,
         "latest_age_seconds": round(latest_age, 2) if latest_age is not None else None,
-        "stale": latest_age is None or latest_age > max_age,
-        "discontinuous": largest_gap > max_gap,
+        "stale": latest_age is None or latest_age > max_age_seconds,
+        "discontinuous": largest_gap > max_gap_seconds,
     }
     quality["ready"] = bool(rows) and not quality["stale"] and not quality["discontinuous"]
     if not rows:
