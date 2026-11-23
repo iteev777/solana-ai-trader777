@@ -581,6 +581,23 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address,
             }
 
+        # Optional ScreenerBot-style live trade observation. PumpPortal trade
+        # subscriptions are metered, so this stage is disabled unless the user
+        # explicitly enables it and configures a PumpPortal API key.
+        import candidate_observer
+        observation_report = candidate_observer.observe_candidate(
+            address, token_data.get("discovery_sources", [])
+        )
+        if not observation_report.get("ok"):
+            return {
+                "status": "waiting",
+                "reason": observation_report.get("reason", "OBSERVATION_WAIT"),
+                "observation": observation_report,
+                "filter_report": filter_report,
+                "address": address,
+            }
+        token_data["candidate_observation"] = observation_report
+
         account = paper.get_account_summary()
 
         open_positions = len(paper.get_positions())
@@ -732,6 +749,7 @@ def analyze_token_task(address, strategy_name, token):
             "token_security": token_security_report,
             "rugcheck": rugcheck_analysis,
             "entry_intelligence": entry_intelligence,
+            "candidate_observation": observation_report,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
             "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None,
             "copy_latency_seconds": token.get("copy_latency_seconds") if isinstance(token, dict) else None
@@ -1133,6 +1151,7 @@ def process_completed_tasks():
                     "onchain_verified": result.get("onchain_verified"),
                     "token_security": result.get("token_security"),
                     "entry_intelligence": result.get("entry_intelligence"),
+                    "candidate_observation": result.get("candidate_observation"),
                     "copy_wallet": result.get("copy_wallet"),
                     "copy_signature": result.get("copy_signature"),
                     "copy_latency_seconds": result.get("copy_latency_seconds")
