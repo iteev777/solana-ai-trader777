@@ -34,7 +34,7 @@ class TokenSecurityTests(unittest.TestCase):
             {"value": [{"data": {"parsed": {"info": {"owner": "11111111111111111111111111111111"}}}}]},
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("MintAddress")
+            report = token_security.get_token_security_report("11111111111111111111111111111111")
         self.assertEqual(report["mint_authority"], "DISABLED")
         self.assertEqual(report["freeze_authority"], "DISABLED")
         self.assertEqual(report["top10_token_account_pct"], 30.0)
@@ -54,7 +54,7 @@ class TokenSecurityTests(unittest.TestCase):
         }}
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
             with self.assertRaisesRegex(ValueError, "decimals"):
-                token_security.get_token_security_report("MintAddress")
+                token_security.get_token_security_report("11111111111111111111111111111111")
 
     @patch("solana_onchain._rpc")
     def test_supply_decimals_must_match_mint_account(self, rpc):
@@ -68,7 +68,7 @@ class TokenSecurityTests(unittest.TestCase):
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
             with self.assertRaisesRegex(ValueError, "do not match"):
-                token_security.get_token_security_report("MintAddress")
+                token_security.get_token_security_report("11111111111111111111111111111111")
 
     @patch("solana_onchain._rpc")
     def test_largest_account_raw_amount_must_be_integer_u64(self, rpc):
@@ -83,7 +83,7 @@ class TokenSecurityTests(unittest.TestCase):
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
             with self.assertRaisesRegex(ValueError, "raw u64"):
-                token_security.get_token_security_report("MintAddress")
+                token_security.get_token_security_report("11111111111111111111111111111111")
 
     @patch("solana_onchain._rpc")
     def test_incomplete_owner_lookup_does_not_report_partial_owner_concentration(self, rpc):
@@ -101,7 +101,7 @@ class TokenSecurityTests(unittest.TestCase):
             {"value": [{"data": {"parsed": {"info": {"owner": "owner-a"}}}}]},
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("MintAddress")
+            report = token_security.get_token_security_report("11111111111111111111111111111111")
         self.assertIsNone(report["top_owner_account_authority_pct"])
         self.assertEqual(report["top_owner_account_authorities"], [])
 
@@ -131,7 +131,7 @@ class TokenSecurityTests(unittest.TestCase):
             RuntimeError("optional owner RPC unavailable"),
         ]
         with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("MintAddress")
+            report = token_security.get_token_security_report("11111111111111111111111111111111")
         self.assertEqual(len(report["largest_token_account_details"]), 1)
         self.assertIsNone(report["largest_token_account_details"][0]["authority"])
         self.assertEqual(report["top_owner_account_authorities"], [])
