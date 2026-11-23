@@ -421,3 +421,20 @@ and places the base and quote token-program IDs in their respective V2
 instruction account slots. Token-2022 ATAs use their extension-aware account
 layouts; the builder does not assume 165 bytes for them. No account is created
 by the swap builder, and no signing or broadcasting is performed.
+
+
+## Token-2022 transfer-fee handling: Meteora DAMM v2
+
+The native Meteora DAMM v2 quote and swap builder now support the audited
+Token-2022 transfer-fee subset. The input transfer fee is applied before the
+DAMM curve and pool fee calculation; the output transfer fee is applied after
+the DAMM trade fee. The quote preserves the pool's collect-fee mode semantics
+(OnlyB versus output-side collection), scheduler/dynamic-fee upper bounds, and
+protocol-fee reserve deductions. The wallet-facing output and slippage minimum
+are net of Token-2022 transfer fees.
+
+The builder validates both mint programs, the global DAMM pool-authority
+vaults, wallet token-account extensions and canonical ATAs derived with each
+mint's own token program. The two actual token-program IDs are passed in the
+14-account Swap instruction. Transfer-hook and other unsupported extensions
+remain blocked. Signing and broadcasting remain disabled.
