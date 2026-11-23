@@ -9,9 +9,9 @@ class GeckoRecentlyUpdatedDiscoveryTests(unittest.TestCase):
         payload = {
             "data": [
                 {
-                    "id": "solana_MINT_A",
+                    "id": "solana_MINTA",
                     "attributes": {
-                        "address": "MINT_A",
+                        "address": "MINTA",
                         "name": "Token A",
                         "symbol": "TKA",
                         "image_url": "https://example.com/a.png",
@@ -20,9 +20,9 @@ class GeckoRecentlyUpdatedDiscoveryTests(unittest.TestCase):
                     },
                 },
                 {
-                    "id": "solana_MINT_A",
+                    "id": "solana_MINTA",
                     "attributes": {
-                        "address": "MINT_A",
+                        "address": "MINTA",
                         "name": "Duplicate",
                         "symbol": "DUP",
                     },
@@ -45,7 +45,7 @@ class GeckoRecentlyUpdatedDiscoveryTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.args[0], gecko_scanner.RECENTLY_UPDATED_URL)
         self.assertEqual(fetch.call_args.kwargs["params"], {"network": "solana"})
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["tokenAddress"], "MINT_A")
+        self.assertEqual(result[0]["tokenAddress"], "MINTA")
         self.assertEqual(result[0]["discovery_sources"], ["geckoterminal_recently_updated"])
         self.assertEqual(result[0]["name"], "Token A")
         self.assertEqual(result[0]["symbol"], "TKA")
