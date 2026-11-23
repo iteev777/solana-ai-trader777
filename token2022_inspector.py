@@ -390,3 +390,29 @@ def inspect_token2022_mint(mint):
         "signing": "NOT_PERFORMED",
         "broadcast": "NOT_PERFORMED",
     }
+
+
+def conservative_transfer_fee_for_amount(config, amount):
+    """Return the larger fee charged by either epoch schedule for this amount.
+
+    The schedule with the larger basis-point rate is not always the more
+    conservative one because each schedule also has an independent fee cap.
+    Compare the actual rounded-and-capped fee for the requested raw amount.
+    """
+    if config is None:
+        return 0
+    if not isinstance(config, dict):
+        raise ValueError("A decoded transfer-fee configuration is required")
+    fees = []
+    for name in ("older", "newer"):
+        schedule = config.get(name)
+        if not isinstance(schedule, dict):
+            raise ValueError("Both older and newer transfer-fee schedules are required")
+        fees.append(transfer_fee_for_amount(schedule, amount))
+    return max(fees)
+
+
+def conservative_net_amount(config, amount):
+    """Return a safe lower bound for the amount received after transfer fees."""
+    fee = conservative_transfer_fee_for_amount(config, amount)
+    return amount - fee
