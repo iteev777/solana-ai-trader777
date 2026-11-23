@@ -32,6 +32,7 @@ NATIVE_BUILDERS = {
     "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap", "simulate_pumpswap_v2_transaction"),
     "orca_whirlpool": ("orca_whirlpool_builder", "build_orca_whirlpool_swap", "simulate_orca_whirlpool_transaction"),
     "meteora_dlmm": ("meteora_dlmm_builder", "build_meteora_dlmm_swap", "simulate_meteora_dlmm_transaction"),
+    "meteora_dbc": ("meteora_dbc_builder", "build_meteora_dbc_swap", "simulate_meteora_dbc_transaction"),
 }
 
 
