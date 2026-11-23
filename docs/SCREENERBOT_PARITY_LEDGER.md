@@ -33,7 +33,8 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 2. Inspect the complete reference and Trojan implementation plus relevant tests before changing a module.
 3. Implement independently in Trojan's existing Python architecture. ScreenerBot's repository identifies itself as BUSL-1.1; do not copy or adapt its source text or code.
 4. Preserve existing Trojan behavior unless a verified defect or parity gap justifies a change.
-5. Every code change must include a complete-file replacement in the working record, a commit headline, focused tests and full validation.
+5. Every code change must preserve a complete-file replacement record and a Git commit headline. **Do not run focused tests, subsystem tests, or full validation after individual changes.** Record relevant test cases and edge cases as pending; run the focused suite and full validation only once the complete bot-wide file and feature audit/implementation is finished. Previously recorded test results are historical and must not be presented as new validation for current changes.
+
 6. A module is not complete merely because a test passes. Record feature coverage, edge cases, failure handling and integration status.
 7. Keep real-money execution locked. This audit and its tests must remain paper/simulation-only.
 8. Every tracked file in both trees must receive an inventory disposition. Non-code assets, generated files and platform-specific files still need a disposition even if they do not require a Trojan code counterpart.
