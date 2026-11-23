@@ -9,6 +9,7 @@ import risk_manager as risk
 # ==========================================
 
 LIVE_TRADING_ENABLED = False
+LIVE_EXECUTION_HARD_LOCK = True
 
 TRADING_MODES = {
     "paper": {
@@ -17,7 +18,9 @@ TRADING_MODES = {
     },
     "live": {
         "enabled": True,
-        "description": "Shadow signals only - execution locked"
+        "execution_enabled": False,
+        "execution_locked": True,
+        "description": "Shadow signals only - execution hard-locked"
     }
 }
 
@@ -39,11 +42,12 @@ def valid_price(price):
 
 
 def valid_token_address(token_address):
-
-    return (
-        isinstance(token_address, str)
-        and bool(token_address.strip())
-    )
+    """Require a canonical 32-byte Solana mint before any risk or DB lookup."""
+    try:
+        from market_data import valid_address
+        return valid_address(token_address)
+    except Exception:
+        return False
 
 
 # ==========================================
@@ -67,8 +71,8 @@ def is_mode_enabled(mode):
 
 
 def is_live_execution_enabled():
-
-    return LIVE_TRADING_ENABLED
+    # The manager cannot unlock real execution during the current project phase.
+    return bool(LIVE_TRADING_ENABLED) and not LIVE_EXECUTION_HARD_LOCK
 
 
 def get_engine(mode):
@@ -393,14 +397,24 @@ def get_all_stats():
 # STATUS
 # ==========================================
 
-def get_manager_status():
+def get_execution_status():
+    return {
+        "mode": "SHADOW_ONLY",
+        "execution_enabled": is_live_execution_enabled(),
+        "hard_lock": LIVE_EXECUTION_HARD_LOCK,
+        "unlock_policy": "CODE_CHANGE_AFTER_EXPLICIT_PHASE_5_APPROVAL",
+    }
 
+
+def get_manager_status():
     return {
         "modes": get_available_modes(),
         "paper": get_account_summary("paper"),
         "live": get_account_summary("live"),
         "risk": risk.get_risk_summary(),
-        "live_execution": LIVE_TRADING_ENABLED
+        "live_execution": is_live_execution_enabled(),
+        "live_execution_hard_lock": LIVE_EXECUTION_HARD_LOCK,
+        "execution": get_execution_status(),
     }
 
 
