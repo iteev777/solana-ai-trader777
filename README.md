@@ -364,3 +364,10 @@ Moonit direct quotes are read-only and limited to the verified ConstantProductV1
 
 
 
+
+## RugCheck holder and liquidity-lock controls
+
+The RugCheck analyzer supports an optional unique-holder floor with `TROJAN_RUGCHECK_MIN_HOLDERS`. When enabled, missing, zero, negative or fractional holder counts produce an UNKNOWN security result rather than passing. A reported count below the floor is rejected.
+
+LP-lock requirements can be configured separately: `TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT` for Pump-family tokens and `TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT` for other token types. The older `TROJAN_RUGCHECK_MIN_LP_LOCK_PCT` remains the fallback for Pump-family tokens. If a configured LP-lock floor cannot be verified from the RugCheck report, the security result is UNKNOWN. The report exposes the observed lock, required floor and holder count in its structured signals.
+
