@@ -4,7 +4,7 @@ A quote adapter is not a transaction builder. A builder is not proof of live
 execution. This registry keeps those capabilities separate in API/dashboard
 status and defaults unknown protocols to unsupported.
 """
-import importlib.util
+import importlib
 
 
 QUOTE_ADAPTERS = {
@@ -22,25 +22,22 @@ QUOTE_ADAPTERS = {
 }
 
 NATIVE_BUILDERS = {
-    "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_swap"),
-    "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap"),
+    "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_swap", "simulate_raydium_cpmm_transaction"),
+    "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap", "simulate_pumpswap_v2_transaction"),
 }
 
 
-def _module_present(module_name):
-    try:
-        return importlib.util.find_spec(module_name) is not None
-    except (ImportError, ModuleNotFoundError, ValueError):
-        return False
-
-
 def _capability(module_name, function_name):
-    present = _module_present(module_name)
+    try:
+        module = importlib.import_module(module_name)
+        present = callable(getattr(module, function_name, None))
+    except (ImportError, ModuleNotFoundError, AttributeError, ValueError):
+        present = False
     return {
         "available": present,
         "module": module_name,
         "entrypoint": function_name,
-        "status": "IMPLEMENTED_MODULE_PRESENT" if present else "UNAVAILABLE_MODULE_MISSING",
+        "status": "ENTRYPOINT_AVAILABLE" if present else "UNAVAILABLE_ENTRYPOINT_MISSING",
     }
 
 
@@ -63,8 +60,9 @@ def get_dex_capabilities(decoded_protocols=None):
             "live_execution": False,
         }
 
-    for name, (module, function) in NATIVE_BUILDERS.items():
+    for name, (module, function, simulation_function) in NATIVE_BUILDERS.items():
         builder = _capability(module, function)
+        simulation = _capability(module, simulation_function)
         protocol_name = "pumpswap" if name == "pumpswap_v2" else name
         entry = protocols.setdefault(protocol_name, {
             "pool_decoder_available": protocol_name in decoded,
