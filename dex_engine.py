@@ -10,13 +10,31 @@ import os
 import time
 
 
-MAX_ROUTE_AGE_SECONDS = min(
-    30.0, max(1.0, float(os.getenv("TROJAN_DEX_MAX_QUOTE_AGE_SECONDS", "8")))
+def _bounded_env_float(name, default, minimum, maximum):
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+    if not math.isfinite(value):
+        return float(default)
+    return min(float(maximum), max(float(minimum), value))
+
+
+def _bounded_env_int(name, default, minimum, maximum):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        return int(default)
+    return min(int(maximum), max(int(minimum), value))
+
+
+MAX_ROUTE_AGE_SECONDS = _bounded_env_float(
+    "TROJAN_DEX_MAX_QUOTE_AGE_SECONDS", 8.0, 1.0, 30.0
 )
-MAX_PRICE_IMPACT_PERCENT = min(
-    20.0, max(0.01, float(os.getenv("TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT", "3")))
+MAX_PRICE_IMPACT_PERCENT = _bounded_env_float(
+    "TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT", 3.0, 0.01, 20.0
 )
-MAX_ALLOWED_HOPS = min(8, max(1, int(os.getenv("TROJAN_DEX_MAX_HOPS", "4"))))
+MAX_ALLOWED_HOPS = _bounded_env_int("TROJAN_DEX_MAX_HOPS", 4, 1, 8)
 
 
 def _positive_int(value, name):
@@ -25,6 +43,8 @@ def _positive_int(value, name):
     try:
         number = int(value)
     except (TypeError, ValueError, OverflowError):
+        raise ValueError(name + " must be a positive integer")
+    if not isinstance(value, str) and value != number:
         raise ValueError(name + " must be a positive integer")
     if number <= 0:
         raise ValueError(name + " must be a positive integer")
@@ -96,9 +116,12 @@ def _candidate(provider_key, candidate, output_mint, now):
     hops = route.get("hops", route.get("hop_count"))
     if hops is not None:
         try:
-            hops = int(hops)
+            parsed_hops = int(hops)
         except (TypeError, ValueError, OverflowError):
             return None, ["INVALID_HOP_COUNT"]
+        if not isinstance(hops, str) and hops != parsed_hops:
+            return None, ["INVALID_HOP_COUNT"]
+        hops = parsed_hops
         if hops < 0 or hops > MAX_ALLOWED_HOPS:
             return None, ["HOP_COUNT_OUTSIDE_LIMIT"]
 
