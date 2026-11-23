@@ -354,3 +354,69 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
         "server_signed": False,
         "private_key_custody": False,
     }
+
+
+def get_native_swap_receipt(signature, output_account, output_mint,
+                            minimum_output, *, owner=None,
+                            output_is_native=False,
+                            commitment="confirmed"):
+    """Fetch a landed transaction and account its actual token output.
+
+    Confirmation is checked independently before getTransaction. The receipt
+    decoder distinguishes an exact destination-account delta from a fallback
+    to the chain-enforced minimum when RPC metadata cannot be attributed.
+    """
+    if commitment not in ("confirmed", "finalized"):
+        raise NativeExecutionRejected("Receipt commitment must be confirmed or finalized")
+    status = get_native_transaction_status(signature)
+    if status.get("status") == "FAILED":
+        raise NativeExecutionRejected("Cannot account a failed transaction")
+    if status.get("status") not in ("CONFIRMED", "FINALIZED"):
+        raise NativeExecutionRejected("Transaction is not yet confirmed")
+    if commitment == "finalized" and status.get("status") != "FINALIZED":
+        raise NativeExecutionRejected("Transaction is confirmed but not finalized")
+
+    try:
+        details = chain._rpc("getTransaction", [
+            signature,
+            {
+                "encoding": "jsonParsed",
+                "commitment": commitment,
+                "maxSupportedTransactionVersion": 0,
+            },
+        ])
+    except Exception as error:
+        raise NativeExecutionRejected(
+            "Could not retrieve confirmed transaction details: " + str(error)[:160]
+        )
+    if details is None:
+        raise NativeExecutionRejected(
+            "Confirmed transaction details are unavailable from this RPC"
+        )
+    try:
+        from swap_receipt import receipt_from_transaction
+        receipt = receipt_from_transaction(
+            signature,
+            details,
+            output_account,
+            output_mint,
+            minimum_output,
+            confirmed=True,
+            owner=owner,
+            output_is_native=output_is_native,
+        )
+    except (TypeError, ValueError) as error:
+        raise NativeExecutionRejected("Swap receipt could not be verified: " + str(error)[:200])
+    return {
+        "signature": signature,
+        "status": "CONFIRMED",
+        "output_mint": output_mint,
+        "output_account": output_account,
+        "received_amount": receipt.received,
+        "received_amount_exact": receipt.exact,
+        "minimum_output_amount": minimum_output,
+        "network_fee_lamports": receipt.network_fee_lamports,
+        "slot": receipt.slot,
+        "accounting": "EXACT_ONCHAIN_TOKEN_DELTA" if receipt.exact else "CHAIN_GUARANTEED_MINIMUM_ESTIMATE",
+        "source": "getTransaction.jsonParsed",
+    }
