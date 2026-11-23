@@ -79,7 +79,7 @@ class NativeExecutionTests(unittest.TestCase):
         approval = native.register_native_approval(
             self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
+        with patch.object(native, "_enabled", return_value=True):
             with self.assertRaises(native.NativeExecutionLocked):
                 native.execute_native_signed_transaction(
                     self.signed, approval["request_id"], confirmed=False
@@ -100,7 +100,7 @@ class NativeExecutionTests(unittest.TestCase):
                 return self.expected_signature
             raise AssertionError(method)
 
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
+        with patch.object(native, "_enabled", return_value=True), \
              patch.object(chain, "_rpc", side_effect=rpc) as mocked:
             result = native.execute_native_signed_transaction(
                 self.signed, approval["request_id"], confirmed=True
@@ -122,7 +122,7 @@ class NativeExecutionTests(unittest.TestCase):
                 return {"value": {"err": None}}
             if method == "sendTransaction":
                 return self.expected_signature
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
+        with patch.object(native, "_enabled", return_value=True), \
              patch.object(chain, "_rpc", side_effect=rpc):
             native.execute_native_signed_transaction(
                 self.signed, approval["request_id"], confirmed=True
@@ -138,7 +138,7 @@ class NativeExecutionTests(unittest.TestCase):
         )
         changed = bytearray(base64.b64decode(self.signed))
         changed[-1] ^= 1
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
+        with patch.object(native, "_enabled", return_value=True):
             with self.assertRaisesRegex(ValueError, "differs from the simulated approval"):
                 native.execute_native_signed_transaction(
                     base64.b64encode(changed).decode("ascii"),
@@ -150,7 +150,7 @@ class NativeExecutionTests(unittest.TestCase):
         approval = native.register_native_approval(
             self.unsigned, "raydium_cpmm", 100, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
+        with patch.object(native, "_enabled", return_value=True), \
              patch.object(chain, "_rpc", return_value=101):
             with self.assertRaisesRegex(ValueError, "blockhash has expired"):
                 native.execute_native_signed_transaction(
@@ -161,7 +161,7 @@ class NativeExecutionTests(unittest.TestCase):
         approval = native.register_native_approval(
             self.unsigned, "pumpswap", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}), \
+        with patch.object(native, "_enabled", return_value=True), \
              patch.object(chain, "_rpc", side_effect=[
                  150, {"value": {"err": {"InstructionError": [0, "Custom"]}}}
              ]) as rpc:
@@ -175,7 +175,7 @@ class NativeExecutionTests(unittest.TestCase):
         approval = native.register_native_approval(
             self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
         )
-        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
+        with patch.object(native, "_enabled", return_value=True):
             with self.assertRaisesRegex(ValueError, "signature is missing"):
                 native.execute_native_signed_transaction(
                     self.unsigned, approval["request_id"], confirmed=True
@@ -203,6 +203,18 @@ class NativeExecutionTests(unittest.TestCase):
     def test_signature_status_rejects_invalid_signature(self):
         with self.assertRaisesRegex(ValueError, "64 bytes"):
             native.get_native_transaction_status("1")
+
+    def test_environment_variable_cannot_remove_code_level_broadcast_lock(self):
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
+            status = native.get_native_execution_status()
+            self.assertTrue(status["code_hard_lock"])
+            self.assertTrue(status["unlock_requires_reviewed_code_release"])
+            self.assertFalse(status["enabled"])
+            self.assertFalse(status["broadcast_available"])
+            with self.assertRaises(native.NativeExecutionLocked):
+                native.execute_native_signed_transaction(
+                    self.signed, "nonexistent-request", confirmed=True
+                )
 
     def test_status_reports_live_execution_locked_by_default(self):
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
