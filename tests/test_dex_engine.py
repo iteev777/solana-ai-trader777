@@ -251,6 +251,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertEqual(status["pool_discovery"]["max_candidates_per_pair"], 20)
         self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["available"])
         self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_required"])
+        self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_available"])
         self.assertFalse(status["native_transaction_builders"]["raydium_cpmm"]["live_execution"])
         self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["available"])
         self.assertTrue(status["native_transaction_builders"]["pumpswap_v2"]["rpc_simulation_required"])
@@ -258,6 +259,28 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
     @patch("dex_engine.build_routes")
+    def test_dashboard_does_not_claim_simulation_available_without_entrypoint(self):
+        capability_report = {
+            "protocols": {
+                "raydium_cpmm": {
+                    "transaction_builder": {"available": True},
+                    "simulation": {"available": False},
+                },
+                "pumpswap": {
+                    "transaction_builder": {"available": True},
+                    "simulation": {"available": True},
+                },
+            },
+            "quote_adapter_count": 0,
+            "native_builder_count": 2,
+            "execution_policy": "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED",
+        }
+        with patch("solana_onchain.get_onchain_status", return_value={"supported_protocols": ["raydium_cpmm"]}), patch("route_comparison.get_router_status", return_value={}), patch("dex_capabilities.get_dex_capabilities", return_value=capability_report):
+            status = dex_engine.get_engine_status()
+        self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["available"])
+        self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_required"])
+        self.assertFalse(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_available"])
+
     def test_dashboard_compatibility_accepts_comma_separated_pool_list(self, build):
         build.return_value = {"execution": "LOCKED"}
         result = dex_engine.build_route(
