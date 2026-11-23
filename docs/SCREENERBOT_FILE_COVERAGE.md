@@ -1251,7 +1251,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/paths/platform.rs` | PENDING |  |
 | `src/pools/api.rs` | PENDING |  |
 | `src/pools/cache.rs` | PENDING |  |
-| `src/pools/database/blacklist.rs` | PENDING |  |
+| `src/pools/database/blacklist.rs` | MAPPED | `blacklist.py`, `pool_analysis.py`, `pool_registry.py` | Trojan has persistent pool/account denylist and transient retry quarantine; reference additionally counts failures and applies TTL policies to account/pool blacklisting. Full mapping remains partial. |
 | `src/pools/database/column_names.rs` | PENDING |  |
 | `src/pools/database/global.rs` | PENDING |  |
 | `src/pools/database/migrations.rs` | PENDING |  |
@@ -1498,7 +1498,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/tokens/database/async_api.rs` | PENDING |  |
 | `src/tokens/database/authority.rs` | PENDING |  |
 | `src/tokens/database/authority_tests.rs` | PENDING |  |
-| `src/tokens/database/blacklist.rs` | PENDING |  |
+| `src/tokens/database/blacklist.rs` | MAPPED | `blacklist.py`, `database.py` | Trojan persistent typed blacklist maps to token entries; missing reference user-cleared suppression, source-strength precedence and chain-scoped token rows. Trojan supports pool/account entries beyond this token DB module. |
 | `src/tokens/database/blacklist_tests.rs` | PENDING |  |
 | `src/tokens/database/helpers.rs` | PENDING |  |
 | `src/tokens/database/market.rs` | PENDING |  |
@@ -1662,7 +1662,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/paper/types.rs` | PENDING |  |
 | `src/trader/paper/types/tests.rs` | PENDING |  |
 | `src/trader/policy.rs` | PARTIAL | Trojan `position_policy.py`, `exit_policy.py` | Compared DCA config snapshot fields and exit-policy ownership concept; full policy file and all policy types remain open. |
-| `src/trader/safety/blacklist.rs` | PENDING |  |
+| `src/trader/safety/blacklist.rs` | MAPPED | `blacklist.py`, `main.py`, `exit_policy.py` | Trojan checks token/pool/account blacklists before entry, but no verified emergency blacklist-triggered position exit equivalent to the reference safety evaluator. |
 | `src/trader/safety/cooldown.rs` | PENDING |  |
 | `src/trader/safety/limits.rs` | PENDING |  |
 | `src/trader/safety/loss_limit.rs` | PENDING |  |
