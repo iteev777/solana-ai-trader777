@@ -58,10 +58,13 @@ def _validate_global_config(account):
     recipients = [recipient for recipient in recipients if recipient != chain.DEFAULT_PUBKEY]
     if not recipients:
         raise ValueError("PumpSwap GlobalConfig has no configured buyback fee recipients")
+    buyback_basis_points = chain._u64(raw, 899)
+    if buyback_basis_points > 10_000:
+        raise ValueError("PumpSwap buyback basis points are invalid")
     return {
         "disable_flags": raw[56],
         "buyback_fee_recipients": recipients,
-        "buyback_basis_points": chain._u64(raw, 899),
+        "buyback_basis_points": buyback_basis_points,
     }
 
 
@@ -202,6 +205,14 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
             or snapshot_global_state["buyback_basis_points"] != global_state["buyback_basis_points"]):
         raise ValueError("PumpSwap buyback fee configuration changed during transaction preparation")
     global_state = snapshot_global_state
+    if user_volume_acc is not None:
+        if user_volume_acc.get("owner") != PUMPSWAP_PROGRAM_ID:
+            raise ValueError("Existing user volume accumulator is not owned by PumpSwap")
+        volume_raw = user_volume_acc.get("data", b"")
+        if (len(volume_raw) < 41
+                or volume_raw[:8] != bytes([86, 255, 112, 14, 102, 53, 154, 250])
+                or chain._key(volume_raw, 8) != wallet):
+            raise ValueError("Existing user volume accumulator has an invalid owner or layout")
     if global_state["disable_flags"] & ((1 << 3) if is_buy else (1 << 4)):
         raise ValueError("PumpSwap buy or sell instruction is disabled by GlobalConfig")
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM_ID:
@@ -302,6 +313,7 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         "buyback_fee_recipient": selected_buyback[0],
         "buyback_fee_recipient_ata": selected_buyback[1],
         "account_keys": account_keys,
+        "instruction_data_base64": base64.b64encode(instruction_data).decode("ascii"),
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
