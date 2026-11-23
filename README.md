@@ -421,3 +421,6 @@ Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, 
 ## Orca Whirlpool direct quote adapter
 
 The read-only Orca Whirlpool adapter uses the pool fee_rate and the same integer Q64.64 concentrated-liquidity step math as Raydium CLMM, with Orca's distinct 88-tick fixed-array layout and decimal-string tick-array PDA seeds. It reads the pool, vaults, legacy SPL mints, optional oracle and direction-specific tick-array sequence at one confirmed RPC slot. Active adaptive-fee oracles, DynamicTickArray layouts and Token-2022 mints are refused. An absent fixed tick array is treated as an empty sequence element; quotes are capped at the derived sequence boundary. No transaction is built or signed.
+
+
+Orca Whirlpool direct quotes are limited to classic fixed `TickArray` accounts with static fee tiers. Adaptive fee tiers are rejected using the on-chain `fee_tier_index` relationship and any present adaptive-fee Oracle PDA; static swap and protocol fee rates are bounded before quote math. Dynamic tick arrays and Token-2022 mints remain unsupported and fail closed.
