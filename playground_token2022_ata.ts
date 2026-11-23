@@ -84,26 +84,8 @@ async function main() {
 
   const rentLamports =
     await connection.getMinimumBalanceForRentExemption(EXPECTED_ATA_SIZE);
-  const fee = await connection.getFeeForMessage(
-    new Transaction().add(
-      new TransactionInstruction({
-        programId: ASSOCIATED_TOKEN_PROGRAM,
-        keys: [
-          { pubkey: payer, isSigner: true, isWritable: true },
-          { pubkey: ata, isSigner: false, isWritable: true },
-          { pubkey: payer, isSigner: false, isWritable: false },
-          { pubkey: MINT, isSigner: false, isWritable: false },
-          { pubkey: SYSTEM_PROGRAM, isSigner: false, isWritable: false },
-          { pubkey: TOKEN_2022_PROGRAM, isSigner: false, isWritable: false },
-        ],
-        data: Buffer.from([1]), // CreateIdempotent
-      }),
-    )
-      .compileMessage(),
-    "confirmed",
-  );
-
-  if (balance < rentLamports + (fee.value ?? 10_000)) {
+  // Keep a conservative fee margin in addition to the exact ATA rent.
+  if (balance < rentLamports + 100_000) {
     throw new Error(
       "Insufficient Devnet SOL for ATA rent and transaction fee. No transaction sent.",
     );
