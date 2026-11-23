@@ -281,3 +281,21 @@ def get_engine_status():
         "broadcast_available": False,
         "live_trading_ready": False,
     }
+
+
+
+def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
+    """Backward-compatible dashboard entry point; accepts one or many pools."""
+    if pool_address is None:
+        pools = []
+    elif isinstance(pool_address, str):
+        pools = [part.strip() for part in pool_address.split(",") if part.strip()]
+    elif isinstance(pool_address, (list, tuple)):
+        pools = list(pool_address)
+    else:
+        raise ValueError("pool_address must be a string or list")
+    return build_routes(
+        input_mint, output_mint, amount,
+        pool_addresses=pools,
+        slippage_bps=slippage_bps,
+    )
