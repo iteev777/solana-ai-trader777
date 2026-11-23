@@ -4,11 +4,63 @@ Concentration is explicitly account-authority concentration, not beneficial-owne
 concentration: pool vaults and custody accounts can dominate the largest accounts.
 """
 import time
+import os
+import copy
+import threading
+from collections import OrderedDict
 
 TOKEN_PROGRAMS = {
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
 }
+
+
+CACHE_TTL_SECONDS = 60.0
+MAX_CACHE_ENTRIES = 5_000
+_CACHE_WAIT_SECONDS = 30.0
+_cache = OrderedDict()
+_cache_lock = threading.RLock()
+_inflight = {}
+
+
+def _cache_ttl_seconds():
+    try:
+        value = float(os.getenv("TROJAN_TOKEN_SECURITY_CACHE_SECONDS", str(CACHE_TTL_SECONDS)))
+    except (TypeError, ValueError, OverflowError):
+        return CACHE_TTL_SECONDS
+    return value if 1.0 <= value <= 3600.0 else CACHE_TTL_SECONDS
+
+
+def clear_cache():
+    """Clear cached on-chain reports; in-flight RPC calls are allowed to finish."""
+    with _cache_lock:
+        _cache.clear()
+
+
+def get_cache_metrics():
+    with _cache_lock:
+        return {"entries": len(_cache), "inflight": len(_inflight), "max_entries": MAX_CACHE_ENTRIES}
+
+
+def _cached_report(key, now):
+    with _cache_lock:
+        item = _cache.get(key)
+        if item is None:
+            return None
+        cached_at, report = item
+        if now - cached_at >= _cache_ttl_seconds():
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return copy.deepcopy(report)
+
+
+def _store_report(key, report, now):
+    with _cache_lock:
+        _cache[key] = (now, copy.deepcopy(report))
+        _cache.move_to_end(key)
+        while len(_cache) > MAX_CACHE_ENTRIES:
+            _cache.popitem(last=False)
 
 
 def _pubkey(value, label, chain):
@@ -49,8 +101,41 @@ def get_token_security_report(mint, largest_limit=20):
     if not isinstance(mint, str) or not mint.strip():
         raise ValueError("Mint address is required")
     import solana_onchain as chain
-    _pubkey(mint, "Mint address", chain)
+    mint = _pubkey(mint.strip(), "Mint address", chain)
+    if isinstance(largest_limit, bool) or not isinstance(largest_limit, int):
+        raise ValueError("Largest-account limit must be an integer")
+    limit = max(1, min(largest_limit, 20))
+    key = (mint, limit)
 
+    while True:
+        cached = _cached_report(key, time.monotonic())
+        if cached is not None:
+            return cached
+        with _cache_lock:
+            event = _inflight.get(key)
+            if event is None:
+                event = threading.Event()
+                _inflight[key] = event
+                owner = True
+            else:
+                owner = False
+        if owner:
+            break
+        if not event.wait(_CACHE_WAIT_SECONDS):
+            raise TimeoutError("Timed out waiting for an in-flight token security lookup")
+
+    try:
+        report = _fetch_token_security_report(mint, limit)
+        _store_report(key, report, time.monotonic())
+        return copy.deepcopy(report)
+    finally:
+        with _cache_lock:
+            current = _inflight.pop(key, None)
+            if current is not None:
+                current.set()
+
+
+def _fetch_token_security_report(mint, limit):
     mint_result = chain._rpc(
         "getAccountInfo",
         [mint, {"encoding": "jsonParsed", "commitment": "confirmed"}]
@@ -73,10 +158,6 @@ def get_token_security_report(mint, largest_limit=20):
     decimals = parsed.get("decimals")
     if isinstance(decimals, bool) or not isinstance(decimals, int) or not 0 <= decimals <= 18:
         raise ValueError("Mint decimals are invalid")
-
-    if isinstance(largest_limit, bool) or not isinstance(largest_limit, int):
-        raise ValueError("Largest-account limit must be an integer")
-    limit = max(1, min(largest_limit, 20))
 
     supply_result = chain._rpc(
         "getTokenSupply", [mint, {"commitment": "confirmed"}]
