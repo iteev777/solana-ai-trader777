@@ -84,7 +84,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
 
     def call_builder(self, quote=None, account_map=None):
         account_map = account_map or self.account_map
-        with patch.object(chain, "_account", return_value=self.account_map[self.pool]), \
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=self.quote), \
+             patch.object(chain, "_account", return_value=self.account_map[self.pool]), \
              patch.object(chain, "_decode_pool", wraps=chain._decode_pool), \
              patch.object(chain, "_find_program_address", side_effect=[
                  (self.authority, 255), (self.observation, 254)
@@ -120,7 +121,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             self.call_builder(quote)
 
     def test_rejects_stale_quote_slot(self):
-        with patch.object(chain, "_account", return_value={"owner": builder.CPMM_PROGRAM_ID, "data": self.pool_raw}), \
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=self.quote), \
+             patch.object(chain, "_account", return_value={"owner": builder.CPMM_PROGRAM_ID, "data": self.pool_raw}), \
              patch.object(chain, "_decode_pool", wraps=chain._decode_pool), \
              patch.object(chain, "_find_program_address", side_effect=[
                  (self.authority, 255), (self.observation, 254)
@@ -159,6 +161,38 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "different CPMM pool"):
             self.call_builder(account_map=accounts)
+
+
+    def test_ignores_client_tampered_minimum_output_and_requotes(self):
+        tampered = dict(self.quote, minimum_out_amount=1)
+        result = self.call_builder(quote=tampered)
+        instruction_data = base64.b64decode(result["instruction_data_base64"])
+        self.assertEqual(struct.unpack("<QQ", instruction_data[8:]), (100, 80))
+
+    def test_simulation_requires_rpc_success(self):
+        tx = base64.b64encode(b"x" * 120).decode("ascii")
+        with patch.object(chain, "_rpc", return_value={"value": {
+            "err": None, "unitsConsumed": 55000, "logs": ["ok"]
+        }}) as rpc:
+            result = builder.simulate_raydium_cpmm_transaction(tx)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["units_consumed"], 55000)
+        self.assertEqual(rpc.call_args.args[0], "simulateTransaction")
+
+    def test_simulation_rejects_program_error(self):
+        tx = base64.b64encode(b"x" * 120).decode("ascii")
+        with patch.object(chain, "_rpc", return_value={"value": {
+            "err": {"InstructionError": [0, "Custom"]}, "logs": ["program failed"]
+        }}):
+            result = builder.simulate_raydium_cpmm_transaction(tx)
+        self.assertEqual(result["status"], "REJECT")
+        self.assertIsNotNone(result["error"])
+
+    def test_simulation_rejects_malformed_rpc_response(self):
+        tx = base64.b64encode(b"x" * 120).decode("ascii")
+        with patch.object(chain, "_rpc", return_value={"value": None}):
+            with self.assertRaisesRegex(ValueError, "malformed simulation"):
+                builder.simulate_raydium_cpmm_transaction(tx)
 
     def test_legacy_message_compiler_rejects_invalid_blockhash(self):
         with self.assertRaisesRegex(ValueError, "recent blockhash"):
