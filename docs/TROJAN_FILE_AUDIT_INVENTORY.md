@@ -144,7 +144,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_core_parity_learning.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_database_backup.py` | `src/database/backup.rs`, `recovery.rs`, `health.rs`, `schema/upgrade.rs` | TESTED | Tests cover online backup integrity, restore only in offline maintenance mode, emergency snapshot, path traversal, retention, invalid retention and DB health. Added future-schema downgrade refusal test (`de8e213`); Future-schema refusal regression passed in 1 084-test unit run `45260826090`. Reference has multi-store backup/quarantine/recovery and pre-upgrade snapshots. |
 | `tests/test_database_dashboard_api.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_database_ohlcv_integrity.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_database_ohlcv_integrity.py` | `src/ohlcvs/database/candles.rs`, `gaps.rs`, `retention.rs` | TESTED | Tests validate candle geometry, duplicate timestamp upsert, malformed rows, timeframe/limit guards and retention of only stale candles. Included in 1 084-test run `45260826090`; gap repair scheduler parity remains open. |
 | `tests/test_database_pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
@@ -180,7 +180,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_multi_window_market_filtering.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_native_dashboard_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_native_execution.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_new_persistence.py` | `src/ohlcvs/database/`, `src/strategies/database.rs`, `src/trader/copy/database/` | PARTIAL | Tests candle upsert/order, strategy config save/delete and copy signature dedupe. Detailed edge-case and failure injection comparison against reference DB tests still open. |
+| `tests/test_new_persistence.py` | `src/ohlcvs/database/`, `src/strategies/database.rs`, `src/trader/copy/database/` | TESTED | Tests candle upsert/order, strategy config save/delete and copy signature dedupe. Included in 1 084-test run `45260826090`; detailed failure-injection parity remains open. |
 | `tests/test_ohlcv_indicators.py` | `src/ohlcvs/` tests | TESTED | Verifies seven reference timeframes and persisted-history readiness/quality behavior; full validation `45254436959`.  |
 | `tests/test_ohlcv_integrity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_onchain_indicators.py` | Ei vielä kartoitettu | PENDING |  |
