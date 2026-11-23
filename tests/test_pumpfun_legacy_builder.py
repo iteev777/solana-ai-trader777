@@ -37,13 +37,36 @@ def _pump_key(value):
     return chain._b58encode(bytes([value]) * 32)
 
 
-def _pump_token_account(mint, owner, amount):
-    raw = bytearray(165)
+def _pump_token_account(mint, owner, amount, token_program=chain.TOKEN_PROGRAM,
+                        transfer_fee=False, immutable_owner=False):
+    raw = bytearray(182 if immutable_owner else (178 if transfer_fee else 165))
     raw[:32] = chain._b58decode(mint)
     raw[32:64] = chain._b58decode(owner)
     raw[64:72] = amount.to_bytes(8, "little")
     raw[108] = 1
-    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+    if transfer_fee:
+        raw[165] = 2
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (8).to_bytes(2, "little")
+    if immutable_owner:
+        raw[178:180] = (7).to_bytes(2, "little")
+        raw[180:182] = (0).to_bytes(2, "little")
+    return {"owner": token_program, "data": bytes(raw)}
+
+
+def _pump_token2022_mint():
+    from token2022_inspector import MINT_ACCOUNT_TYPE
+    raw = bytearray(166)
+    raw[44] = 6
+    raw[45] = 1
+    raw[165] = MINT_ACCOUNT_TYPE
+    config = bytearray(108)
+    config[80:88] = (10_000).to_bytes(8, "little")
+    config[88:90] = (100).to_bytes(2, "little")
+    config[98:106] = (10_000).to_bytes(8, "little")
+    config[106:108] = (100).to_bytes(2, "little")
+    raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+    return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
 
 
 def _pump_fee_config():
@@ -162,6 +185,7 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
             "token_total_supply": 1_000_000,
             "quote_mint": chain.DEFAULT_PUBKEY,
             "token_decimals": 6,
+            "token_program": chain.TOKEN_PROGRAM,
         }
 
     def build(self, quote=None, account_map=None, slot=657,
@@ -214,6 +238,38 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(tx[1:65], bytes(64))
         self.assertEqual(result["execution"], "LOCKED")
         self.assertFalse(result["live_trading_ready"])
+
+    def test_builds_token2022_buy_with_transfer_fee_aware_accounts(self):
+        accounts = dict(self.account_map)
+        self.curve_ata = chain._find_program_address(
+            [chain._b58decode(self.pool), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        self.user_ata = chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.mint)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        accounts.pop(next(k for k, v in accounts.items()
+                          if isinstance(v, dict) and v.get("owner") == chain.TOKEN_PROGRAM
+                          and v.get("data", b"")[:32] == chain._b58decode(self.mint)
+                          and v.get("data", b"")[32:64] == chain._b58decode(self.pool)), None)
+        accounts.pop(next(k for k, v in accounts.items()
+                          if isinstance(v, dict) and v.get("owner") == chain.TOKEN_PROGRAM
+                          and v.get("data", b"")[:32] == chain._b58decode(self.mint)
+                          and v.get("data", b"")[32:64] == chain._b58decode(self.wallet)), None)
+        accounts[self.mint] = _pump_token2022_mint()
+        accounts[self.curve_ata] = _pump_token_account(
+            self.mint, self.pool, 500_000, chain.TOKEN_2022_PROGRAM, transfer_fee=True
+        )
+        accounts[self.user_ata] = _pump_token_account(
+            self.mint, self.wallet, 1_000_000, chain.TOKEN_2022_PROGRAM,
+            transfer_fee=True, immutable_owner=True,
+        )
+        quote = dict(self.quote, token_program=chain.TOKEN_2022_PROGRAM)
+        result = self.build(quote, account_map=accounts)
+        self.assertEqual(result["token_program"], chain.TOKEN_2022_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(result["instruction_accounts"][8], chain.TOKEN_2022_PROGRAM)
 
     def test_builds_sell_with_exact_token_input_and_sell_account_order(self):
         quote = dict(self.quote, input_mint=self.mint, output_mint=chain.SOL_MINT)
