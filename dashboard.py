@@ -855,6 +855,32 @@ def api_pumpswap_v2_order():
         return jsonify({"error": "PumpSwap V2 native order failed", "detail": str(error)[:180]}), 502
 
 
+@app.post("/api/wallet-preflight")
+def api_wallet_preflight():
+    """Read-only confirmed-RPC wallet funding and token-account checks."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from wallet_preflight import preflight_wallet_swap
+        result = preflight_wallet_swap(
+            payload.get("wallet"),
+            payload.get("input_mint"),
+            payload.get("output_mint"),
+            payload.get("input_token_account"),
+            payload.get("output_token_account"),
+            payload.get("input_amount"),
+            payload.get("min_sol_reserve_lamports"),
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Wallet preflight failed", "detail": str(error)[:180]}), 502
+
+
 @app.get("/api/native-execution-status")
 def api_native_execution_status():
     from native_execution import get_native_execution_status
