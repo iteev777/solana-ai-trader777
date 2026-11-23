@@ -363,3 +363,24 @@ Token-2022 support is now implemented in the native Raydium CPMM and CLMM
 paths only. Other DEX venues retain their explicit legacy-only or unsupported
 checks until their own transfer-fee and account semantics are audited and
 covered by tests. Live signing and broadcasting remain disabled.
+
+
+## Token-2022 transfer-fee handling: Orca Whirlpool
+
+The native Orca quote path now applies the conservative Token-2022 transfer
+fee to the input before the Whirlpool tick walk and to the gross output after
+the walk. The resulting quote and slippage minimum represent the net amount
+received by the wallet. Transfer-hook and other unsupported mint extensions
+remain rejected, and the existing adaptive-fee oracle restrictions are
+unchanged.
+
+The native transaction builder selects the classic Swap instruction for
+legacy-only pools and SwapV2 when either side is Token-2022. For SwapV2 it
+includes both mint-specific token programs, the memo program, both mint
+accounts, and the None remaining-accounts option. It validates the fresh
+quote's token-program pair against the transaction snapshot and checks the
+Token-2022 account extensions. ScreenerBot's reference implementation notes
+that its SwapV2 discriminator/account flow has not been independently
+confirmed against a live mainnet transaction; Trojan's implementation is
+therefore test/simulation-only until a signed, non-broadcast devnet or
+controlled mainnet verification is performed.
