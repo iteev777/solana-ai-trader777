@@ -399,7 +399,8 @@ def analyze_rugcheck_report(data):
         creator_balance_number = get_number(creator_balance)
         token_supply_number = get_number(token_supply)
         if (creator_balance_number is None or token_supply_number is None
-                or token_supply_number <= 0 or creator_balance_number > token_supply_number):
+                or creator_balance_number < 0 or token_supply_number <= 0
+                or creator_balance_number > token_supply_number):
             unknown_risks += 1
             reasons.append("Creator balance or token supply is invalid")
         else:
