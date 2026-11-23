@@ -5,6 +5,8 @@ provider-specific variables: HELIUS_RPC_URL, QUICKNODE_RPC_URL,
 TRITON_RPC_URL and ALCHEMY_RPC_URL. Endpoint URLs are never logged or exposed.
 """
 import os
+import json
+import subprocess
 import threading
 import time
 from urllib.parse import urlparse
@@ -18,6 +20,43 @@ _guard = threading.RLock()
 _endpoint_locks = {}
 _state = {}
 _cursor = 0
+
+_rust_sidecars = {}
+_rust_sidecar_locks = {}
+_RUST_SIDECAR_BIN = os.getenv("TROJAN_RUST_RPC_BIN", "").strip()
+
+
+def _rust_rpc_call(url, method, params):
+    """Call the optional persistent Rust sidecar for batched account reads."""
+    if not _RUST_SIDECAR_BIN or method != "getMultipleAccounts":
+        raise RuntimeError("Rust RPC sidecar is not enabled for this method")
+    with _guard:
+        process = _rust_sidecars.get(url)
+        lock = _rust_sidecar_locks.setdefault(url, threading.Lock())
+        if process is None or process.poll() is not None:
+            process = subprocess.Popen(
+                [_RUST_SIDECAR_BIN], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, bufsize=1,
+            )
+            _rust_sidecars[url] = process
+    with lock:
+        if process.poll() is not None:
+            raise RuntimeError("Rust RPC sidecar exited")
+        request = json.dumps(
+            {"url": url, "method": method, "params": params},
+            separators=(",", ":"),
+        )
+        process.stdin.write(request + "\\n")
+        process.stdin.flush()
+        line = process.stdout.readline()
+        if not line:
+            raise RuntimeError("Rust RPC sidecar closed its output")
+        payload = json.loads(line)
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            message = payload.get("error", "Rust RPC sidecar request failed")
+            raise RuntimeError(str(message)[:200])
+        return payload.get("result")
 
 
 def _urls():
@@ -92,6 +131,17 @@ def rpc_call(method, params):
                 time.sleep(wait)
             started = time.monotonic()
             try:
+                if _RUST_SIDECAR_BIN and method == "getMultipleAccounts":
+                    try:
+                        payload_result = _rust_rpc_call(url, method, params)
+                        state["successes"] += 1
+                        state["last_latency_ms"] = round((time.monotonic() - started) * 1000, 1)
+                        state["last_error"] = None
+                        state["next_request"] = time.monotonic() + _MIN_INTERVAL
+                        return payload_result
+                    except Exception as rust_error:
+                        # Preserve the normal endpoint failover path if the helper is unhealthy.
+                        state["last_error"] = "Rust sidecar fallback: " + type(rust_error).__name__
                 response = requests.post(
                     url,
                     json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
