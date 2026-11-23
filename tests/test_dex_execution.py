@@ -158,12 +158,66 @@ class DexExecutionTests(unittest.TestCase):
         ), patch.object(
             dex_execution, "_simulate_transaction",
             return_value={"status": "PASS", "signed": False, "broadcast": False},
+        ), patch.object(
+            dex_execution, "_inspect_order_mints",
+            return_value={"status": "PASS", "context_slot": 123, "mints": []},
         ):
             result = self._create_order(simulate=True)
 
         self.assertEqual(result["simulation"]["status"], "PASS")
         self.assertTrue(result["execution_eligible"])
         self.assertIn("req-123", dex_execution._simulated_orders)
+
+    def test_token2022_mints_are_checked_in_one_confirmed_snapshot(self):
+        import solana_onchain
+        raw = bytearray(166)
+        raw[45] = 1
+        raw[165] = 1
+        accounts = [
+            {"owner": solana_onchain.TOKEN_2022_PROGRAM, "data": bytes(raw)},
+            {"owner": solana_onchain.TOKEN_PROGRAM,
+             "data": bytes(bytearray(82)[:45] + bytearray([1]) + bytearray(36))},
+        ]
+        with patch.object(solana_onchain, "RPC_URL", "https://rpc.invalid"), patch.object(
+            solana_onchain, "_multiple_accounts_with_context",
+            return_value=(accounts, 456),
+        ):
+            result = dex_execution._inspect_order_mints(self.input_mint, self.output_mint)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["context_slot"], 456)
+        self.assertEqual(result["mints"][0]["token_program"], solana_onchain.TOKEN_2022_PROGRAM)
+
+    def test_jupiter_mint_preflight_rejects_unsupported_token2022_extensions(self):
+        import solana_onchain
+        raw = bytearray(166)
+        raw[45] = 1
+        raw[165] = 1
+        raw.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
+        accounts = [
+            {"owner": solana_onchain.TOKEN_2022_PROGRAM, "data": bytes(raw)},
+            {"owner": solana_onchain.TOKEN_PROGRAM, "data": bytes(82)},
+        ]
+        with patch.object(solana_onchain, "RPC_URL", "https://rpc.invalid"), patch.object(
+            solana_onchain, "_multiple_accounts_with_context",
+            return_value=(accounts, 457),
+        ):
+            with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
+                dex_execution._inspect_order_mints(self.input_mint, self.output_mint)
+
+    def test_simulation_pass_without_confirmed_mint_validation_is_not_eligible(self):
+        with patch.object(
+            dex_execution.requests, "get",
+            return_value=FakeResponse(self._order_payload()),
+        ), patch.object(
+            dex_execution, "_simulate_transaction",
+            return_value={"status": "PASS", "signed": False, "broadcast": False},
+        ), patch.object(
+            dex_execution, "_inspect_order_mints",
+            return_value={"status": "NOT_CHECKED", "reason": "SOLANA_RPC_NOT_CONFIGURED"},
+        ):
+            result = self._create_order(simulate=True)
+        self.assertEqual(result["simulation"]["status"], "FAIL")
+        self.assertFalse(result["execution_eligible"])
 
     def test_execute_rejects_order_without_successful_simulation(self):
         with patch.object(dex_execution, "EXECUTE_ENABLED", True):
