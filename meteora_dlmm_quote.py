@@ -339,7 +339,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["reserve_x"], first["reserve_y"],
         first["mint_x"], first["mint_y"], CLOCK_SYSVAR, bitmap_address,
     ] + array_addresses
-    snapshot_started = time.time()
+    snapshot_started = time.monotonic()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Meteora DLMM confirmed snapshot has an incomplete account list")
@@ -412,7 +412,7 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Meteora DLMM price impact is invalid")
-    age = time.time() - snapshot_started
+    age = time.monotonic() - snapshot_started
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DLMM confirmed snapshot is stale")
 
