@@ -122,11 +122,11 @@ def get_position_limit(strategy):
 # ==========================================
 
 def _check_history_guards(token_address, mode):
-    """Fail closed on rolling realized-loss and per-token re-entry guards."""
-    if token_address is None:
-        return True, None
-    if not isinstance(token_address, str) or not token_address.strip():
-        return False, "INVALID TOKEN ADDRESS FOR HISTORY GUARDS"
+    """Fail closed on rolling realized-loss and per-token re-entry guards.
+
+    The portfolio-wide loss guard must run even when a caller has no mint
+    context. Only the token-specific cooldown may be skipped in that case.
+    """
     if mode not in ("paper", "live"):
         return False, "INVALID TRADING MODE FOR HISTORY GUARDS"
     try:
@@ -140,6 +140,12 @@ def _check_history_guards(token_address, mode):
         return False, "PERIOD LOSS HISTORY INVALID"
     if float(period_loss) >= MAX_PERIOD_LOSS:
         return False, "ROLLING PERIOD LOSS LIMIT REACHED"
+
+    # A missing mint cannot be used to bypass the account-wide loss limit.
+    if token_address is None:
+        return True, None
+    if not isinstance(token_address, str) or not token_address.strip():
+        return False, "INVALID TOKEN ADDRESS FOR HISTORY GUARDS"
 
     if REENTRY_COOLDOWN_MINUTES > 0:
         try:
