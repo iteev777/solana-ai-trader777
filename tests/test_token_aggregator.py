@@ -72,6 +72,8 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         self.assertEqual(names, ["geckoterminal_new_pools", "geckoterminal_trending_pools"])
 
     def test_birdeye_meme_listing_and_token_list_have_independent_switches(self):
+        with patch.dict(os.environ, {"TROJAN_BIRDEYE_MEME_LISTING_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._birdeye_meme_scanners_from_env(), [])
         with patch.dict(os.environ, {"TROJAN_PUMPFUN_ENABLED": "false"}, clear=True):
             self.assertEqual(aggregator._birdeye_meme_scanners_from_env(), [])
         with patch.dict(os.environ, {"TROJAN_BIRDEYE_ENABLED": "0"}, clear=True):
@@ -89,6 +91,10 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         self.assertEqual(aggregator._provider_family("birdeye_meme_listing"), "birdeye")
         self.assertEqual(aggregator._provider_family("pumpfun"), "birdeye")
         self.assertEqual(aggregator._provider_family("pumpfun_curve"), "birdeye")
+        self.assertEqual(
+            len({aggregator._provider_family(name) for name in ("birdeye", "birdeye_meme_listing")}),
+            1,
+        )
 
     def test_discovered_candidates_are_persisted_with_source_provenance(self):
         mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -168,7 +174,7 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         self.assertEqual(token["volume"], {"m5": 120, "h1": 850})
         self.assertEqual(token["website"], "https://example.invalid")
         self.assertEqual(set(token["discovery_sources"]), {
-            "geckoterminal_new_pools", "pumpfun"
+            "geckoterminal_new_pools", "birdeye_meme_listing"
         })
         status = aggregator.get_discovery_status()
         self.assertEqual(status["independent_provider_count"], 2)
