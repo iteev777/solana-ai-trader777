@@ -23,7 +23,7 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(
             [row["stage"] for row in result["decisions"]],
-            ["metadata", "onchain", "market", "age", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
+            ["metadata", "age", "onchain", "market", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
         )
 
     def test_numeric_symbol_is_rejected(self):
