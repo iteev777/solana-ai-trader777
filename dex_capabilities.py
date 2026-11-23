@@ -23,6 +23,7 @@ QUOTE_ADAPTERS = {
 
 NATIVE_BUILDERS = {
     "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_swap", "simulate_raydium_cpmm_transaction"),
+    "raydium_clmm": ("raydium_clmm_builder", "build_raydium_clmm_swap", "simulate_raydium_clmm_transaction"),
     "raydium_amm_v4": ("raydium_amm_v4_builder", "build_raydium_amm_v4_swap", "simulate_raydium_amm_v4_transaction"),
     "fluxbeam_amm": ("fluxbeam_builder", "build_fluxbeam_swap", "simulate_fluxbeam_transaction"),
     "moonit_amm": ("moonit_builder", "build_moonit_swap", "simulate_moonit_transaction"),
