@@ -455,3 +455,21 @@ actual token program, validates their extension-aware account layouts, and
 places that token program in the instruction's token-program account slot. SOL
 remains the native system-account side; the builder does not create accounts,
 sign, or broadcast.
+
+
+## Token-2022 transfer-fee handling: Meteora DBC
+
+The native Meteora DBC quote and Swap builder now support the audited
+Token-2022 transfer-fee subset for flat-fee, non-migrated VirtualPools. The
+input transfer fee is applied before the piecewise curve walk; the DBC pool
+fee is then charged on its configured input or output side; and the output
+transfer fee is applied after any output-side DBC fee. The quoted output and
+slippage minimum are the net wallet-received amount.
+
+The builder validates both mint programs, the fixed DBC pool-authority vaults,
+Token-2022 account extensions and canonical ATAs using each mint's own token
+program. Both mint-specific token-program accounts are passed in the Swap
+instruction. Transfer-hook pools and unsupported mint extensions remain
+blocked. Existing flat-fee and non-migrated pool restrictions are unchanged;
+this does not imply support for all DBC scheduler/dynamic-fee modes. Signing and
+broadcasting remain disabled.
