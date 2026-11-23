@@ -334,3 +334,6 @@ The read-only direct quote router now recognises PumpSwap pools from the on-chai
 
 The current adapter deliberately uses the highest total fee found across the on-chain flat, standard-tier, stable-tier and exotic fee entries. This conservative policy avoids assuming an unverified pool classification or a cheaper market-cap tier, but can understate the output of pools whose actual fee tier is lower. Token-2022, cashback pools and holder-reward pools remain refused until their extra token/fee behavior is independently modelled. This is a quote-only adapter: signing, transaction construction and broadcast remain disabled.
 
+
+
+The fee ceiling includes both the Pump Fees schedules and the PumpSwap GlobalConfig flat rates. Third-party pools without a coin-creator account do not incur a creator-fee component. Buy math retains the program's one-raw-unit rounding buffer, and sell payouts are capped by the real quote vault even when positive virtual reserves increase the pricing reserve. Mayhem-mode and truncated pool layouts are refused. Regression tests cover these cases.
