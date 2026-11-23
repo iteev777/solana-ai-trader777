@@ -4,6 +4,8 @@ import time
 import math
 import re
 import threading
+
+from solders.pubkey import Pubkey
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
@@ -12,7 +14,8 @@ from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
 from discovery.screenerbot_sources import (
     scan_rugcheck_new, scan_rugcheck_recent, scan_rugcheck_trending,
-    scan_rugcheck_verified, scan_jupiter, scan_coingecko, scan_defillama,
+    scan_rugcheck_verified, scan_jupiter_recent, scan_jupiter_organic,
+    scan_jupiter_traded, scan_jupiter_trending, scan_coingecko, scan_defillama,
 )
 import database
 
@@ -63,12 +66,15 @@ SCANNERS = [
     ("birdeye", scan_birdeye),
     *_dexscreener_scanners_from_env(),
     *_rugcheck_scanners_from_env(),
-    ("jupiter", scan_jupiter),
+    ("jupiter_recent", scan_jupiter_recent),
+    ("jupiter_organic", scan_jupiter_organic),
+    ("jupiter_traded", scan_jupiter_traded),
+    ("jupiter_trending", scan_jupiter_trending),
     ("coingecko", scan_coingecko),
     ("defillama", scan_defillama),
 ]
 MAX_RESULTS = 500
-MAX_WORKERS = min(12, len(SCANNERS))
+MAX_WORKERS = max(1, len(SCANNERS))
 _aggregator_lock = threading.Lock()
 _last_source_stats = {}
 _source_history = {}
@@ -272,6 +278,11 @@ def normalize_token(token):
     if chain.lower().strip() != "solana":
         return None
     if not BASE58_MINT_RE.fullmatch(address):
+        return None
+    try:
+        if len(bytes(Pubkey.from_string(address))) != 32:
+            return None
+    except (ValueError, TypeError):
         return None
     if address in SOLANA_NON_DISCOVERY_ASSETS:
         return None
