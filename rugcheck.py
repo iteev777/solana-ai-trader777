@@ -55,13 +55,16 @@ def get_authority_status(data, authority_name):
 
     value = data[authority_name]
 
-    if value is None or value is False or value == "":
+    if value is None or value is False:
         return "DISABLED"
 
-    if value is True:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "none", "null", "false", "0", "no", "off", "disabled", "revoked"}:
+            return "DISABLED"
         return "ACTIVE"
 
-    if isinstance(value, str):
+    if value is True:
         return "ACTIVE"
 
     return "UNKNOWN"
