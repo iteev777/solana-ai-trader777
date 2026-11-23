@@ -371,3 +371,6 @@ The RugCheck analyzer supports an optional unique-holder floor with `TROJAN_RUGC
 
 LP-lock requirements can be configured separately: `TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT` for Pump-family tokens and `TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT` for other token types. The older `TROJAN_RUGCHECK_MIN_LP_LOCK_PCT` remains the fallback for Pump-family tokens. If a configured LP-lock floor cannot be verified from the RugCheck report, the security result is UNKNOWN. The report exposes the observed lock, required floor and holder count in its structured signals.
 
+
+
+RugCheck also supports `TROJAN_RUGCHECK_MIN_LP_PROVIDERS` for a minimum reported LP-provider count, `TROJAN_RUGCHECK_BLOCK_TRANSFER_FEE_TOKENS=true` to reject every positive transfer-fee percentage, and `TROJAN_RUGCHECK_REQUIRE_TRANSFER_FEE_DATA=true` to hold a candidate when that field is unavailable. Invalid negative or over-100% transfer-fee values are rejected; malformed present values remain UNKNOWN. These are optional policy gates and remain disabled unless explicitly configured.

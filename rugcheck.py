@@ -386,13 +386,36 @@ def analyze_rugcheck_report(data):
     transfer_fee_authority = _first_present(
         data.get("transferFeeAuthority"), transfer_fee.get("authority")
     )
-    if transfer_fee_pct is not None and transfer_fee_pct > 0:
-        if transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 10.0):
+    transfer_fee_raw = _first_present(
+        data.get("transferFeePct"), data.get("transfer_fee_pct"),
+        transfer_fee.get("pct"), transfer_fee.get("transferFeePct")
+    )
+    require_transfer_fee_data = (
+        os.getenv("TROJAN_RUGCHECK_REQUIRE_TRANSFER_FEE_DATA", "false").lower() == "true"
+    )
+    block_transfer_fee_tokens = (
+        os.getenv("TROJAN_RUGCHECK_BLOCK_TRANSFER_FEE_TOKENS", "false").lower() == "true"
+    )
+    if transfer_fee_raw is not None and transfer_fee_pct is None:
+        unknown_risks += 1
+        reasons.append("Transfer fee percentage is present but invalid")
+    elif transfer_fee_pct is None and require_transfer_fee_data:
+        unknown_risks += 1
+        reasons.append("Transfer fee data required but unavailable")
+    elif transfer_fee_pct is not None:
+        if transfer_fee_pct < 0 or transfer_fee_pct > 100:
             high_risks += 1
-            reasons.append("Transfer fee exceeds the configured critical threshold")
-        else:
-            medium_risks += 1
-            reasons.append("Token has a non-zero transfer fee")
+            reasons.append("Transfer fee percentage is outside the valid 0-100 range")
+        elif transfer_fee_pct > 0:
+            if block_transfer_fee_tokens:
+                high_risks += 1
+                reasons.append("Token-2022 transfer-fee tokens are blocked by configuration")
+            elif transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 10.0):
+                high_risks += 1
+                reasons.append("Transfer fee exceeds the configured critical threshold")
+            else:
+                medium_risks += 1
+                reasons.append("Token has a non-zero transfer fee")
     if transfer_fee_authority not in (None, "", False):
         medium_risks += 1
         reasons.append("Transfer fee authority remains active")
@@ -406,8 +429,22 @@ def analyze_rugcheck_report(data):
             medium_risks += 1
             reasons.append("Graph-linked insiders detected")
 
-    lp_providers = get_number(data.get("totalLPProviders"))
-    if lp_providers is not None and lp_providers <= 1:
+    lp_providers_raw = data.get("totalLPProviders")
+    lp_providers = get_number(lp_providers_raw)
+    minimum_lp_providers = int(_risk_threshold(
+        "TROJAN_RUGCHECK_MIN_LP_PROVIDERS", 0.0, 0.0, 1000000.0
+    ))
+    lp_providers_valid = (
+        lp_providers is not None and lp_providers >= 0 and lp_providers.is_integer()
+    )
+    if minimum_lp_providers > 0:
+        if not lp_providers_valid:
+            unknown_risks += 1
+            reasons.append("Minimum LP provider count required but unavailable or invalid")
+        elif lp_providers < minimum_lp_providers:
+            high_risks += 1
+            reasons.append("LP provider count is below configured minimum")
+    if lp_providers_valid and lp_providers <= 1:
         medium_risks += 1
         reasons.append("Very low reported LP provider count")
     market_liquidity = get_number(data.get("totalMarketLiquidity"))
@@ -472,7 +509,10 @@ def analyze_rugcheck_report(data):
             "transfer_fee_pct": transfer_fee_pct,
             "transfer_fee_authority_active": transfer_fee_authority not in (None, "", False),
             "graph_insiders_detected": int(insiders) if insiders is not None and insiders.is_integer() else insiders,
-            "total_lp_providers": int(lp_providers) if lp_providers is not None and lp_providers.is_integer() else lp_providers,
+            "total_lp_providers": int(lp_providers) if lp_providers_valid else None,
+            "minimum_lp_providers": minimum_lp_providers,
+            "transfer_fee_block_enabled": block_transfer_fee_tokens,
+            "transfer_fee_data_required": require_transfer_fee_data,
             "total_market_liquidity": market_liquidity,
         },
     }
