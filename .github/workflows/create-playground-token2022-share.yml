@@ -1,0 +1,69 @@
+name: Create Solana Playground Token-2022 share link
+
+on:
+  push:
+    branches:
+      - feature/dex-jupiter-noncustodial-execution-current
+    paths:
+      - playground_token2022_ata.ts
+      - .github/workflows/create-playground-token2022-share.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: playground-token2022-share
+  cancel-in-progress: false
+
+jobs:
+  create-share:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create a Solana Playground shared project
+        id: share
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n --rawfile code playground_token2022_ata.ts \
+            '{explorer:{files:{"client.ts":{content:$code}}}}' > /tmp/solpg-share.json
+          share_id="$(curl --fail-with-body --silent --show-error \
+            -X POST https://api.solpg.io/new \
+            -H 'Content-Type: application/json' \
+            --data-binary @/tmp/solpg-share.json)"
+          share_id="$(printf '%s' "$share_id" | tr -d '\r\n\"')"
+          if [[ ! "$share_id" =~ ^[0-9a-f]{24}$ ]]; then
+            echo "Unexpected Solana Playground share ID: $share_id" >&2
+            exit 1
+          fi
+          share_url="https://beta.solpg.io/$share_id"
+          printf '%s\n' "$share_url" > docs/playground-token2022-share.txt
+          echo "share_url=$share_url" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Solana Playground – Token-2022 Devnet test"
+            echo
+            echo "Open this link on the iPhone. The project code is preloaded:"
+            echo
+            echo "$share_url"
+            echo
+            echo "The existing Playground wallet stays in the browser. No keypair export is used."
+            echo "The script checks the exact wallet address and Devnet cluster before requesting a signature."
+            echo "Only the ATA creation transaction can be sent. Mainnet and live trading remain locked."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit share link to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/playground-token2022-share.txt
+          if git diff --cached --quiet; then
+            echo "Share link is unchanged."
+            exit 0
+          fi
+          git commit -m "docs(devnet): publish Playground Token-2022 test link"
+          git push
