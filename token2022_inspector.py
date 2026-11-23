@@ -182,15 +182,15 @@ def transfer_fee_for_amount(schedule, amount):
     """Return the Token-2022 transfer fee, rounded up and capped."""
     if not isinstance(schedule, dict):
         raise ValueError("A decoded transfer-fee schedule is required")
-    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
-        raise ValueError("Transfer amount must be a non-negative integer")
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0 or amount > 2**64 - 1:
+        raise ValueError("Transfer amount must be a non-negative u64 integer")
     basis_points = schedule.get("basis_points")
     maximum_fee = schedule.get("maximum_fee")
     if (isinstance(basis_points, bool) or not isinstance(basis_points, int)
             or not 0 <= basis_points <= 10_000):
         raise ValueError("Transfer-fee basis points are invalid")
     if (isinstance(maximum_fee, bool) or not isinstance(maximum_fee, int)
-            or maximum_fee < 0):
+            or maximum_fee < 0 or maximum_fee > 2**64 - 1):
         raise ValueError("Transfer-fee maximum is invalid")
     if amount == 0 or basis_points == 0:
         return 0
