@@ -217,7 +217,7 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
     drop_pct = ((price - basis) / basis) * 100.0
     result["basis_price"] = basis
     result["drop_pct"] = drop_pct
-    if drop_pct >= -drop_threshold:
+    if drop_pct > -drop_threshold:
         result["reason"] = "Price drop has not passed the configured DCA level"
         return result
 
