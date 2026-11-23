@@ -214,13 +214,20 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         mint_data.extend(tlv)
         pool_raw = bytearray(self.pool_raw)
         pool_raw[232:264] = chain._b58decode(chain.TOKEN_2022_PROGRAM)
+        pool_raw[264:296] = chain._b58decode(chain.TOKEN_2022_PROGRAM)
         accounts = dict(self.account_map)
         accounts[self.pool] = {"owner": builder.CPMM_PROGRAM_ID, "data": bytes(pool_raw)}
         accounts[self.mint_a] = {
             "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_data)
         }
+        accounts[self.mint_b] = {
+            "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_data)
+        }
         accounts[self.vault_a] = token_account(
             self.mint_a, self.authority, 1_000_000, chain.TOKEN_2022_PROGRAM
+        )
+        accounts[self.vault_b] = token_account(
+            self.mint_b, self.authority, 1_000_000, chain.TOKEN_2022_PROGRAM
         )
         with (
             patch.object(chain, "_account", return_value=accounts[self.pool]),
@@ -231,7 +238,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             quote = chain.quote_raydium_cpmm_pool(self.pool, self.mint_a, 10_000, 100)
         self.assertTrue(quote["token2022_input_transfer_fee"])
         self.assertEqual(quote["token2022_input_received_by_pool"], 9_900)
-        self.assertLess(quote["out_amount"], 10_000)
+        self.assertTrue(quote["token2022_output_transfer_fee"])
+        self.assertLess(quote["out_amount"], quote["token2022_output_gross_amount"])
         self.assertEqual(quote["execution"], "DISABLED")
 
 
