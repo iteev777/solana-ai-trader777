@@ -224,13 +224,13 @@ def execute_signed_order(signed_transaction, request_id, confirmed=False):
         raise ExecutionLocked("Explicit live execution confirmation is required")
     if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
         raise ValueError("request_id is invalid")
+    # Atomically consume the simulation approval before any network call.
+    # This prevents concurrent duplicate submissions and replay of a requestId.
     with _order_lock:
-        approved = _simulated_orders.get(request_id.strip())
+        approved = _simulated_orders.pop(request_id.strip(), None)
     if not approved or approved.get("simulation_status") != "PASS":
-        raise ExecutionLocked("Order has no recent successful unsigned simulation on this Trojan instance")
+        raise ExecutionLocked("Order has no unused recent successful unsigned simulation on this Trojan instance")
     if time.time() - approved.get("created_at", 0) > ORDER_TTL_SECONDS:
-        with _order_lock:
-            _simulated_orders.pop(request_id.strip(), None)
         raise ExecutionLocked("Simulated order expired; request a fresh order")
     raw = _decode_transaction(signed_transaction, "signed transaction")
     if len(raw) < 65:
