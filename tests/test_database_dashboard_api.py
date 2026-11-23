@@ -79,5 +79,57 @@ class DatabaseDashboardApiTests(unittest.TestCase):
         self.assertEqual(response.get_json()["error"], "keep invalid")
 
 
+    def test_blacklist_api_requires_dashboard_authentication(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False):
+            response = self.client.get("/api/blacklist")
+        self.assertEqual(response.status_code, 401)
+
+    def test_blacklist_api_lists_entries(self):
+        expected = [{"entry_type": "token", "entry_value": "111"}]
+        with (
+            patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False),
+            patch("blacklist.get_entries", return_value=expected),
+        ):
+            response = self.client.get("/api/blacklist", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["entries"], expected)
+
+    def test_blacklist_api_add_requires_action_header(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False):
+            response = self.client.post(
+                "/api/blacklist",
+                json={"entry_type": "token", "address": "11111111111111111111111111111111", "reason": "test"},
+                headers=self.headers,
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "Missing action header")
+
+    def test_blacklist_api_adds_entry_with_explicit_action(self):
+        expected = {"entry_type": "token", "entry_value": "11111111111111111111111111111111"}
+        with (
+            patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False),
+            patch("blacklist.add_entry", return_value=expected) as add_entry,
+        ):
+            response = self.client.post(
+                "/api/blacklist",
+                json={"entry_type": "token", "address": expected["entry_value"], "reason": "manual review"},
+                headers={**self.headers, "X-Trojan-Action": "1"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["saved"])
+        add_entry.assert_called_once()
+
+    def test_blacklist_api_removal_returns_not_found_when_absent(self):
+        with (
+            patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}, clear=False),
+            patch("blacklist.remove_entry", return_value=False),
+        ):
+            response = self.client.delete(
+                "/api/blacklist/token/11111111111111111111111111111111",
+                headers=self.headers,
+            )
+        self.assertEqual(response.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

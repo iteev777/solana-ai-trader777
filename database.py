@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -376,6 +376,24 @@ def initialize_database():
                 pools_json TEXT NOT NULL,
                 updated_at REAL NOT NULL
             )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_type TEXT NOT NULL CHECK(entry_type IN ('token', 'pool', 'account')),
+                entry_value TEXT NOT NULL,
+                token_mint TEXT,
+                reason TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(entry_type, entry_value)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_blacklist_active_type_value
+            ON blacklist_entries(active, entry_type, entry_value)
         """)
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_pool_registry_updated_at
@@ -2061,3 +2079,105 @@ def delete_pool_registry(mint=None):
         else:
             connection.execute("DELETE FROM pool_registry WHERE mint = ?", (str(mint),))
     return True
+
+
+# ==========================================
+# PERSISTENT TOKEN / POOL / ACCOUNT BLACKLIST
+# ==========================================
+
+BLACKLIST_TYPES = ("token", "pool", "account")
+
+
+def upsert_blacklist_entry(entry_type, entry_value, reason, source="manual", token_mint=None):
+    if entry_type not in BLACKLIST_TYPES:
+        raise ValueError("entry_type must be token, pool or account")
+    if not isinstance(entry_value, str) or not entry_value.strip():
+        raise ValueError("entry_value is required")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("A non-empty blacklist reason is required")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source is required")
+    value = entry_value.strip()
+    if len(value) > 128:
+        raise ValueError("entry_value is too long")
+    reason_value = reason.strip()[:500]
+    source_value = source.strip()[:80]
+    mint_value = token_mint.strip() if isinstance(token_mint, str) and token_mint.strip() else None
+    timestamp = now()
+    with connect() as connection:
+        connection.execute("""
+            INSERT INTO blacklist_entries
+                (entry_type, entry_value, token_mint, reason, source, active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(entry_type, entry_value) DO UPDATE SET
+                token_mint=excluded.token_mint,
+                reason=excluded.reason,
+                source=excluded.source,
+                active=1,
+                updated_at=excluded.updated_at
+        """, (entry_type, value, mint_value, reason_value, source_value, timestamp, timestamp))
+        row = connection.execute("""
+            SELECT * FROM blacklist_entries WHERE entry_type=? AND entry_value=?
+        """, (entry_type, value)).fetchone()
+    return dict(row)
+
+
+def delete_blacklist_entry(entry_type, entry_value):
+    if entry_type not in BLACKLIST_TYPES:
+        raise ValueError("entry_type must be token, pool or account")
+    if not isinstance(entry_value, str) or not entry_value.strip():
+        raise ValueError("entry_value is required")
+    with connect() as connection:
+        cursor = connection.execute("""
+            UPDATE blacklist_entries SET active=0, updated_at=?
+            WHERE entry_type=? AND entry_value=? AND active=1
+        """, (now(), entry_type, entry_value.strip()))
+    return cursor.rowcount > 0
+
+
+def list_blacklist_entries(entry_type=None, include_inactive=False, limit=500):
+    if entry_type is not None and entry_type not in BLACKLIST_TYPES:
+        raise ValueError("entry_type must be token, pool or account")
+    limit = max(1, min(int(limit), 2000))
+    clauses = []
+    params = []
+    if entry_type:
+        clauses.append("entry_type=?")
+        params.append(entry_type)
+    if not include_inactive:
+        clauses.append("active=1")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM blacklist_entries" + where +
+            " ORDER BY active DESC, updated_at DESC LIMIT ?",
+            tuple(params)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def match_blacklist_entries(entries):
+    """Match a batch of (entry_type, entry_value) pairs against active entries."""
+    normalized = []
+    seen = set()
+    for item in entries or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        entry_type, value = item
+        if entry_type not in BLACKLIST_TYPES or not isinstance(value, str) or not value.strip():
+            continue
+        key = (entry_type, value.strip())
+        if key not in seen:
+            normalized.append(key)
+            seen.add(key)
+    if not normalized:
+        return []
+    clauses = " OR ".join("(entry_type=? AND entry_value=?)" for _ in normalized)
+    params = [part for pair in normalized for part in pair]
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM blacklist_entries WHERE active=1 AND (" + clauses + ")",
+            tuple(params)
+        ).fetchall()
+    return [dict(row) for row in rows]

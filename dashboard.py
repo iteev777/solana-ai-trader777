@@ -568,6 +568,57 @@ def api_discovery():
     return jsonify(status)
 
 
+@app.get("/api/blacklist")
+def api_blacklist():
+    import blacklist
+    include_inactive = request.args.get("include_inactive", "false").lower() == "true"
+    entry_type = request.args.get("entry_type") or None
+    try:
+        return jsonify({
+            "entries": blacklist.get_entries(
+                entry_type=entry_type,
+                include_inactive=include_inactive,
+                limit=request.args.get("limit", default=500, type=int) or 500,
+            ),
+            "types": list(blacklist.ENTRY_TYPES),
+        })
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@app.post("/api/blacklist")
+def api_add_blacklist_entry():
+    import blacklist
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        entry = blacklist.add_entry(
+            payload.get("entry_type"),
+            payload.get("address"),
+            payload.get("reason"),
+            source=payload.get("source", "manual"),
+            token_mint=payload.get("token_mint"),
+        )
+        return jsonify({"saved": True, "entry": entry})
+    except (ValueError, TypeError) as error:
+        return jsonify({"saved": False, "error": str(error)[:300]}), 400
+
+
+@app.delete("/api/blacklist/<entry_type>/<address>")
+def api_remove_blacklist_entry(entry_type, address):
+    import blacklist
+    try:
+        removed = blacklist.remove_entry(entry_type, address)
+        if not removed:
+            return jsonify({"error": "Blacklist entry not found"}), 404
+        return jsonify({"removed": True, "entry_type": entry_type, "address": address})
+    except (ValueError, TypeError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
 @app.get("/api/filtering")
 def api_filtering():
     return jsonify({
