@@ -5,6 +5,7 @@
 
 import time
 import queue
+import os
 import math
 from concurrent.futures import ThreadPoolExecutor
 
@@ -344,6 +345,128 @@ def check_rugcheck(token_address, report=_RUGCHECK_REPORT_UNSET):
         return False
 
 
+def evaluate_pre_strategy_security(token_address):
+    """Run mandatory risk checks before observation or strategy scoring.
+
+    RugCheck always runs. On-chain mint/account checks run when RPC is configured.
+    Set TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true to fail closed without RPC.
+    """
+    try:
+        rugcheck_report = get_rugcheck_report(token_address)
+    except Exception as error:
+        log_event("RUGCHECK FETCH FAILED", token_address, repr(error))
+        return {
+            "status": "REJECT",
+            "reason": "RUGCHECK_UNAVAILABLE",
+            "rugcheck": None,
+            "token_security": None,
+        }
+
+    rugcheck_analysis = (
+        rugcheck_report.get("analysis")
+        if isinstance(rugcheck_report, dict)
+        and isinstance(rugcheck_report.get("analysis"), dict)
+        else None
+    )
+    if not check_rugcheck(token_address, rugcheck_report):
+        return {
+            "status": "REJECT",
+            "reason": "RUGCHECK_FAILED",
+            "rugcheck": rugcheck_analysis,
+            "token_security": None,
+        }
+
+    token_security_report = {
+        "status": "SKIPPED",
+        "reason": "SOLANA_RPC_NOT_CONFIGURED",
+    }
+    try:
+        rpc_configured = bool(get_onchain_status().get("rpc_configured"))
+    except Exception as error:
+        log_event("ONCHAIN STATUS CHECK FAILED", token_address, repr(error))
+        return {
+            "status": "REJECT",
+            "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
+            "rugcheck": rugcheck_analysis,
+            "token_security": None,
+        }
+
+    require_onchain = os.getenv(
+        "TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    if not rpc_configured:
+        if require_onchain:
+            return {
+                "status": "REJECT",
+                "reason": "ONCHAIN_TOKEN_SECURITY_REQUIRED_BUT_RPC_MISSING",
+                "rugcheck": rugcheck_analysis,
+                "token_security": token_security_report,
+            }
+        log_event(
+            "ONCHAIN TOKEN SECURITY SKIPPED",
+            token_address,
+            "RPC NOT CONFIGURED; set TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true to fail closed",
+        )
+    else:
+        try:
+            from token_security import (
+                get_token_security_report,
+                evaluate_token_security,
+            )
+            import blacklist
+
+            token_security_report = get_token_security_report(token_address)
+            account_matches = blacklist.match_token_security_accounts(
+                token_security_report
+            )
+            if account_matches:
+                match = account_matches[0]
+                log_event(
+                    "BLACKLIST REJECT",
+                    token_address,
+                    "BLACKLISTED_ACCOUNT: " + match["reason"],
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "BLACKLISTED_ACCOUNT",
+                    "blacklist": {
+                        "entry_type": match["entry_type"],
+                        "entry_value": match["entry_value"],
+                        "reason": match["reason"],
+                        "source": match["source"],
+                    },
+                    "rugcheck": rugcheck_analysis,
+                    "token_security": token_security_report,
+                }
+
+            decision = evaluate_token_security(token_security_report)
+            if not decision.get("allowed"):
+                return {
+                    "status": "REJECT",
+                    "reason": decision.get(
+                        "reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"
+                    ),
+                    "rugcheck": rugcheck_analysis,
+                    "token_security": token_security_report,
+                }
+        except Exception as error:
+            log_event("ONCHAIN TOKEN SECURITY FAILED", token_address, repr(error))
+            return {
+                "status": "REJECT",
+                "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
+                "rugcheck": rugcheck_analysis,
+                "token_security": token_security_report,
+            }
+
+    return {
+        "status": "PASS",
+        "reason": "PRE_STRATEGY_SECURITY_PASSED",
+        "rugcheck": rugcheck_analysis,
+        "token_security": token_security_report,
+    }
+
+
 # ==========================================
 # TOKEN ANALYSIS
 # ==========================================
@@ -581,6 +704,21 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address,
             }
 
+        # Security checks precede observation and strategy scoring. A candidate
+        # cannot receive a BUY decision until the independent risk gates pass.
+        security_result = evaluate_pre_strategy_security(address)
+        if security_result.get("status") != "PASS":
+            return {
+                "status": "rejected",
+                "reason": security_result.get("reason", "PRE_STRATEGY_SECURITY_REJECTED"),
+                "address": address,
+                "rugcheck": security_result.get("rugcheck"),
+                "token_security": security_result.get("token_security"),
+                "blacklist": security_result.get("blacklist"),
+            }
+        rugcheck_analysis = security_result.get("rugcheck")
+        token_security_report = security_result.get("token_security")
+
         # Optional ScreenerBot-style live trade observation. PumpPortal trade
         # subscriptions are metered, so this stage is disabled unless the user
         # explicitly enables it and configures a PumpPortal API key.
@@ -635,66 +773,6 @@ def analyze_token_task(address, strategy_name, token):
                 "score": trade_decision.get("score", 0),
                 "address": address
             }
-
-        # Fetch once, evaluate once, and carry the exact same report through
-        # the candidate result so the dashboard/API can inspect its risk signals.
-        rugcheck_report = get_rugcheck_report(address)
-        rugcheck_analysis = (
-            rugcheck_report.get("analysis")
-            if isinstance(rugcheck_report, dict)
-            and isinstance(rugcheck_report.get("analysis"), dict)
-            else None
-        )
-        if not check_rugcheck(address, rugcheck_report):
-
-            return {
-                "status": "rejected",
-                "reason": "RUGCHECK_FAILED",
-                "address": address,
-                "rugcheck": rugcheck_analysis
-            }
-
-        token_security_report = {
-            "status": "SKIPPED",
-            "reason": "SOLANA_RPC_NOT_CONFIGURED"
-        }
-        if get_onchain_status().get("rpc_configured"):
-            try:
-                from token_security import get_token_security_report, evaluate_token_security
-                token_security_report = get_token_security_report(address)
-                account_matches = blacklist.match_token_security_accounts(token_security_report)
-                if account_matches:
-                    match = account_matches[0]
-                    log_event("BLACKLIST REJECT", address, "BLACKLISTED_ACCOUNT: " + match["reason"])
-                    return {
-                        "status": "rejected",
-                        "reason": "BLACKLISTED_ACCOUNT",
-                        "blacklist": {
-                            "entry_type": match["entry_type"],
-                            "entry_value": match["entry_value"],
-                            "reason": match["reason"],
-                            "source": match["source"],
-                        },
-                        "address": address,
-                        "token_security": token_security_report,
-                    }
-                security_decision = evaluate_token_security(token_security_report)
-                if not security_decision.get("allowed"):
-                    return {
-                        "status": "rejected",
-                        "reason": security_decision.get("reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"),
-                        "address": address,
-                        "token_security": token_security_report,
-                        "rugcheck": rugcheck_analysis
-                    }
-            except Exception as security_error:
-                log_event("ONCHAIN TOKEN SECURITY FAILED", address, repr(security_error))
-                return {
-                    "status": "rejected",
-                    "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
-                    "address": address,
-                    "rugcheck": rugcheck_analysis
-                }
 
         score = safe_float(trade_decision.get("score"))
 
