@@ -1,6 +1,7 @@
 import unittest
 
 import pool_selection
+import pool_analysis
 
 
 WSOL = pool_selection.WSOL_MINT
@@ -27,6 +28,7 @@ def pair(address, quote, liquidity_usd, native_reserve=None, volume=1000):
 class CanonicalPoolSelectionTests(unittest.TestCase):
     def setUp(self):
         pool_selection.reset_canonical_pools()
+        pool_analysis.clear_pool_analysis_state()
 
     def test_native_pair_wins_over_a_larger_usdc_pool(self):
         stable = pair("stable", USDC, 2_000_000)
@@ -78,6 +80,25 @@ class CanonicalPoolSelectionTests(unittest.TestCase):
         selected = pool_selection.select_best_pairs(pools, [TOKEN])[TOKEN]
         self.assertEqual(selected["poolSelection"]["candidateCount"], 3)
         self.assertEqual(len(selected["poolCandidates"]), 3)
+
+    def test_quarantined_best_pool_is_skipped_for_next_supported_candidate(self):
+        blocked = pair("unsupported-owner", WSOL, 1_000_000, native_reserve=500)
+        healthy = pair("healthy", WSOL, 500_000, native_reserve=250)
+        pool_analysis.record_structural_failure(
+            "unsupported-owner", ValueError("unsupported pool layout")
+        )
+        selected = pool_selection.select_best_pairs([blocked, healthy], [TOKEN])[TOKEN]
+        self.assertEqual(selected["pairAddress"], "healthy")
+        self.assertEqual(selected["poolSelection"]["candidateCount"], 1)
+
+    def test_transient_rpc_backoff_excludes_unverified_pool(self):
+        blocked = pair("rpc-down", WSOL, 1_000_000, native_reserve=500)
+        healthy = pair("healthy", WSOL, 500_000, native_reserve=250)
+        pool_analysis.record_transient_failure(
+            "rpc-down", RuntimeError("RPC timeout")
+        )
+        selected = pool_selection.select_best_pairs([blocked, healthy], [TOKEN])[TOKEN]
+        self.assertEqual(selected["pairAddress"], "healthy")
 
     def test_invalid_or_quote_side_prices_are_not_misattributed(self):
         quote_side = {
