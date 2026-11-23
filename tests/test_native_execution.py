@@ -1,5 +1,6 @@
 import base64
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -14,8 +15,17 @@ def key(byte):
 
 class NativeExecutionTests(unittest.TestCase):
     def setUp(self):
-        with native._lock:
-            native._approvals.clear()
+        self.temp_db = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_db.cleanup)
+        self.db_patch = patch.object(
+            native.database, "DATABASE",
+            os.path.join(self.temp_db.name, "native-approvals.sqlite3"),
+        )
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+        native._ensure_approval_table()
+        with native.database.connect() as connection:
+            connection.execute("DELETE FROM native_transaction_approvals")
         self.wallet = key(1)
         self.program = key(2)
         self.account = key(3)
@@ -205,6 +215,31 @@ class NativeExecutionTests(unittest.TestCase):
                 native.execute_native_signed_transaction(
                     self.signed, approval["request_id"], confirmed=True
                 )
+
+    def test_wrong_message_does_not_consume_persistent_approval(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        changed = bytearray(base64.b64decode(self.signed))
+        changed[-1] ^= 1
+        with self.assertRaisesRegex(ValueError, "differs from the simulated approval"):
+            native.consume_native_approval(
+                base64.b64encode(changed).decode("ascii"), approval["request_id"]
+            )
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["protocol"], "raydium_cpmm")
+        with self.assertRaisesRegex(ValueError, "missing, expired or already consumed"):
+            native.consume_native_approval(self.signed, approval["request_id"])
+
+    def test_persistent_approval_survives_process_local_state_reset(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        # The approval lives in SQLite, not an in-memory dictionary.
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["message_sha256"], approval["message_sha256"])
 
     def test_rejects_message_modified_after_simulation(self):
         approval = native.register_native_approval(
