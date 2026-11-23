@@ -171,6 +171,38 @@ class ServiceManagerTests(unittest.TestCase):
         manager.start_all()
         self.assertEqual(manager.get_health()["broken-health"]["status"], "unhealthy")
 
+    def test_enable_check_exception_is_not_misreported_as_disabled(self):
+        manager = self.manager()
+        manager.register(service_manager.ServiceSpec(
+            "unstable", start=lambda: None,
+            enabled=lambda: (_ for _ in ()).throw(RuntimeError("config unavailable")),
+        ))
+        report = manager.start_all()
+        self.assertEqual(report["disabled"], ["unstable"])
+        self.assertEqual(manager.get_status("unstable")["state"], "failed")
+
+    def test_independent_stop_requires_a_stop_callback(self):
+        manager = self.manager()
+        manager.register(service_manager.ServiceSpec(
+            "cannot-stop", start=lambda: None, stops_alone=True
+        ))
+        manager.start_all()
+        result = manager.stop_service("cannot-stop")
+        self.assertFalse(result["stopped"])
+        self.assertIn("no independent stop callback", result["reason"])
+
+    def test_unexpected_worker_exit_is_reported_as_failed(self):
+        manager = self.manager()
+        release = threading.Event()
+        manager.register(service_manager.ServiceSpec(
+            "worker",
+            start=lambda: threading.Thread(target=lambda: None, daemon=True),
+        ))
+        manager.start_all()
+        status = manager.get_status("worker")
+        self.assertEqual(status["state"], "failed")
+        self.assertIn("exited unexpectedly", status["last_error"])
+
     def test_global_manager_access_is_thread_safe_and_type_checked(self):
         manager = self.manager()
         service_manager.clear_global_service_manager()
