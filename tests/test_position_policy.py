@@ -120,6 +120,22 @@ class DcaPolicyTests(unittest.TestCase):
         self.assertFalse(result["allowed"])
         self.assertIn("holding period", result["reason"])
 
+    def test_minimum_holding_period_applies_only_before_first_add(self):
+        position = self.position(metadata={
+            "dca_count": 1, "first_entry_price": 1.0,
+            "first_investment": 10.0, "last_dca_at": 900.0,
+        })
+        result = self.evaluate(
+            position=position,
+            policy=self.policy(min_hold_minutes=10, cooldown_minutes=0),
+        )
+        self.assertTrue(result["allowed"], result)
+
+    def test_exact_drop_threshold_does_not_trigger_next_add(self):
+        result = self.evaluate(current_price=0.95)
+        self.assertFalse(result["allowed"])
+        self.assertIn("has not passed", result["reason"])
+
     def test_cooldown_is_enforced_and_expires_at_boundary(self):
         position = self.position(metadata={
             "dca_count": 1, "first_entry_price": 1.0,
