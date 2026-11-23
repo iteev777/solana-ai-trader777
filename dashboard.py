@@ -919,6 +919,69 @@ def api_orca_whirlpool_order():
         return jsonify({"error": "Orca Whirlpool native order failed", "detail": str(error)[:180]}), 502
 
 
+@app.get("/api/meteora-dlmm-quote")
+def api_meteora_dlmm_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    output_mint = request.args.get("output_mint", "").strip() or None
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from meteora_dlmm_quote import quote_meteora_dlmm_pool
+        quote = quote_meteora_dlmm_pool(
+            pool_address, input_mint, int(amount_raw), slippage,
+            output_mint=output_mint,
+        )
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Meteora DLMM quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/meteora-dlmm-order")
+def api_meteora_dlmm_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from meteora_dlmm_builder import (
+            build_meteora_dlmm_swap, simulate_meteora_dlmm_transaction,
+        )
+        order = build_meteora_dlmm_swap(
+            payload.get("quote"), payload.get("wallet"),
+            payload.get("user_input_token_account"),
+            payload.get("user_output_token_account"),
+        )
+        simulation = simulate_meteora_dlmm_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            return jsonify({
+                "created": False, "simulation": simulation,
+                "execution": "LOCKED", "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "meteora_dlmm",
+            order["last_valid_block_height"], simulation,
+        )
+        order.update(approval)
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Meteora DLMM native order failed", "detail": str(error)[:180]}), 502
+
+
 @app.post("/api/wallet-preflight")
 def api_wallet_preflight():
     """Read-only confirmed-RPC wallet funding and token-account checks."""
