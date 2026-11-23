@@ -12,7 +12,7 @@ class DiscoverySourceHealthTests(unittest.TestCase):
 
     def test_reports_latency_and_success_failure_history(self):
         def good():
-            return [{"tokenAddress": "Mint111111111111111111111111111111111", "chainId": "solana"}]
+            return [{"tokenAddress": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "chainId": "solana"}]
 
         def bad():
             raise RuntimeError("provider timeout")
@@ -42,8 +42,8 @@ class DiscoverySourceHealthTests(unittest.TestCase):
         self.assertIn("non-list", status["sources"][0]["error"])
 
     def test_duplicate_feeds_from_one_vendor_do_not_outrank_two_independent_vendors(self):
-        shared = {"tokenAddress": "Shared1111111111111111111111111111111", "chainId": "solana"}
-        independent = {"tokenAddress": "Indep11111111111111111111111111111111", "chainId": "solana"}
+        shared = {"tokenAddress": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "chainId": "solana"}
+        independent = {"tokenAddress": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "chainId": "solana"}
         with patch.object(aggregator, "SCANNERS", [
             ("geckoterminal_new_pools", lambda: [shared]),
             ("geckoterminal_trending_pools", lambda: [shared]),
