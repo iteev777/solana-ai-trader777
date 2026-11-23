@@ -1,8 +1,9 @@
 """Read-only Meteora Dynamic Bonding Curve exact-input quote adapter.
 
 Only flat-fee, non-migrated VirtualPools with fully decoded piecewise liquidity
-curves are supported. Scheduler/dynamic fees, transfer-hook pools and
-Token-2022 mints fail closed rather than using guessed semantics.
+curves are supported. Scheduler/dynamic fees and transfer-hook pools fail
+closed. Legacy SPL Token and the audited Token-2022 transfer-fee subset are
+supported with conservative net-of-fee input/output amounts.
 """
 import math
 import time
