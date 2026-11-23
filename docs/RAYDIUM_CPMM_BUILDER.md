@@ -36,8 +36,10 @@ non-custodial preparation path only: it does not sign, send, or confirm swaps.
   slots by default); the quote is independently refreshed before construction.
 - The wallet signs externally. No private key enters the Trojan server.
 - The server never signs. The native broadcast gate is hard locked in code;
-  `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. A separate Jupiter V2
-  execute adapter has its own env gate and remains under the global live-lock audit.
+  `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. The separate Jupiter V2
+  `/execute` adapter is also hard locked in code; no environment variable or
+  request confirmation can unlock it. The repository-wide live-path audit remains
+  a release blocker.
 - The returned legacy transaction is a preparation artifact, not proof that a
   wallet will accept it or that a later network submission will land. The pool
   can change after simulation; the on-chain minimum-output check remains the
