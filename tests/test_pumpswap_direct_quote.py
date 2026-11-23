@@ -251,13 +251,13 @@ class PumpSwapDirectQuoteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "discriminator"):
                 chain.quote_pumpswap_pool(self.pool, self.quote_mint, 1000)
 
-    def test_rejects_token_2022_mints_until_extension_fees_are_supported(self):
+    def test_rejects_mint_vault_token_program_mismatch(self):
         accounts = list(self.accounts)
         accounts[5] = dict(accounts[5], owner=chain.TOKEN_2022_PROGRAM)
         with patch.object(chain, "_account", return_value={
             "owner": chain.PROGRAMS["pumpswap"], "data": self.pool_data
         }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 789)):
-            with self.assertRaisesRegex(ValueError, "Token-2022"):
+            with self.assertRaisesRegex(ValueError, "vault token program does not match"):
                 chain.quote_pumpswap_pool(self.pool, self.quote_mint, 1000)
 
     def test_buy_and_sell_disable_flags_are_enforced(self):
