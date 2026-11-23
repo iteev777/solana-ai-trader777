@@ -43,6 +43,14 @@ def _env_int(name, default, minimum=0, maximum=None):
     return int(value)
 
 
+
+def _env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _result(status, stage, reason, metrics=None):
     return {
         "status": status,
@@ -126,7 +134,7 @@ def _authority_is_active(value):
 
 def _onchain_stage(token):
     """Apply the cached Solana metadata/authority checks before market filters."""
-    if os.getenv("TROJAN_FILTER_ONCHAIN_ENABLED", "true").lower() != "true":
+    if not _env_bool("TROJAN_FILTER_ONCHAIN_ENABLED", True):
         return _result("PASS", "onchain", "ONCHAIN_FILTERS_DISABLED")
 
     if token.get("known_scam_authority") is True:
@@ -138,9 +146,9 @@ def _onchain_stage(token):
     creator = _first_value(token.get("creator"), token.get("creatorAddress"), token.get("creator_address"))
     mutable = _first_value(token.get("mutable"), token.get("isMutable"), token.get("is_mutable"))
 
-    reject_immutable_freeze = os.getenv(
-        "TROJAN_FILTER_REJECT_IMMUTABLE_WITH_FREEZE", "true"
-    ).lower() == "true"
+    reject_immutable_freeze = _env_bool(
+        "TROJAN_FILTER_REJECT_IMMUTABLE_WITH_FREEZE", True
+    )
     if (
         reject_immutable_freeze
         and mutable is False
@@ -148,7 +156,7 @@ def _onchain_stage(token):
     ):
         return _result("REJECT", "onchain", "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
 
-    if os.getenv("TROJAN_FILTER_COMBINED_RISK_ENABLED", "true").lower() == "true":
+    if _env_bool("TROJAN_FILTER_COMBINED_RISK_ENABLED", True):
         symbol = _clean_metadata_text(
             token.get("symbol") or _get(token, "baseToken", "symbol")
         )
