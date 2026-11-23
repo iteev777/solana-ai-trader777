@@ -52,6 +52,21 @@ X-Trojan-Confirm-Live: 1
 ```
 
 
+
+## Jupiter Token-2022 mint preflight
+
+Before a Jupiter order can become execution-eligible, Trojan reads both input
+and output mint accounts in one confirmed RPC snapshot. Legacy mints must be
+initialized standard SPL Token mints. Token-2022 mints pass the shared
+extension compatibility validator; the supported transfer-fee configuration
+is reported explicitly, while transfer hooks, confidential transfers,
+pausable/non-transferable behavior and other unsupported extensions fail
+closed. The Jupiter router remains responsible for route-level transfer-fee
+math; Trojan requires a successful unsigned transaction simulation as a
+separate execution-eligibility gate. If the mint snapshot cannot be confirmed,
+a simulation result alone cannot make the order eligible. No signing or
+broadcast occurs in this preflight.
+
 ## Token-2022 extension inspection
 
 The authenticated read-only endpoint `POST /api/token2022-inspect` accepts a
