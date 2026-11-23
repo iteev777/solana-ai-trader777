@@ -95,7 +95,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         }
 
     def call_builder(self, quote=None, account_map=None,
-                     user_input_token_account=None, user_output_token_account=None):
+                     user_input_token_account=None, user_output_token_account=None,
+                     fresh_quote=None):
         account_map = account_map or self.account_map
         selected_quote = quote or self.quote
         def pda(seeds, program):
@@ -104,7 +105,7 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             if seeds == [builder.OBSERVATION_SEED, chain._b58decode(self.pool)]:
                 return self.observation, 254
             return self.real_find_program_address(seeds, program)
-        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=selected_quote), \
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=fresh_quote or selected_quote), \
              patch.object(chain, "_account", side_effect=lambda address: account_map[address]), \
              patch.object(chain, "_decode_pool", wraps=chain._decode_pool), \
              patch.object(chain, "_find_program_address", side_effect=pda), \
@@ -133,6 +134,9 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         }
         accounts[self.vault_a] = token_account(
             self.mint_a, self.authority, 1_000_000, chain.TOKEN_2022_PROGRAM
+        )
+        accounts[self.vault_b] = token_account(
+            self.mint_b, self.authority, 1_000_000, chain.TOKEN_PROGRAM
         )
         with (
             patch.object(chain, "_account", return_value=accounts[self.pool]),
@@ -297,7 +301,7 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
 
     def test_ignores_client_tampered_minimum_output_and_requotes(self):
         tampered = dict(self.quote, minimum_out_amount=1)
-        result = self.call_builder(quote=tampered)
+        result = self.call_builder(quote=tampered, fresh_quote=self.quote)
         instruction_data = base64.b64decode(result["instruction_data_base64"])
         self.assertEqual(struct.unpack("<QQ", instruction_data[8:]), (100, 80))
 
