@@ -85,10 +85,11 @@ used for these mints. See the official
 When the wallet does not yet have its canonical legacy SPL token account, call
 `POST /api/ata-order` with dashboard authentication, `X-Trojan-Action: 1`,
 and JSON containing `wallet` and `mint` (both public keys). The endpoint
-checks the mint owner/layout, derives the canonical ATA, checks wallet SOL,
-fetches the exact 165-byte token-account rent exemption and message fee, builds
-an Associated Token Program `CreateIdempotent` instruction, and simulates the
-unsigned transaction. The response contains the unsigned base64 transaction,
+checks that the payer exists as a standard system-owned wallet account
+(with no account data), validates the mint owner/layout, derives the canonical
+ATA, checks wallet SOL, fetches the exact 165-byte token-account rent exemption
+and message fee, builds an Associated Token Program `CreateIdempotent`
+instruction, and simulates the unsigned transaction. The response contains the unsigned base64 transaction,
 ATA address, rent/fee/reserve breakdown, and simulation result. The connected
 wallet must review and sign it locally; this endpoint never signs or broadcasts.
 
