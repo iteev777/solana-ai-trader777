@@ -522,9 +522,6 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("Input mint does not belong to this PumpSwap pool")
 
-    if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
-        raise ValueError("Input mint does not belong to this PumpSwap pool")
-
     creator_pool = decoded["coin_creator"] != "11111111111111111111111111111111"
     fee_candidates = [fee_config["conservative_fees"], global_flat_fees]
     if not creator_pool:
@@ -595,7 +592,7 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
         "lp_fee_amount": fee_amounts[0], "protocol_fee_amount": fee_amounts[1],
-        "creator_fee_amount": fee_amounts[2], "total_fee_amount": total_fee,
+        "creator_fee_amount": fee_amounts[2] if len(fee_amounts) > 2 else 0, "total_fee_amount": total_fee,
         "effective_quote_reserves": reserve_quote, "raw_quote_vault_reserves": raw_quote_reserve,
         "virtual_quote_reserves": decoded["virtual_quote_reserves"],
         "price_impact_percent": round(impact, 6),
