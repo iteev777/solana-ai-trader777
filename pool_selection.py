@@ -46,14 +46,16 @@ def _derive_native_price(pairs):
         if base == WSOL_MINT and price_usd and price_usd > 0:
             observations.append(price_usd)
         elif quote == WSOL_MINT and price_usd and price_usd > 0 and price_native and price_native > 0:
-            observations.append(price_usd / price_native)
+            implied_price = price_usd / price_native
+            if math.isfinite(implied_price) and implied_price > 0:
+                observations.append(implied_price)
     if not observations:
         return None
     observations.sort()
     middle = len(observations) // 2
     if len(observations) % 2:
         return observations[middle]
-    return (observations[middle - 1] + observations[middle]) / 2
+    return observations[middle - 1] / 2 + observations[middle] / 2
 
 
 def _candidate(pair, native_price_usd):
@@ -74,7 +76,7 @@ def _candidate(pair, native_price_usd):
     native_reserve = _number(liquidity.get("quote")) if is_native else None
     if is_native and (native_reserve is None or native_reserve <= 0):
         if liquidity_usd and native_price_usd and native_price_usd > 0:
-            native_reserve = (liquidity_usd / 2.0) / native_price_usd
+            native_reserve = _number((liquidity_usd / 2.0) / native_price_usd)
     metric = (
         max(0.0, native_reserve or 0.0)
         if is_native
@@ -113,17 +115,19 @@ def _summary(candidate):
 
 def select_best_pairs(pairs, requested_addresses):
     """Return one canonical, correctly base-priced pool for each requested mint."""
-    if not isinstance(pairs, list):
+    if not isinstance(pairs, list) or requested_addresses is None:
         return {}
     requested = {
         value.strip() for value in requested_addresses
         if isinstance(value, str) and value.strip()
     }
+    pairs = [
+        pair for pair in pairs
+        if isinstance(pair, dict) and pair.get("chainId", "solana") == "solana"
+    ]
     native_price = _derive_native_price(pairs)
     grouped = {}
     for pair in pairs:
-        if not isinstance(pair, dict):
-            continue
         price = _number(pair.get("priceUsd"))
         if price is None or price <= 0:
             continue
