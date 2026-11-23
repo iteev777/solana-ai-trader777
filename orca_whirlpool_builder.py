@@ -191,7 +191,9 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
 
     # Orca SwapV2 is required whenever either mint uses Token-2022.
     uses_token_2022 = TOKEN_2022_PROGRAM_ID in (token_program_a, token_program_b)
-    sqrt_limit = MIN_SQRT_PRICE + 1 if a_to_b else MAX_SQRT_PRICE - 1
+    # Match Orca's direct-swap instruction convention: zero disables a separate price limit;
+    # the net-of-transfer-fee minimum output remains the slippage protection.
+    sqrt_limit = 0
     discriminator = SWAP_V2_DISCRIMINATOR if uses_token_2022 else SWAP_DISCRIMINATOR
     data = (discriminator + struct.pack("<QQ", amount, minimum_out)
             + sqrt_limit.to_bytes(16, "little") + bytes([1, int(a_to_b)]))
