@@ -24,6 +24,14 @@ def _finite(value):
         return None
 
 
+def _bounded_env_int(name, default, minimum, maximum):
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError, OverflowError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 def calculate_indicators(candles):
     rows, _quality = normalize_ohlcv_rows(candles)
     if len(rows) < 22:
@@ -311,6 +319,6 @@ def get_indicator_status():
     return {
         "cached_pools": len(_cache), "ready_pools": ready,
         "stale_pools": stale, "timeframe": "1m",
-        "max_candle_age_seconds": int(os.getenv("TROJAN_OHLCV_MAX_AGE_SECONDS", "180")),
-        "max_gap_seconds": int(os.getenv("TROJAN_OHLCV_MAX_GAP_SECONDS", "300"))
+        "max_candle_age_seconds": _bounded_env_int("TROJAN_OHLCV_MAX_AGE_SECONDS", 180, 30, 3600),
+        "max_gap_seconds": _bounded_env_int("TROJAN_OHLCV_MAX_GAP_SECONDS", 300, 60, 3600)
     }
