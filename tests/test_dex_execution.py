@@ -107,6 +107,9 @@ def test_execute_posts_only_signed_transaction_and_request_id(monkeypatch):
         })
 
     monkeypatch.setattr(dex_execution.requests, "post", fake_post)
+    dex_execution._simulated_orders["req-123"] = {
+        "simulation_status": "PASS", "created_at": dex_execution.time.time()
+    }
     result = dex_execution.execute_signed_order(signed, "req-123", confirmed=True)
 
     assert captured["json"] == {
@@ -121,3 +124,38 @@ def test_execution_status_reports_locked_and_non_custodial(monkeypatch):
     status = dex_execution.get_execution_status()
     assert status["execution_locked"] is True
     assert status["wallet_secret_required_on_server"] is False
+
+
+
+def test_order_simulation_pass_marks_order_execution_eligible(monkeypatch):
+    transaction = base64.b64encode(bytes([0]) * 120).decode()
+    monkeypatch.setattr(
+        dex_execution.requests, "get",
+        lambda *args, **kwargs: FakeResponse({
+            "transaction": transaction, "requestId": "simulated-req",
+            "inAmount": "1000", "outAmount": "2500",
+            "otherAmountThreshold": "2400",
+        }),
+    )
+    monkeypatch.setattr(
+        dex_execution, "_simulate_transaction",
+        lambda tx: {"status": "PASS", "signed": False, "broadcast": False},
+    )
+    result = dex_execution.create_order(
+        "11111111111111111111111111111111",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        1000,
+        "11111111111111111111111111111111",
+        simulate=True,
+    )
+    assert result["simulation"]["status"] == "PASS"
+    assert result["execution_eligible"] is True
+    assert "simulated-req" in dex_execution._simulated_orders
+
+
+def test_execute_rejects_order_without_successful_simulation(monkeypatch):
+    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
+    signed = base64.b64encode(bytes([0]) * 120).decode()
+    dex_execution._simulated_orders.pop("not-simulated", None)
+    with pytest.raises(dex_execution.ExecutionLocked, match="successful unsigned simulation"):
+        dex_execution.execute_signed_order(signed, "not-simulated", confirmed=True)
