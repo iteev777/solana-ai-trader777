@@ -152,6 +152,10 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("Native CLMM builder currently requires legacy SPL Token mints")
     if any(item.get("owner") != TOKEN_PROGRAM_ID for item in (vault0_acc, vault1_acc)):
         raise ValueError("CLMM vaults must use legacy SPL Token")
+    for mint_account in (mint0_acc, mint1_acc):
+        mint_raw = mint_account.get("data", b"")
+        if not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
+            raise ValueError("CLMM mint is not an initialized legacy SPL Token mint")
     if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
         raise ValueError("CLMM mint account layout is invalid")
     # Raydium CLMM vault authority is the pool address itself.
@@ -173,7 +177,7 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM observation account belongs to another pool")
 
     tick_array_accounts = accounts[10:]
-    if len(tick_array_accounts) != len(arrays):
+    if len(tick_array_accounts) != len(arrays) or any(item is None for item in tick_array_accounts):
         raise ValueError("CLMM tick array snapshot is incomplete")
     for account, (start, address) in zip(tick_array_accounts, arrays):
         if account.get("owner") != PROGRAM_ID:
