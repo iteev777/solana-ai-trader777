@@ -174,7 +174,18 @@ def merge_candidate_metadata(market_data, candidate):
             merged["info"] = existing_info
             merged["websites"] = candidate_websites
     direct_website = candidate.get("website") or candidate.get("website_url")
-    if useful(direct_website) and not useful(merged.get("website")):
+    existing_website = merged.get("website") or merged.get("website_url")
+    existing_website_list = merged.get("websites")
+    if not isinstance(existing_website_list, list):
+        existing_website_list = info.get("websites")
+    has_existing_website = useful(existing_website) or (
+        isinstance(existing_website_list, list)
+        and any(
+            isinstance(item, dict) and useful(item.get("url"))
+            for item in existing_website_list
+        )
+    )
+    if useful(direct_website) and not has_existing_website:
         merged["website"] = direct_website.strip()
 
     for key in (
