@@ -20,7 +20,7 @@ class AtaManagerTests(unittest.TestCase):
             ata_manager.ASSOCIATED_TOKEN_PROGRAM_ID,
         )[0]
         self.mint_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(82)}
-        self.mint_account["data"] = self.mint_account["data"][:45] + b"\\x01" + self.mint_account["data"][46:]
+        self.mint_account["data"] = self.mint_account["data"][:45] + bytes([1]) + self.mint_account["data"][46:]
 
     @patch("ata_manager.chain._rpc")
     @patch("ata_manager._rpc_account")
