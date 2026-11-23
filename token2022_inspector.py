@@ -37,13 +37,15 @@ EXTENSIONS = {
     21: "TOKEN_GROUP",
     22: "GROUP_MEMBER_POINTER",
     23: "TOKEN_GROUP_MEMBER",
+    24: "CONFIDENTIAL_MINT_BURN",
     25: "SCALED_UI_AMOUNT",
     26: "PAUSABLE",
     27: "PAUSABLE_ACCOUNT",
+    28: "PERMISSIONED_BURN",
 }
 
 MINT_EXTENSION_IDS = {
-    1, 3, 4, 6, 9, 10, 12, 14, 16, 18, 19, 20, 21, 22, 23, 25, 26,
+    1, 3, 4, 6, 9, 10, 12, 14, 16, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28,
 }
 ACCOUNT_EXTENSION_IDS = {2, 5, 7, 8, 11, 13, 15, 17, 27}
 
@@ -58,6 +60,8 @@ HIGH_RISK = {
     16: "Confidential transfer fees require confidential fee-aware transfer handling.",
     25: "Scaled UI amounts change display conversion and must not be confused with raw units.",
     26: "Pausable mints may block transfers.",
+    24: "Confidential mint/burn changes supply accounting and is not supported by ordinary swap flows.",
+    28: "Permissioned burns require authority-specific handling.",
 }
 
 
