@@ -209,23 +209,29 @@ def _process_wallet_signature(wallet, signature):
             "invoked_programs": event.get("invoked_programs", [])
         })
     )
-    if not inserted:
-        # Signature-level persistence dedupe means this event was already handled.
-        return True
-    _status["events_seen"] += 1
-    _status["last_event"] = time.time()
+    if inserted:
+        _status["events_seen"] += 1
+        _status["last_event"] = time.time()
     freshness = copy_freshness.evaluate_event_freshness(
         event.get("block_time"), received_at=event.get("received_at")
     )
     if not freshness.get("allowed"):
-        _status["stale_events_observed"] += 1
+        if inserted:
+            _status["stale_events_observed"] += 1
         return True
     if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
         try:
             import main
-            main.queue_copy_signal(event)
+            queued = main.queue_copy_signal(event)
+            if not queued:
+                # Keep the durable wallet cursor behind this signature. The next
+                # poll retries it even though copy_trade_events already deduped it.
+                raise RuntimeError("paper copy signal queue is full")
         except Exception as copy_error:
             _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
+            raise RuntimeError("paper copy dispatch is pending: " + str(copy_error)[:120]) from copy_error
+    if not inserted:
+        return True
     send_alert(
         "COPY WATCH " + event["action"]
         + "\nWallet: " + wallet
