@@ -6,6 +6,8 @@ source never prevents the remaining discovery sources from running.
 import os
 import re
 
+from solders.pubkey import Pubkey
+
 from api_client import get_json
 
 JUPITER_BASE = "https://lite-api.jup.ag/tokens/v2"
@@ -18,10 +20,16 @@ BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
 def _is_solana_mint(value):
+    """Match Solana Pubkey parsing, not merely a base58-looking string."""
     if not isinstance(value, str):
         return False
     value = value.strip()
-    return bool(BASE58_RE.fullmatch(value))
+    if not BASE58_RE.fullmatch(value):
+        return False
+    try:
+        return len(bytes(Pubkey.from_string(value))) == 32
+    except (ValueError, TypeError):
+        return False
 
 
 def _items(payload):
@@ -183,33 +191,58 @@ def scan_rugcheck_verified():
     return _scan_rugcheck_feed("rugcheck_verified", "verified")
 
 
-def scan_jupiter():
-    """Jupiter recent, organic-score, traded and trending token lists."""
-    feeds = (
-        ("jupiter_recent", f"{JUPITER_BASE}/recent"),
-        ("jupiter_organic", f"{JUPITER_BASE}/toporganicscore/1h?limit=100"),
-        ("jupiter_traded", f"{JUPITER_BASE}/toptraded/1h?limit=100"),
-        ("jupiter_trending", f"{JUPITER_BASE}/toptrending/1h?limit=100"),
+def _scan_jupiter_feed(source, endpoint, *, interval=None, limit=100):
+    """Fetch one Jupiter V2 list so failures are visible per endpoint."""
+    url = f"{JUPITER_BASE}/{endpoint}"
+    params = {"limit": limit} if endpoint != "recent" else None
+    if interval:
+        url = f"{url}/{interval}"
+    payload = get_json(
+        url, params=params, headers={"Accept": "application/json"},
+        timeout=15, cache_ttl=30, max_retries=1
     )
+    if not isinstance(payload, list):
+        raise ValueError(f"{source} returned an invalid Jupiter token-list payload")
     found = {}
-    for source, url in feeds:
-        payload = _safe_fetch(source, url, ttl=30)
-        for item in _items(payload):
-            if not isinstance(item, dict):
-                continue
-            token = _candidate(
-                item.get("id") or item.get("mint") or item.get("address"),
-                source, item
-            )
-            if token:
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        token = _candidate(item.get("id") or item.get("mint") or item.get("address"), source, item)
+        if token:
+            found[token["tokenAddress"]] = token
+    return list(found.values())
+
+
+def scan_jupiter_recent():
+    return _scan_jupiter_feed("jupiter_recent", "recent")
+
+
+def scan_jupiter_organic():
+    return _scan_jupiter_feed("jupiter_organic", "toporganicscore", interval="1h")
+
+
+def scan_jupiter_traded():
+    return _scan_jupiter_feed("jupiter_traded", "toptraded", interval="1h")
+
+
+def scan_jupiter_trending():
+    return _scan_jupiter_feed("jupiter_trending", "toptrending", interval="1h")
+
+
+def scan_jupiter():
+    """Backward-compatible combined view; aggregator schedules each feed alone."""
+    found = {}
+    for scanner in (scan_jupiter_recent, scan_jupiter_organic, scan_jupiter_traded, scan_jupiter_trending):
+        try:
+            for token in scanner():
                 mint = token["tokenAddress"]
                 if mint not in found:
                     found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
-    print("JUPITER DISCOVERY TOKENS:", len(found), flush=True)
+                else:
+                    _merge_rugcheck_candidate(found[mint], token)
+        except Exception as error:
+            print("JUPITER DISCOVERY FEED ERROR:", repr(error), flush=True)
     return list(found.values())
-
 
 def scan_coingecko():
     """CoinGecko coin list filtered to actual Solana platform addresses."""
@@ -217,10 +250,12 @@ def scan_coingecko():
     api_key = os.getenv("COINGECKO_API_KEY", "").strip()
     if api_key:
         headers["x-cg-demo-api-key"] = api_key
-    payload = _safe_fetch(
-        "coingecko_solana", COINGECKO_URL,
-        params={"include_platform": "true"}, headers=headers, ttl=3600
+    payload = get_json(
+        COINGECKO_URL, params={"include_platform": "true"}, headers=headers,
+        timeout=20, cache_ttl=3600, max_retries=1
     )
+    if not isinstance(payload, list):
+        raise ValueError("CoinGecko returned an invalid coins/list payload")
     found = {}
     for item in _items(payload):
         if not isinstance(item, dict):
@@ -241,14 +276,19 @@ def scan_coingecko():
 
 def scan_defillama():
     """DeFiLlama protocol registry filtered to Solana contract addresses."""
-    payload = _safe_fetch("defillama_solana", DEFILLAMA_URL, ttl=3600)
+    payload = get_json(
+        DEFILLAMA_URL, headers={"Accept": "application/json"},
+        timeout=25, cache_ttl=3600, max_retries=1
+    )
+    if not isinstance(payload, list):
+        raise ValueError("DeFiLlama returned an invalid protocols payload")
     found = {}
     for item in _items(payload):
         if not isinstance(item, dict):
             continue
         chains = item.get("chains")
         if not isinstance(chains, list) or not any(
-            isinstance(chain, str) and chain.lower() == "solana"
+            isinstance(chain, str) and "solana" in chain.lower()
             for chain in chains
         ):
             continue
