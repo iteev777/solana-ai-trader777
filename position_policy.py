@@ -195,7 +195,9 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
 
     opened_at = _timestamp_seconds(position.get("opened_at"))
     held_minutes = max(0.0, (clock - opened_at) / 60.0) if opened_at is not None else None
-    if min_hold > 0 and (held_minutes is None or held_minutes < min_hold):
+    # ScreenerBot applies the minimum hold only before the first add. Later
+    # adds are governed by the per-add cooldown.
+    if count == 0 and min_hold > 0 and (held_minutes is None or held_minutes < min_hold):
         result["reason"] = "DCA minimum holding period not reached"
         return result
 
@@ -220,7 +222,7 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
     drop_pct = ((price - basis) / basis) * 100.0
     result["basis_price"] = basis
     result["drop_pct"] = drop_pct
-    if drop_pct > -drop_threshold:
+    if drop_pct >= -drop_threshold:
         result["reason"] = "Price drop has not passed the configured DCA level"
         return result
 
