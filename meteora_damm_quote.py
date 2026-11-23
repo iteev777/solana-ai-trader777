@@ -1,4 +1,9 @@
-"""Read-only exact-input quotes for Meteora DAMM v2 (single-band liquidity)."""
+"""Read-only conservative exact-input quotes for Meteora DAMM v2 (single-band liquidity).
+
+The fee model intentionally uses an upper bound for scheduler/rate-limiter
+fees and stored volatility without time decay. The resulting minimum output
+is conservative, not an exact reproduction of every time-dependent fee state.
+"""
 import math
 import time
 
@@ -278,6 +283,11 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "fee_denominator": FEE_DENOMINATOR,
         "fee_cap_numerator": state["fee_cap"],
         "fee_on_input": fee_on_input,
+        "fee_estimation": "CONSERVATIVE_UPPER_BOUND",
+        "fee_estimation_exact": False,
+        "fee_estimation_policy": (
+            "scheduler_cliff_rate_limiter_ceiling_and_undecayed_stored_volatility"
+        ),
         "sqrt_price_before_x64": state["sqrt_price"],
         "sqrt_price_after_x64": sqrt_after,
         "liquidity": state["liquidity"],
