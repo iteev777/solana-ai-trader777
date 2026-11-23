@@ -29,11 +29,13 @@ class DexScreenerRateBucketTests(unittest.TestCase):
         self.assertIs(profiles, same_profiles_bucket)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class RugcheckRateLimitParityTests(unittest.TestCase):
     def test_rugcheck_global_budget_matches_screenerbot_sixty_per_minute(self):
         from api_client import HOST_INTERVALS
         self.assertEqual(HOST_INTERVALS["api.rugcheck.xyz"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
