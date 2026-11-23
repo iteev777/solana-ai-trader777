@@ -25,8 +25,9 @@ async fn main() -> Result<()> {
     let keys: Vec<Pubkey> = input.account_keys.iter()
         .map(|s| Pubkey::from_str(s).with_context(|| format!("invalid pubkey: {s}")))
         .collect::<Result<_>>()?;
-    let url = env::var("SOLANA_RPC_URL")
-        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
+    let url = env::var("SOLANA_RPC_URL").ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://api.mainnet-beta.solana.com".to_string());
     let client = RpcClient::new_with_commitment(url, CommitmentConfig::confirmed());
     let rounds = 12usize;
     let mut samples = Vec::new();
