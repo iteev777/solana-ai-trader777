@@ -295,8 +295,14 @@ def validate_token2022_account_data(account, mint, authority, label="Token-2022 
     raw = account.get("data", b"")
     if not isinstance(raw, (bytes, bytearray)) or len(raw) < 165:
         raise Token2022LayoutError(label + " base token-account layout is truncated")
-    if chain._key(raw, 0) != mint or chain._key(raw, 32) != authority:
-        raise Token2022LayoutError(label + " mint or authority does not match")
+    if chain._key(raw, 0) != mint:
+        raise Token2022LayoutError(label + " mint does not match")
+    if chain._key(raw, 32) != authority:
+        if "vault" in label.lower():
+            raise Token2022LayoutError(label + " vault token authority does not match")
+        if "input token account" in label.lower() or "output token account" in label.lower():
+            raise Token2022LayoutError(label + " is not owned by the signing wallet")
+        raise Token2022LayoutError(label + " authority does not match")
     if raw[108] != 1:
         raise Token2022LayoutError(label + " is not initialized or is frozen")
     if len(raw) > 165:
@@ -333,7 +339,7 @@ def validate_token_account_for_program(account, token_program, mint, authority,
     if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
         raise ValueError("Minimum token balance must be a non-negative integer")
     if balance < min_balance:
-        raise Token2022LayoutError(label + " has insufficient token balance")
+        raise Token2022LayoutError(label + " has insufficient balance")
     return balance
 
 
