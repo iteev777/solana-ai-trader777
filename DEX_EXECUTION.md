@@ -62,8 +62,11 @@ X-Trojan-Confirm-Live: 1
 - A recent successful unsigned RPC simulation is required. The in-memory request cache expires after 120 seconds and each simulation approval is consumed atomically by the first execute attempt. A failed or timed-out execute attempt requires a fresh order; this deliberately favors replay protection over automatic retries. The cache is process-local, so order and execute must reach the same app instance. Multi-replica deployments must use sticky routing or a shared durable approval store before enabling execution.
 - Only a transaction returned by Jupiter `/order` can be executed with its cached `request_id`; do not modify the transaction message after order creation.
 - The dashboard exposes `GET /api/dex-execution-status` for gate visibility.
-- This adapter uses Jupiter's meta-aggregator order path. Native direct-pool
-  transaction builders for every decoded DEX protocol remain a separate task.
+- This adapter uses Jupiter's meta-aggregator order path. A separate native
+  Raydium CPMM builder is documented in `docs/RAYDIUM_CPMM_BUILDER.md`.
+  It builds and simulates unsigned legacy transactions only; no native signing
+  or broadcast endpoint exists. Native builders for other DEX protocols remain
+  follow-up work.
 
 ## Environment
 
