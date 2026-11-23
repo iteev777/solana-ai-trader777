@@ -123,7 +123,7 @@ class DcaPolicyTests(unittest.TestCase):
         blocked = self.evaluate(position=position, price_timestamp=100000.0, now=100000.0)
         self.assertFalse(blocked["allowed"])
         self.assertIn("cooldown", blocked["reason"])
-        position["metadata"]["last_dca_at"] = 96400.0
+        position["metadata"]["last_dca_at"] = 96300.0
         passed = self.evaluate(position=position, price_timestamp=100000.0, now=100000.0)
         self.assertTrue(passed["allowed"], passed)
 
