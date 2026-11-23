@@ -66,13 +66,20 @@ class TransactionDeltaTests(unittest.TestCase):
         self.assertEqual(by_mint[MINT].signature, "signature-1")
         self.assertEqual(by_mint[MINT].slot, 123)
 
-    def test_fee_is_not_attributed_to_non_fee_payer_subject(self):
+    def test_fee_metadata_is_preserved_without_charging_non_fee_payer_subject(self):
         tx = transaction(subject_is_fee_payer=False, native_delta=0)
         rows = extract_subject_deltas(WALLET, tx)
         by_mint = {row.mint: row for row in rows}
-        self.assertEqual(by_mint[USDC].fee_native_raw, 0)
-        self.assertEqual(by_mint[MINT].fee_native_raw, 0)
+        self.assertEqual(by_mint[USDC].fee_native_raw, 5000)
+        self.assertEqual(by_mint[MINT].fee_native_raw, 5000)
         self.assertNotIn(NATIVE_SOL_SENTINEL, by_mint)
+
+    def test_native_delta_corrects_subject_owned_ata_rent(self):
+        tx = transaction(native_delta=-1_002_005_000)
+        tx["meta"]["postBalances"][2] += 2_000_000
+        rows = extract_subject_deltas(WALLET, tx)
+        native = next(row for row in rows if row.mint == NATIVE_SOL_SENTINEL)
+        self.assertEqual(native.delta_raw, -1_000_000_000)
 
     def test_missing_or_ambiguous_subject_returns_no_deltas(self):
         tx = transaction()
