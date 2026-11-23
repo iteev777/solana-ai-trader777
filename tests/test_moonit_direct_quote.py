@@ -103,7 +103,7 @@ class MoonitDirectQuoteTests(unittest.TestCase):
 
     def test_buy_output_is_capped_by_real_curve_token_amount(self):
         raw = bytearray(self.pool_data)
-        raw[16:24] = (100_000_000_000_000).to_bytes(8, "little")
+        raw[16:24] = (1_000_000_000_000).to_bytes(8, "little")
         with patch.object(chain, "_account", return_value={
             "owner": chain.PROGRAMS["moonit_amm"], "data": bytes(raw)
         }), patch.object(chain, "_multiple_accounts_with_context", return_value=(
@@ -113,7 +113,7 @@ class MoonitDirectQuoteTests(unittest.TestCase):
             ], 789
         )):
             result = chain.quote_moonit_pool(self.pool, chain.SOL_MINT, 100_000_000)
-        self.assertEqual(result["out_amount"], 100_000_000_000_000)
+        self.assertEqual(result["out_amount"], 1_000_000_000_000)
 
     def test_rejects_empty_curve_and_invalid_config_discriminator(self):
         raw = bytearray(self.pool_data)
