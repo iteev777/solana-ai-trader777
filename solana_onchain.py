@@ -713,10 +713,14 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         if TOKEN_2022_PROGRAM in (token_program_base, token_program_quote):
             raise ValueError("Token-2022 mint owner does not match the token program recorded in the Raydium CPMM pool")
         raise ValueError("Pool token program does not match its mint account owner")
-    if token_program_base == TOKEN_2022_PROGRAM:
-        token2022.validate_zero_fee_mint_data(mint_base_acc["data"])
-    if token_program_quote == TOKEN_2022_PROGRAM:
-        token2022.validate_zero_fee_mint_data(mint_quote_acc["data"])
+    base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_base_acc["data"])
+        if token_program_base == TOKEN_2022_PROGRAM else None
+    )
+    quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc["data"])
+        if token_program_quote == TOKEN_2022_PROGRAM else None
+    )
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
     pool_authority, _ = _find_program_address(
@@ -757,20 +761,35 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
             or (fee_on == 2 and not input_is_token0)
         )
     )
-    trade_fee = (amount_in * config["trade_fee_rate"] + 999_999) // 1_000_000
+    input_fee_config = (
+        base_token2022 if input_mint == decoded["base_mint"] else quote_token2022
+    )
+    output_fee_config = (
+        quote_token2022 if input_mint == decoded["base_mint"] else base_token2022
+    )
+    received_by_pool = token2022.conservative_net_amount(
+        (input_fee_config or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
+    trade_fee = (received_by_pool * config["trade_fee_rate"] + 999_999) // 1_000_000
     creator_fee_input = (
-        (amount_in * creator_rate + 999_999) // 1_000_000
+        (received_by_pool * creator_rate + 999_999) // 1_000_000
         if creator_on_input else 0
     )
-    net_input = amount_in - trade_fee - creator_fee_input
+    net_input = received_by_pool - trade_fee - creator_fee_input
     if net_input <= 0:
-        raise ValueError("Input is fully consumed by Raydium CPMM fees")
+        raise ValueError("Input is fully consumed by Raydium CPMM and Token-2022 fees")
     raw_output = (reserve_out * net_input) // (reserve_in + net_input)
     creator_fee_output = (
         (raw_output * creator_rate + 999_999) // 1_000_000
         if creator_rate and not creator_on_input else 0
     )
-    output_amount = raw_output - creator_fee_output
+    gross_output_after_creator = raw_output - creator_fee_output
+    output_amount = token2022.conservative_net_amount(
+        (output_fee_config or {}).get("transfer_fee_config"),
+        gross_output_after_creator,
+    )
     if output_amount <= 0 or output_amount >= reserve_out:
         raise ValueError("Raydium CPMM quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
@@ -799,6 +818,10 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         "trade_fee_amount": trade_fee,
         "creator_fee_input_amount": creator_fee_input,
         "creator_fee_output_amount": creator_fee_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < gross_output_after_creator,
+        "token2022_output_gross_amount": gross_output_after_creator,
         "out_amount": output_amount,
         "minimum_out_amount": minimum_out,
         "price_impact_percent": round(impact * 100, 6),
