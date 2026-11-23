@@ -116,7 +116,7 @@ class LiveTrading:
         reason
     ):
 
-        if not LIVE_TRADING_ENABLED:
+        if not _live_trading_enabled():
             return "LIVE TRADING LOCKED"
 
         return "LIVE EXECUTION NOT IMPLEMENTED"
@@ -127,7 +127,7 @@ class LiveTrading:
         current_price
     ):
 
-        if not LIVE_TRADING_ENABLED:
+        if not _live_trading_enabled():
             return "LIVE TRADING LOCKED"
 
         return "LIVE EXECUTION NOT IMPLEMENTED"
