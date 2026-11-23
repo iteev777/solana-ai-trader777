@@ -29,11 +29,18 @@ _cache = {"updated_at": 0.0, "report": None}
 
 def _finite_pnl(row):
     try:
-        value = float(row.get("profit_loss") or 0)
-    except (TypeError, ValueError, OverflowError, AttributeError):
+        raw_value = row.get("profit_loss")
+    except AttributeError:
         return None
-    # bool is numeric in Python but is never a valid trade result.
-    if isinstance(row.get("profit_loss"), bool):
+    # Missing/empty P&L is not a breakeven trade. Counting it as zero would
+    # inflate the learning sample and dilute the strategy's actual outcomes.
+    if raw_value is None or isinstance(raw_value, bool):
+        return None
+    if isinstance(raw_value, str) and not raw_value.strip():
+        return None
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError, OverflowError):
         return None
     if not __import__("math").isfinite(value):
         return None
