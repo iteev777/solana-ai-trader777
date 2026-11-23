@@ -152,7 +152,7 @@ def _failed(provider, error):
 def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
     """Compare best available quotes; lower bound (min-out) wins.
 
-    Direct pool routes remain explicitly unquoted rather than being guessed.
+    Direct pool routes are included only when a verified protocol-specific adapter exists.
     """
     input_mint, output_mint, amount, slip = _validate(
         input_mint, output_mint, amount, slippage_bps
@@ -191,7 +191,15 @@ def compare_quotes(input_mint, output_mint, amount, slippage_bps=None, pool_addr
                 "snapshot_age_seconds": direct.get("snapshot_age_seconds"),
                 "pool_id": direct["pool_id"],
                 "creator_fee_on_input": direct.get("creator_fee_on_input"),
+                "fee_mint": direct.get("fee_mint"),
                 "fee_amounts": {
+                    "lp": direct.get("lp_fee_amount", direct.get("trade_fee_amount", 0)),
+                    "protocol": direct.get("protocol_fee_amount", direct.get("owner_fee_amount", 0)),
+                    "creator": direct.get(
+                        "creator_fee_amount",
+                        (direct.get("creator_fee_input_amount", 0) or 0)
+                        + (direct.get("creator_fee_output_amount", 0) or 0),
+                    ),
                     "trade": direct.get("trade_fee_amount", 0),
                     "owner": direct.get("owner_fee_amount", 0),
                     "creator_input": direct.get("creator_fee_input_amount", 0),
@@ -243,7 +251,7 @@ def get_router_status():
                 "Raydium CPMM", "Orca Whirlpool", "Meteora", "PumpSwap",
                 "Pump.fun bonding curve", "FluxBeam", "Moonit"
             ],
-            "quote_adapters": ["Raydium CPMM", "Raydium AMM v4", "FluxBeam"],
+            "quote_adapters": ["PumpSwap", "Raydium CPMM", "Raydium AMM v4", "FluxBeam"],
             "requires_pool_address": True,
         },
         "execution_locked": True,
