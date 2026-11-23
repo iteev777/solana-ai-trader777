@@ -1,9 +1,9 @@
 """Unsigned Meteora DLMM Swap2 transaction builder.
 
-The first native path is deliberately limited to the existing read-only quote
-adapter's classic SPL Token / function_type=0 pool mode. It builds Swap2 with
-the official account order and empty RemainingAccountsInfo, then requires an
-unsigned RPC simulation. It never signs or broadcasts.
+Supports function_type=0 pools with legacy SPL Token or the audited Token-2022
+transfer-fee extension subset. It builds Swap2 with empty RemainingAccountsInfo,
+requires an unsigned RPC simulation, and never signs or broadcasts. Transfer
+hooks and unsupported mint extensions remain blocked.
 """
 import base64
 import hashlib
@@ -12,6 +12,7 @@ import struct
 import solana_onchain as chain
 from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 import meteora_dlmm_quote as dlmm_quote
+import token2022_inspector as token2022
 
 DLMM_PROGRAM_ID = chain.PROGRAMS["meteora_dlmm"]
 SWAP2_DISCRIMINATOR = bytes([65, 75, 63, 76, 235, 91, 91, 136])
@@ -52,19 +53,10 @@ def _compile_message(wallet, blockhash, metas, data):
     )
 
 
-def _decode_user_token(account, wallet, mint, label):
-    if not isinstance(account, dict) or account.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " has an invalid legacy token-account layout")
-    if chain._key(raw, 0) != mint:
-        raise ValueError(label + " mint does not match the requested swap")
-    if chain._key(raw, 32) != wallet:
-        raise ValueError(label + " is not owned by the signing wallet")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    return chain._u64(raw, 64)
+def _decode_user_token(account, token_program, wallet, mint, label, minimum=0):
+    return token2022.validate_token_account_for_program(
+        account, token_program, mint, wallet, label, minimum
+    )
 
 
 def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
@@ -105,6 +97,9 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         or fresh.get("slot", 0) < quote_slot
     ):
         raise ValueError("Fresh Meteora DLMM quote does not validate pool, pair and amount")
+    for field in ("token_program_input", "token_program_output"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("DLMM token program state changed since the supplied quote")
     minimum_out = fresh.get("minimum_out_amount")
     if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= 2**64 - 1:
         raise ValueError("Fresh Meteora DLMM minimum output is invalid")
@@ -176,16 +171,33 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("Meteora DLMM pool state changed after the fresh quote")
     if slot < fresh.get("slot", 0) or slot - fresh.get("slot", 0) > max_quote_slot_lag:
         raise ValueError("Fresh DLMM quote is stale relative to transaction snapshot")
-    if any(a.get("owner") != chain.TOKEN_PROGRAM for a in (mint_x, mint_y, reserve_x, reserve_y)):
-        raise ValueError("Native DLMM builder supports legacy SPL Token mints and reserves only")
-    for mint_account, label in ((mint_x, "Token X mint"), (mint_y, "Token Y mint")):
+    token_program_x = mint_x.get("owner")
+    token_program_y = mint_y.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_x not in supported_programs or token_program_y not in supported_programs:
+        raise ValueError("DLMM mint uses an unsupported token program")
+    if reserve_x.get("owner") != token_program_x or reserve_y.get("owner") != token_program_y:
+        raise ValueError("DLMM reserve token program does not match its mint")
+    for mint_account, token_program, label in (
+        (mint_x, token_program_x, "Token X mint"),
+        (mint_y, token_program_y, "Token Y mint"),
+    ):
         mint_data = mint_account.get("data", b"")
-        if len(mint_data) != 82 or mint_data[45] != 1:
+        if token_program == chain.TOKEN_2022_PROGRAM:
+            token2022.validate_swap_compatible_mint_data(mint_data)
+        elif not isinstance(mint_data, (bytes, bytearray)) or len(mint_data) != 82 or mint_data[45] != 1:
             raise ValueError(label + " has an invalid or uninitialized legacy mint layout")
-    if chain._key(reserve_x.get("data", b""), 32) != pool or chain._key(reserve_y.get("data", b""), 32) != pool:
-        raise ValueError("DLMM reserve authority does not match the LbPair")
-    chain._token_amount(reserve_x, state["mint_x"])
-    chain._token_amount(reserve_y, state["mint_y"])
+    token2022.validate_token_account_for_program(
+        reserve_x, token_program_x, state["mint_x"], pool, "DLMM reserve X", 1
+    )
+    token2022.validate_token_account_for_program(
+        reserve_y, token_program_y, state["mint_y"], pool, "DLMM reserve Y", 1
+    )
+    token_program_input = token_program_x if input_is_x else token_program_y
+    token_program_output = token_program_y if input_is_x else token_program_x
+    if (fresh.get("token_program_input") != token_program_input
+            or fresh.get("token_program_output") != token_program_output):
+        raise ValueError("DLMM token program state changed during transaction preparation")
     expected_oracle = chain._find_program_address(
         [b"oracle", chain._b58decode(pool)], DLMM_PROGRAM_ID
     )[0]
@@ -206,8 +218,12 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
     elif bitmap_acc is not None:
         raise ValueError("DLMM bitmap extension appeared after the quote snapshot")
 
-    balance_x = _decode_user_token(user_x_acc, wallet, state["mint_x"], "User token X account")
-    balance_y = _decode_user_token(user_y_acc, wallet, state["mint_y"], "User token Y account")
+    balance_x = _decode_user_token(
+        user_x_acc, token_program_x, wallet, state["mint_x"], "User token X account"
+    )
+    balance_y = _decode_user_token(
+        user_y_acc, token_program_y, wallet, state["mint_y"], "User token Y account"
+    )
     input_balance = balance_x if input_is_x else balance_y
     if input_balance < amount:
         raise ValueError("Wallet input token account has insufficient balance")
@@ -241,8 +257,8 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         {"pubkey": state["oracle"], "is_signer": False, "is_writable": True},
         {"pubkey": host_fee_account_key, "is_signer": False, "is_writable": False},
         {"pubkey": wallet, "is_signer": True, "is_writable": False},
-        {"pubkey": chain.TOKEN_PROGRAM, "is_signer": False, "is_writable": False},
-        {"pubkey": chain.TOKEN_PROGRAM, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_x, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_y, "is_signer": False, "is_writable": False},
         {"pubkey": MEMO_PROGRAM_ID, "is_signer": False, "is_writable": False},
         {"pubkey": event_authority, "is_signer": False, "is_writable": False},
         {"pubkey": DLMM_PROGRAM_ID, "is_signer": False, "is_writable": False},
@@ -264,6 +280,9 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         "fresh_quote_slot": fresh["slot"], "quote_slot_lag": slot - fresh["slot"],
         "input_mint": input_mint, "output_mint": output_mint,
         "input_amount": amount, "minimum_output_amount": minimum_out,
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_fee_aware_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
         "instruction": "Swap2", "instruction_discriminator": list(SWAP2_DISCRIMINATOR),
         "bin_array_indices": indices, "bin_array_addresses": addresses,
         "bitmap_extension": bitmap_address if bitmap_present else None,
