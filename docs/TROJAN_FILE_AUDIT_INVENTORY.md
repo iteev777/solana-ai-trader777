@@ -80,7 +80,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `live_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `live_trading.py` | Ei vielä kartoitettu | PENDING |  |
 | `main.py` | `src/trader/` supervisor/position-monitor files, `src/services/mod.rs`, `src/process/shutdown.rs` | PARTIAL | Position monitor and market-price timestamp handoff compared; DCA timestamp is fail-closed. Added service-manager registration for dashboard, PumpPortal listener and configured copy-wallet monitor; SIGINT/SIGTERM set a shutdown event, loop wait is interruptible and managed services stop in reverse order (`7dcdba0`). Two focused lifecycle tests passed in 1,113-test run `45262469469`; full file audit and remaining workers still open. |
-| `market_data.py` | Ei vielä kartoitettu | PENDING |  |
+| `market_data.py` | `src/ohlcvs/fetcher.rs`, `feeds.rs`, `manager.rs`; Solana pool fetcher | PARTIAL | Compared complete Trojan spot-market fetch path with reference OHLCV multi-source candle fetcher and pool-account fetcher. Trojan uses DexScreener 30-token batches, Gecko pool fallback, 10s bounded cache, request dedupe, 150ms batch coalescing, 12s shared deadline and canonical native-pair selector with 80% incumbent hysteresis. Reference OHLCV path adds chain-owned feeds, Data Server fallback, typed deferral/rate-limit handling, historical pagination and candle persistence; not a one-to-one spot price equivalent. Potential issue retained for caller review: one exception inside a batch's per-mint merge loop causes the whole batch to fall back rather than isolating that mint. Background worker is daemon/infinite and currently has no explicit stop hook; inspect service shutdown ownership before changing. No tests run. |
 | `meteora_damm_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `meteora_damm_v2_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `meteora_dbc_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -89,7 +89,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `meteora_dlmm_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `moonit_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `native_execution.py` | Ei vielä kartoitettu | PENDING |  |
-| `ohlcv_integrity.py` | Ei vielä kartoitettu | PENDING |  |
+| `ohlcv_integrity.py` | `src/ohlcvs/fetcher.rs`, `aggregator.rs`, `gaps.rs`, `monitor.rs`, `types.rs` | PARTIAL | Compared candle row validation/freshness/gap quality with reference OHLCV storable-candle rules, duplicate timestamp handling, UTC bucket alignment, gap filling and native series monitor. Trojan enforces OHLC consistency, positive prices, nonnegative volume, integer timestamps, future bound, duplicate de-duplication, freshness and max-gap readiness; reference additionally maintains persisted gap attempts, multi-source fallback, timeframe-specific settle/freshness and no-newer coverage state. Fixed bool being accepted as numeric candle fields (`True` -> 1.0, `False` -> 0.0); commit `f9c1612` (`fix(ohlcv): reject boolean candle fields`). No tests run. Full provider/series lifecycle parity remains open. |
 | `onchain_stream.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_quote.py` | Ei vielä kartoitettu | PENDING |  |
