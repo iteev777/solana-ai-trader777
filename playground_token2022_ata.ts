@@ -40,6 +40,9 @@ function verifyToken2022Ata(data: Uint8Array, mint: PublicKey, owner: PublicKey)
   if (raw[108] !== 1) {
     throw new Error("ATA initialized-state verification failed.");
   }
+  if (raw.readUInt32LE(72) !== 0 || raw.readUInt32LE(129) !== 0) {
+    throw new Error("ATA must not have a delegate or close authority.");
+  }
   if (raw[165] !== 2) {
     throw new Error("ATA Token-2022 account-type marker is invalid.");
   }
