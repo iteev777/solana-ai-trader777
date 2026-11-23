@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,15 +13,36 @@ from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
 from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coingecko, scan_defillama
 
+def _env_enabled(name, default=True):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dexscreener_scanners_from_env():
+    """Mirror ScreenerBot's provider and per-feed discovery switches."""
+    if not _env_enabled("TROJAN_DEXSCREENER_ENABLED", True):
+        return []
+    configured = [
+        ("TROJAN_DEXSCREENER_PROFILES_ENABLED", "dexscreener_profiles", scan_profiles),
+        ("TROJAN_DEXSCREENER_LATEST_BOOSTS_ENABLED", "dexscreener_latest_boosts", scan_latest_boosts),
+        ("TROJAN_DEXSCREENER_TOP_BOOSTS_ENABLED", "dexscreener_top_boosts", scan_top_boosts),
+    ]
+    return [
+        (label, scanner)
+        for env_name, label, scanner in configured
+        if _env_enabled(env_name, True)
+    ]
+
+
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
     ("geckoterminal_recently_updated", scan_recently_updated_tokens),
     ("birdeye_meme_listing", scan_pumpfun),
     ("birdeye", scan_birdeye),
-    ("dexscreener_profiles", scan_profiles),
-    ("dexscreener_latest_boosts", scan_latest_boosts),
-    ("dexscreener_top_boosts", scan_top_boosts),
+    *_dexscreener_scanners_from_env(),
     ("rugcheck", scan_rugcheck),
     ("jupiter", scan_jupiter),
     ("coingecko", scan_coingecko),
