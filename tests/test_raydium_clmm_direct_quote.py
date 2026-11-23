@@ -107,14 +107,18 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         config[51:53] = (1).to_bytes(2, "little")
         self.config_data = bytes(config)
 
-        def token_account(mint, amount):
+        def token_account(mint, amount, authority=None):
             data = bytearray(165)
             data[:32] = chain._b58decode(mint)
+            if authority is not None:
+                data[32:64] = chain._b58decode(authority)
             data[64:72] = amount.to_bytes(8, "little")
+            data[108] = 1
             return {"owner": chain.TOKEN_PROGRAM, "data": bytes(data)}
 
-        self.vault0_account = token_account(self.mint0, 10**12)
-        self.vault1_account = token_account(self.mint1, 10**12)
+        self.token_account = token_account
+        self.vault0_account = token_account(self.mint0, 10**12, self.pool)
+        self.vault1_account = token_account(self.mint1, 10**12, self.pool)
 
         mint0 = bytearray(82)
         mint0[44] = 6
