@@ -110,12 +110,14 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         pool_account = self.pool_account if pair_data is None else {
             "owner": chain.PROGRAMS["meteora_dlmm"], "data": pair_data
         }
+        def snapshot(keys):
+            values = self._accounts_for(keys, overrides)
+            values[0] = pool_account
+            return values, 123987
         with (
             patch.object(chain, "_account", return_value=pool_account),
             patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
-            patch.object(chain, "_multiple_accounts_with_context", side_effect=lambda keys: (
-                self._accounts_for(keys, overrides), 123987
-            )),
+            patch.object(chain, "_multiple_accounts_with_context", side_effect=snapshot),
         ):
             return quote_meteora_dlmm_pool(
                 self.pool, input_mint or self.mint_x, amount,
