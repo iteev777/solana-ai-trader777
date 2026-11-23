@@ -1,6 +1,16 @@
 """Dashboard-friendly strategy condition catalog and safe presets."""
+import os
+import math
 import strategy_rules
 import strategy_conditions
+
+def _indicator_max_age():
+    try:
+        value = float(os.getenv("TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS", "180"))
+    except (TypeError, ValueError, OverflowError):
+        return 180.0
+    return value if math.isfinite(value) and 30.0 <= value <= 3600.0 else 180.0
+
 
 PRESETS = {
     "momentum_confirmation": {
@@ -39,5 +49,11 @@ def get_strategy_catalog():
         "timeframes": ["1m", "5m", "15m", "1h", "4h", "12h", "1d"],
         "logic": ["all", "any", "not"],
         "paper_validation_recommended": True,
+        "indicator_freshness": {
+            "enabled": True,
+            "max_age_seconds": _indicator_max_age(),
+            "missing_timestamp": "reject",
+            "future_timestamp": "reject",
+        },
         "live_execution": "locked",
     }
