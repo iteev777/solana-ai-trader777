@@ -202,6 +202,9 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
     if pool_acc.get("owner") != DLMM_PROGRAM_ID:
         raise ValueError("DLMM pool owner changed during transaction snapshot")
     state = dlmm_quote._decode_pair(pool_acc.get("data"), chain)
+    for field in ("mint_x", "mint_y", "reserve_x", "reserve_y", "oracle"):
+        if state[field] != first[field]:
+            raise ValueError("Meteora DLMM pool identity changed during transaction preparation")
     if hashlib.sha256(pool_acc["data"]).hexdigest() != fresh.get("pool_state_sha256"):
         raise ValueError("Meteora DLMM pool state changed after the fresh quote")
     if slot < fresh.get("slot", 0) or slot - fresh.get("slot", 0) > max_quote_slot_lag:
