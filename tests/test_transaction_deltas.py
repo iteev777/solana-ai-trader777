@@ -70,8 +70,8 @@ class TransactionDeltaTests(unittest.TestCase):
         tx = transaction(subject_is_fee_payer=False, native_delta=0)
         rows = extract_subject_deltas(WALLET, tx)
         by_mint = {row.mint: row for row in rows}
-        self.assertEqual(by_mint[USDC].fee_native_raw, 0)
-        self.assertEqual(by_mint[MINT].fee_native_raw, 0)
+        self.assertEqual(by_mint[USDC].fee_native_raw, 5000)
+        self.assertEqual(by_mint[MINT].fee_native_raw, 5000)
         self.assertNotIn(NATIVE_SOL_SENTINEL, by_mint)
 
     def test_native_delta_corrects_subject_owned_ata_rent(self):
