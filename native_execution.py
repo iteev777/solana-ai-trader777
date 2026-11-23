@@ -14,6 +14,7 @@ import threading
 import time
 
 import solana_onchain as chain
+import database
 
 
 APPROVAL_TTL_SECONDS = 120
@@ -23,7 +24,6 @@ MAX_APPROVALS = 512
 NATIVE_BROADCAST_HARD_LOCK = True
 MAX_TRANSACTION_BYTES = 1232
 _lock = threading.Lock()
-_approvals = {}
 
 
 class NativeExecutionLocked(RuntimeError):
@@ -40,6 +40,25 @@ def _enabled():
     return os.getenv("TROJAN_NATIVE_EXECUTE_ENABLED", "false").strip().lower() in {
         "1", "true", "yes", "on"
     }
+
+
+def _ensure_approval_table():
+    with database.connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS native_transaction_approvals (
+                request_id TEXT PRIMARY KEY,
+                message BLOB NOT NULL,
+                message_sha256 TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                last_valid_block_height INTEGER NOT NULL,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_native_approvals_expiry
+            ON native_transaction_approvals(expires_at)
+        """)
 
 
 def _decode_transaction(value):
@@ -102,28 +121,42 @@ def register_native_approval(unsigned_transaction, protocol, last_valid_block_he
         raise NativeExecutionRejected("Valid block height is required")
     raw = _decode_transaction(unsigned_transaction)
     _, message = _split_transaction(raw, require_signature=False)
-    now = time.monotonic()
+    now = time.time()
     request_id = secrets.token_urlsafe(24)
-    entry = {
-        "message": message,
-        "message_sha256": hashlib.sha256(message).hexdigest(),
-        "protocol": protocol,
-        "last_valid_block_height": last_valid_block_height,
-        "expires_at": now + APPROVAL_TTL_SECONDS,
-    }
-    with _lock:
-        expired = [key for key, value in _approvals.items() if value["expires_at"] <= now]
-        for key in expired:
-            _approvals.pop(key, None)
-        if len(_approvals) >= MAX_APPROVALS:
-            oldest = min(_approvals, key=lambda key: _approvals[key]["expires_at"])
-            _approvals.pop(oldest, None)
-        _approvals[request_id] = entry
+    message_sha256 = hashlib.sha256(message).hexdigest()
+    expires_at = now + APPROVAL_TTL_SECONDS
+    _ensure_approval_table()
+    with _lock, database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM native_transaction_approvals WHERE expires_at <= ?",
+            (now,),
+        )
+        count = connection.execute(
+            "SELECT COUNT(*) FROM native_transaction_approvals"
+        ).fetchone()[0]
+        if count >= MAX_APPROVALS:
+            connection.execute("""
+                DELETE FROM native_transaction_approvals
+                WHERE request_id IN (
+                    SELECT request_id FROM native_transaction_approvals
+                    ORDER BY expires_at ASC LIMIT ?
+                )
+            """, (count - MAX_APPROVALS + 1,))
+        connection.execute("""
+            INSERT INTO native_transaction_approvals (
+                request_id, message, message_sha256, protocol,
+                last_valid_block_height, expires_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            request_id, message, message_sha256, protocol,
+            last_valid_block_height, expires_at, now,
+        ))
     return {
         "request_id": request_id,
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
-        "message_sha256": entry["message_sha256"],
-        "approval": "SIMULATED_SINGLE_USE",
+        "message_sha256": message_sha256,
+        "approval": "PERSISTED_SIMULATED_SINGLE_USE",
     }
 
 
@@ -137,15 +170,35 @@ def consume_native_approval(signed_transaction, request_id):
         raise NativeExecutionRejected("A valid single-use native request_id is required")
     raw = _decode_transaction(signed_transaction)
     signature, message = _split_transaction(raw, require_signature=True)
-    now = time.monotonic()
-    with _lock:
-        approval = _approvals.pop(request_id, None)
-    if approval is None:
-        raise NativeExecutionRejected("Native transaction approval is missing, expired or already consumed")
-    if approval["expires_at"] <= now:
+    now = time.time()
+    _ensure_approval_table()
+    expired = False
+    with _lock, database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        approval = connection.execute("""
+            SELECT message, message_sha256, protocol,
+                   last_valid_block_height, expires_at
+            FROM native_transaction_approvals
+            WHERE request_id = ?
+        """, (request_id,)).fetchone()
+        if approval is None:
+            raise NativeExecutionRejected("Native transaction approval is missing, expired or already consumed")
+        if approval["expires_at"] <= now:
+            connection.execute(
+                "DELETE FROM native_transaction_approvals WHERE request_id = ?",
+                (request_id,),
+            )
+            expired = True
+        else:
+            approved_message = bytes(approval["message"])
+            if not secrets.compare_digest(message, approved_message):
+                raise NativeExecutionRejected("Signed transaction message differs from the simulated approval")
+            connection.execute(
+                "DELETE FROM native_transaction_approvals WHERE request_id = ?",
+                (request_id,),
+            )
+    if expired:
         raise NativeExecutionRejected("Native transaction approval has expired")
-    if not secrets.compare_digest(message, approval["message"]):
-        raise NativeExecutionRejected("Signed transaction message differs from the simulated approval")
     return {
         "signature": signature,
         "message": message,
@@ -168,7 +221,7 @@ def get_native_execution_status():
         "requires_exact_simulated_message_match": True,
         "requires_signed_rpc_simulation": True,
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
-        "approval_cache": "process_local_single_use",
+        "approval_cache": "persistent_sqlite_single_use",
         "supported_protocols": ["raydium_cpmm", "raydium_clmm", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "meteora_dbc", "pumpswap", "orca_whirlpool", "meteora_dlmm"],
         "private_key_custody": False,
         "server_signing": False,
