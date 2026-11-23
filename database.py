@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -398,6 +398,22 @@ def initialize_database():
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_pool_registry_updated_at
             ON pool_registry(updated_at)
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS native_transaction_approvals (
+                request_id TEXT PRIMARY KEY,
+                message BLOB NOT NULL,
+                message_sha256 TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                last_valid_block_height INTEGER NOT NULL,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_native_approvals_expiry
+            ON native_transaction_approvals(expires_at)
         """)
 
         connection.execute("""
