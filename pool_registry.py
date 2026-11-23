@@ -25,6 +25,22 @@ FULL_POOL_REFRESH_TTL_SECONDS = 60
 POOL_REFRESH_RETRY_SECONDS = 30
 POOL_PERSIST_INTERVAL_SECONDS = 60
 
+
+def _valid_solana_address(value):
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        import solana_onchain as chain
+        decoded = chain._b58decode(value)
+        return (
+            isinstance(decoded, (bytes, bytearray))
+            and len(decoded) == 32
+            and chain._b58encode(decoded) == value
+        )
+    except Exception:
+        return False
+
+
 _lock = threading.RLock()
 _candidates = OrderedDict()
 _candidate_updated_at = {}
@@ -44,15 +60,18 @@ _status = {
 
 def _pool_address(pair):
     value = pair.get("pairAddress") or pair.get("poolAddress") or pair.get("address")
-    return value.strip() if isinstance(value, str) and value.strip() else None
+    return value if _valid_solana_address(value) else None
 
 
 def _pool_liquidity(pair):
     liquidity = pair.get("liquidity")
     if not isinstance(liquidity, dict):
         return 0.0
+    raw_value = liquidity.get("usd")
+    if isinstance(raw_value, bool):
+        return 0.0
     try:
-        value = float(liquidity.get("usd") or 0)
+        value = float(raw_value or 0)
         return value if value >= 0 and value < float("inf") else 0.0
     except (TypeError, ValueError, OverflowError):
         return 0.0
@@ -64,8 +83,12 @@ def _pool_priority(pair):
     liquidity = pair.get("liquidity")
     liquidity = liquidity if isinstance(liquidity, dict) else {}
     if quote_address == WSOL_MINT:
+        raw_reserve = liquidity.get("quote")
         try:
-            native_reserve = float(liquidity.get("quote") or 0)
+            native_reserve = (
+                0.0 if isinstance(raw_reserve, bool)
+                else float(raw_reserve or 0)
+            )
         except (TypeError, ValueError, OverflowError):
             native_reserve = 0.0
         return (1, max(0.0, native_reserve), _pool_liquidity(pair))
@@ -74,9 +97,8 @@ def _pool_priority(pair):
 
 def merge_pool_candidates(mint, pairs, source):
     """Merge pool rows by pool address while preserving source provenance."""
-    if not isinstance(mint, str) or not mint.strip() or not isinstance(pairs, list):
+    if not _valid_solana_address(mint) or not isinstance(pairs, list):
         return 0
-    mint = mint.strip()
     now = time.time()
     # Hydrate stale-safe persisted candidates before merging fresh provider rows.
     get_pool_candidates(mint)
@@ -118,15 +140,23 @@ def merge_pool_candidates(mint, pairs, source):
             key=lambda item: (_pool_priority(item[1]), item[0]),
             reverse=True
         )[:MAX_POOLS_PER_TOKEN]
-        _candidates[mint] = OrderedDict(ordered)
-        _candidate_updated_at[mint] = now
-        _candidates.move_to_end(mint)
+        if merged_count > 0:
+            _candidates[mint] = OrderedDict(ordered)
+            _candidate_updated_at[mint] = now
+            _candidates.move_to_end(mint)
+        elif rows:
+            # An empty/invalid provider response must not refresh old pool data.
+            _candidates[mint] = OrderedDict(ordered)
+            _candidates.move_to_end(mint)
+        else:
+            _candidates.pop(mint, None)
+            _candidate_updated_at.pop(mint, None)
         while len(_candidates) > MAX_TOKENS:
             removed, _ = _candidates.popitem(last=False)
             _candidate_updated_at.pop(removed, None)
             _persisted_at.pop(removed, None)
         _status["pools_merged"] += merged_count
-        should_persist = bool(rows) and (
+        should_persist = merged_count > 0 and bool(rows) and (
             structural_change
             or now - _persisted_at.get(mint, 0.0) >= POOL_PERSIST_INTERVAL_SECONDS
         )
@@ -147,9 +177,9 @@ def merge_pool_candidates(mint, pairs, source):
 
 
 def get_pool_candidates(mint):
-    if not isinstance(mint, str) or not mint.strip():
+    if not _valid_solana_address(mint):
         return []
-    normalized = mint.strip()
+    normalized = mint
     with _lock:
         rows = _candidates.get(normalized)
         updated_at = _candidate_updated_at.get(normalized, 0.0)
@@ -248,9 +278,8 @@ def _enqueue(source, mint):
 
 
 def needs_dexscreener_refresh(mint):
-    if not isinstance(mint, str) or not mint.strip():
+    if not _valid_solana_address(mint):
         return False
-    mint = mint.strip()
     now = time.time()
     with _lock:
         refreshed = _full_refresh_at.get(mint, 0.0)
@@ -259,18 +288,16 @@ def needs_dexscreener_refresh(mint):
 
 
 def enqueue_dex_pool_refresh(mint):
-    if not isinstance(mint, str) or not mint.strip():
+    if not _valid_solana_address(mint):
         return False
-    mint = mint.strip()
     if not needs_dexscreener_refresh(mint):
         return False
     return _enqueue("dexscreener", mint)
 
 
 def enqueue_gecko_pool_fetch(mint):
-    if not isinstance(mint, str) or not mint.strip():
+    if not _valid_solana_address(mint):
         return False
-    mint = mint.strip()
     with _lock:
         if time.time() < _gecko_retry_at.get(mint, 0.0):
             return False
@@ -279,6 +306,8 @@ def enqueue_gecko_pool_fetch(mint):
 
 def fetch_dexscreener_token_pools(mint):
     """Fetch all known pools for a token from token-pairs/v1 (max 30)."""
+    if not _valid_solana_address(mint):
+        raise ValueError("DexScreener pool refresh requires a canonical Solana mint")
     url = DEXSCREENER_TOKEN_POOLS_URL + mint
     with _lock:
         _status["last_request_at"] = time.time()
@@ -309,6 +338,8 @@ def fetch_dexscreener_token_pools(mint):
 
 def fetch_gecko_pool_candidates(mint):
     """Fetch GeckoTerminal's complete token pool list and merge it by pool address."""
+    if not _valid_solana_address(mint):
+        raise ValueError("GeckoTerminal pool refresh requires a canonical Solana mint")
     url = GECKO_TOKEN_POOLS_URL + mint + "/pools?include=base_token,quote_token,dex"
     with _lock:
         _status["last_request_at"] = time.time()
