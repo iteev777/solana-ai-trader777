@@ -22,7 +22,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `.github/workflows/trojan-full-validation.yml` | Ei vielä kartoitettu | PENDING |  |
 | `.gitignore` | `.gitignore`<br>`electron/.gitignore` | PENDING |  |
 | `DEX_EXECUTION.md` | Ei vielä kartoitettu | PENDING |  |
-| `README.md` | `README.md`<br>`electron/README.md`<br>`electron/assets/README.md`<br>`src/apis/README.md`<br>`src/apis/llm/deepseek/README.md`<br>`src/ohlcvs/README.md`<br>`src/tokens/README.md` | PENDING |  |
+| `README.md` | `README.md`<br>`electron/README.md`<br>`electron/assets/README.md`<br>`src/apis/README.md`<br>`src/apis/llm/deepseek/README.md`<br>`src/ohlcvs/README.md`<br>`src/tokens/README.md` | UPDATED | Documented durable copy-wallet signature catch-up, page size, poll interval, bounded skip-to-head and stale-event behavior. Commit `4672227`; full validation `45254436959`. ScreenerBot docs comparison remains pending. |
 | `adaptive_learning.py` | Ei vielä kartoitettu | PENDING |  |
 | `ai_analyzer.py` | Ei vielä kartoitettu | PENDING |  |
 | `api_client.py` | `src/apis/` request clients | TESTED | Added per-host/per-endpoint request, cache, latency and error telemetry; cache-miss accounting is limited to cache-enabled requests. Tests `test_api_client_stats.py`; full validation run `45254436959` (998 tests).  |
@@ -63,7 +63,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `docs/OHLCV.md` | Ei vielä kartoitettu | PENDING |  |
 | `docs/PUMPSWAP_V2_BUILDER.md` | Ei vielä kartoitettu | PENDING |  |
 | `docs/RAYDIUM_CPMM_BUILDER.md` | Ei vielä kartoitettu | PENDING |  |
-| `docs/SCREENERBOT_PARITY_LEDGER.md` | Ei vielä kartoitettu | PENDING |  |
+| `docs/SCREENERBOT_PARITY_LEDGER.md` | ScreenerBot full-tree inventory and subsystem source references | UPDATED | Updated file-level parity findings for APIs, pools/cache, OHLCV, strategies, DCA, copy-wallet replay and swap error taxonomy. Commit `f2bd7a0`; validation `45254436959`. Full inventory audit remains open. |
 | `docs/playground-token2022-share.txt` | Ei vielä kartoitettu | PENDING |  |
 | `docs/token2022-signer.html` | Ei vielä kartoitettu | PENDING |  |
 | `entry_intelligence.py` | Ei vielä kartoitettu | PENDING |  |
@@ -121,7 +121,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `telegram_alerts.py` | Ei vielä kartoitettu | PENDING |  |
 | `test_discovery.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_advanced_security_validation.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_api_client_stats.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_api_client_stats.py` | `src/apis/` client tests | TESTED | Covers per-host/per-endpoint request, cache, latency and failure telemetry; full validation `45254436959`. |
 | `tests/test_ata_manager.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_ata_manager_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_blacklist.py` | Ei vielä kartoitettu | PENDING |  |
@@ -142,7 +142,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_database_pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dex_engine.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dex_execution.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_dexscreener_api.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_dexscreener_api.py` | DexScreener API behavior tests | TESTED | Covers token pools, batch lookup, pair lookup, search, token orders and supported chains; full validation `45254436959`. |
 | `tests/test_dexscreener_discovery.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dexscreener_discovery_config.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_dexscreener_rate_buckets.py` | Ei vielä kartoitettu | PENDING |  |
@@ -180,8 +180,8 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_onchain_indicators.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_orca_whirlpool_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_paper_fill_model.py` | `tests/trader_dca.rs` | PARTIAL | DCA fill integration fixture updated for strict threshold and timestamp; other tests in file not fully audited. Commit `0418985`. |
-| `tests/test_paper_position_input_hardening.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_paper_fill_model.py` | `tests/trader_dca.rs`, `src/positions/operations/` | PARTIAL | DCA integration fixture now supplies fresh provider timestamp, enabled policy/step and bounded paper balance; conservative fill-price assertion remains tested. Full validation `45254436959`; other fill-model cases need individual review. |
+| `tests/test_paper_position_input_hardening.py` | `src/positions/` safety and policy tests | PARTIAL | Updated DCA policy-failure fixture for fail-closed policy snapshot; full validation `45254436959`. Remaining paper position tests still need individual review. |
 | `tests/test_pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_cache_prune.py` | Ei vielä kartoitettu | PENDING |  |
