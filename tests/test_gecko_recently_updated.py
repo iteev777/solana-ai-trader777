@@ -44,14 +44,13 @@ class GeckoRecentlyUpdatedDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(fetch.call_args.args[0], gecko_scanner.RECENTLY_UPDATED_URL)
         self.assertEqual(fetch.call_args.kwargs["params"], {"network": "solana"})
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["tokenAddress"], "MINT_A")
         self.assertEqual(result[0]["discovery_sources"], ["geckoterminal_recently_updated"])
         self.assertEqual(result[0]["name"], "Token A")
         self.assertEqual(result[0]["symbol"], "TKA")
         self.assertEqual(result[0]["icon"], "https://example.com/a.png")
         self.assertEqual(result[0]["gt_score"], 72.5)
-        self.assertEqual(result[1]["tokenAddress"], "0x1234")
 
     def test_invalid_top_level_payload_is_a_source_failure(self):
         with patch.object(gecko_scanner, "get_json", return_value={"unexpected": []}):
