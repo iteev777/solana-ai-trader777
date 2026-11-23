@@ -55,6 +55,7 @@ bucket_next_request = {}
 host_blocked_until = {}
 
 cache = {}
+_api_stats = {}
 
 cache_lock = threading.Lock()
 state_lock = threading.Lock()
@@ -292,7 +293,7 @@ def wait_for_request_slot(
 # API REQUEST
 # ==========================================
 
-def get_json(
+def _get_json_impl(
     url,
     params=None,
     headers=None,
@@ -543,6 +544,85 @@ def get_json(
             return data
 
 
+def _record_api_stat(host, endpoint, *, success=None, elapsed_ms=0.0, error=None, cache_hit=False):
+    key = (host, endpoint)
+    with state_lock:
+        stat = _api_stats.setdefault(key, {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "last_request_time": None,
+            "last_success_time": None,
+            "last_error_time": None,
+            "last_error_message": None,
+            "average_response_time_ms": 0.0,
+        })
+        if cache_hit:
+            stat["cache_hits"] += 1
+            return
+        stat["total_requests"] += 1
+        stat["cache_misses"] += 1
+        stat["last_request_time"] = time.time()
+        total = stat["total_requests"]
+        stat["average_response_time_ms"] += (
+            elapsed_ms - stat["average_response_time_ms"]
+        ) / total
+        if success:
+            stat["successful_requests"] += 1
+            stat["last_success_time"] = time.time()
+        else:
+            stat["failed_requests"] += 1
+            stat["last_error_time"] = time.time()
+            stat["last_error_message"] = str(error)[:300] if error else "Unknown API error"
+
+
+def get_json(
+    url,
+    params=None,
+    headers=None,
+    timeout=DEFAULT_TIMEOUT,
+    cache_ttl=0,
+    max_retries=1
+):
+    """Fetch JSON and expose thread-safe per-host/endpoint request statistics."""
+    host, endpoint, _interval = get_rate_bucket(url)
+    if not host:
+        raise ValueError("Invalid API URL")
+
+    key = cache_key(url, params, headers)
+    if cache_ttl > 0:
+        cached_data = get_cached(key)
+        if cached_data is not None:
+            _record_api_stat(host, endpoint, cache_hit=True)
+            return cached_data
+
+    started = time.perf_counter()
+    try:
+        result = _get_json_impl(
+            url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            cache_ttl=cache_ttl,
+            max_retries=max_retries,
+        )
+    except Exception as error:
+        _record_api_stat(
+            host, endpoint, success=False,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            error=error,
+        )
+        raise
+
+    _record_api_stat(
+        host, endpoint, success=True,
+        elapsed_ms=(time.perf_counter() - started) * 1000,
+    )
+    return result
+
+
 # ==========================================
 # CACHE CONTROL
 # ==========================================
@@ -619,8 +699,26 @@ def get_api_status():
     with cache_lock:
         cache_entries = len(cache)
 
+    with state_lock:
+        stats = {}
+        for (key, value in _api_stats.items():
+            host, endpoint = key
+            item = dict(value)
+            total = item["total_requests"]
+            item["success_rate"] = (
+                round(item["successful_requests"] / total * 100.0, 2)
+                if total else 0.0
+            )
+            cache_total = item["cache_hits"] + item["cache_misses"]
+            item["cache_hit_rate"] = (
+                round(item["cache_hits"] / cache_total * 100.0, 2)
+                if cache_total else 0.0
+            )
+            stats.setdefault(host, {})[endpoint] = item
+
     return {
         "hosts": status,
+        "stats": stats,
         "cache_entries": cache_entries
     }
 
