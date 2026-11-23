@@ -89,6 +89,8 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         raise ValueError("Moonit input and output token-account references must be distinct")
 
     token_mint = quote.get("output_mint") if input_mint == chain.SOL_MINT else input_mint
+    if token_mint == chain.SOL_MINT:
+        raise ValueError("Moonit requires one non-SOL base mint")
     if input_mint == chain.SOL_MINT and output_mint == token_mint:
         buying = True
     elif input_mint == token_mint and output_mint == chain.SOL_MINT:
@@ -126,8 +128,11 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         raise ValueError("Moonit builder supports only the verified 9-decimal token format")
     if first.get("base_mint") != token_mint:
         raise ValueError("Quote base mint does not match the Moonit curve")
-    if fresh.get("curve_amount") != first["curve_amount"] or fresh.get("total_supply") != first["total_supply"]:
-        raise ValueError("Moonit curve state changed since the fresh quote")
+    if (fresh.get("curve_amount") != first["curve_amount"]
+            or fresh.get("total_supply") != first["total_supply"]
+            or quote.get("curve_amount") != fresh.get("curve_amount")
+            or quote.get("total_supply") != fresh.get("total_supply")):
+        raise ValueError("Moonit curve state changed since the supplied quote")
 
     config_address, config_bump = chain._find_program_address([CONFIG_SEED], PROGRAM_ID)
     curve_token_account, curve_token_bump = chain._find_program_address(
@@ -170,17 +175,16 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
     helio_fee = chain._key(config_raw, 104)
     dex_fee = chain._key(config_raw, 136)
     fee_bps = chain._u16(config_raw, 168)
-    if fee_bps > 10_000 or fee_bps != fresh.get("fee_bps"):
+    if (fee_bps > 10_000 or fee_bps != fresh.get("fee_bps")
+            or quote.get("fee_bps") != fresh.get("fee_bps")):
         raise ValueError("Moonit fee configuration changed or is invalid")
     _pubkey(helio_fee, "Helio fee recipient")
     _pubkey(dex_fee, "DEX fee recipient")
 
-    input_balance = _token_account(
+    _token_account(
         user_tokens, token_mint, wallet, "Moonit wallet base token account",
         min_balance=amount if not buying else 0,
     )
-    if buying and input_balance < 0:
-        raise ValueError("Moonit wallet base token account is invalid")
 
     if buying:
         discriminator = BUY_DISCRIMINATOR
@@ -191,7 +195,7 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         token_amount = amount
         collateral_amount = minimum_out
     instruction_data = (
-        discriminator + struct.pack("<QQB Q", token_amount, collateral_amount,
+        discriminator + struct.pack("<QQBQ", token_amount, collateral_amount,
                                      FIXED_SIDE_IN, 0)
     )
     metas = [
