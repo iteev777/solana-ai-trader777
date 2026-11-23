@@ -39,7 +39,7 @@ class DiscoverySourceFailureTests(unittest.TestCase):
         }])
 
     def test_aggregator_keeps_healthy_sources_and_reports_recovery(self):
-        mint = "So11111111111111111111111111111111111111112"
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         scanners = [
             ("gecko", gecko_scanner.scan_new_pools),
             ("healthy", lambda: [{"tokenAddress": mint, "chainId": "solana"}]),
@@ -47,8 +47,7 @@ class DiscoverySourceFailureTests(unittest.TestCase):
         ]
         with (
             patch.object(token_aggregator, "SCANNERS", scanners),
-            patch.object(token_aggregator, "_last_source_stats", {}),
-            patch.object(token_aggregator, "_last_scan_at", None),
+            patch.object(token_aggregator, "_last_scan", (None, 0.0, ())),
             patch.object(gecko_scanner, "get_json", side_effect=[requests.Timeout("timed out"), {"data": []}]),
         ):
             for gecko_ok in (False, True):
@@ -59,6 +58,24 @@ class DiscoverySourceFailureTests(unittest.TestCase):
                 self.assertEqual(status["gecko"]["count"], 0)
                 self.assertTrue(status["healthy"]["ok"])
                 self.assertFalse(status["malformed"]["ok"])
+
+    def test_aggregator_validates_mints_and_publishes_isolated_status(self):
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        addresses = [f" {mint} ", "z" * 44, "0" * 32, "1" * 32,
+                     "So11111111111111111111111111111111111111112",
+                     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]
+        records = [{"chainId": "solana", "tokenAddress": address} for address in addresses]
+        with (
+            patch.object(token_aggregator, "SCANNERS", [("fixture", lambda: records)]),
+            patch.object(token_aggregator, "_last_scan", (None, 0.0, ())),
+        ):
+            self.assertEqual([row["tokenAddress"] for row in token_aggregator.collect_tokens()], [mint])
+            report = token_aggregator.get_discovery_status()
+            self.assertEqual(report["sources"][0]["invalid_count"], 5)
+            self.assertEqual(report["sources"][0]["valid_count"], 1)
+            self.assertGreaterEqual(report["last_scan_duration_ms"], 0)
+            report["sources"][0]["ok"] = False
+            self.assertTrue(token_aggregator.get_discovery_status()["sources"][0]["ok"])
 
     def test_birdeye_transport_error_propagates_to_aggregator(self):
         with patch.object(birdeye_scanner, "API_KEY", "test-key"), \

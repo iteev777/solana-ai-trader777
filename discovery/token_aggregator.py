@@ -2,6 +2,8 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from solana_onchain import SOL_MINT, STABLES, _b58decode
+
 from discovery.gecko_scanner import scan_new_pools, scan_recent_updates, scan_trending_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
@@ -23,8 +25,8 @@ SCANNERS = [
 MAX_RESULTS = 500
 MAX_WORKERS = min(9, len(SCANNERS))
 _aggregator_lock = threading.Lock()
-_last_source_stats = {}
-_last_scan_at = None
+_QUOTE_ASSETS = frozenset({SOL_MINT, "11111111111111111111111111111111", *STABLES})
+_last_scan = (None, 0.0, ())
 
 
 def normalize_token(token):
@@ -36,27 +38,36 @@ def normalize_token(token):
         return None
     if not isinstance(chain, str) or chain.lower().strip() != "solana":
         return None
-    return address.strip()
+    address = address.strip()
+    if not 32 <= len(address) <= 44 or address in _QUOTE_ASSETS:
+        return None
+    try:
+        return address if len(_b58decode(address)) == 32 else None
+    except ValueError:
+        return None
 
 
 def get_discovery_status():
+    scan_at, duration, sources = _last_scan
     return {
         "source_count": len(SCANNERS),
-        "sources": list(_last_source_stats.values()),
-        "last_scan_at": _last_scan_at,
-        "last_scan_age_seconds": max(0, round(time.time() - _last_scan_at, 1)) if _last_scan_at else None,
+        "sources": [dict(source) for source in sources],
+        "last_scan_at": scan_at,
+        "last_scan_age_seconds": max(0, round(time.time() - scan_at, 1)) if scan_at is not None else None,
+        "last_scan_duration_ms": round(duration * 1000) if scan_at is not None else None,
         "max_results": MAX_RESULTS,
     }
 
 
 def collect_tokens():
-    global _last_source_stats, _last_scan_at
+    global _last_scan
     if not _aggregator_lock.acquire(blocking=False):
         print("TROJAN V2 AGGREGATOR ALREADY RUNNING", flush=True)
         return []
     try:
         discovered = {}
         source_stats = {}
+        started = time.monotonic()
         current_time = time.time()
         source_results = {}
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
@@ -70,14 +81,17 @@ def collect_tokens():
                     source_results[name] = result
                     source_stats[name] = {"name": name, "count": len(source_results[name]), "ok": True, "error": None}
                 except Exception as error:
-                    print("TOKEN SOURCE WORKER ERROR:", name, repr(error), flush=True)
+                    error_type = type(error).__name__
+                    print("TOKEN SOURCE WORKER ERROR:", name, error_type, flush=True)
                     source_results[name] = []
-                    source_stats[name] = {"name": name, "count": 0, "ok": False, "error": str(error)[:180]}
+                    source_stats[name] = {"name": name, "count": 0, "ok": False, "error": error_type}
 
         for name, _scanner in SCANNERS:
+            invalid = 0
             for token in source_results.get(name, []):
                 address = normalize_token(token)
                 if not address:
+                    invalid += 1
                     continue
                 if address not in discovered:
                     discovered[address] = {
@@ -97,14 +111,14 @@ def collect_tokens():
                 for key, value in token.items():
                     if key not in candidate and value is not None:
                         candidate[key] = value
+            source_stats[name]["invalid_count"] = invalid
+            source_stats[name]["valid_count"] = source_stats[name]["count"] - invalid
 
         results = list(discovered.values())
         results.sort(key=lambda t: (len(t["discovery_sources"]), t["discovery_timestamp"]), reverse=True)
         results = results[:MAX_RESULTS]
-        for name, _scanner in SCANNERS:
-            source_stats.setdefault(name, {"name": name, "count": 0, "ok": True, "error": None})
-        _last_source_stats = source_stats
-        _last_scan_at = current_time
+        _last_scan = (current_time, time.monotonic() - started,
+                      tuple(source_stats[name] for name, _scanner in SCANNERS))
         print("TROJAN V2 TOKEN AGGREGATOR | SOURCES:", len(SCANNERS), "| UNIQUE:", len(results), flush=True)
         for name, _scanner in SCANNERS:
             stat = source_stats[name]
