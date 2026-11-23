@@ -18,8 +18,10 @@ class PersistentBlacklistTests(unittest.TestCase):
         self.db_patch = patch.object(database, "DATABASE", self.path)
         self.db_patch.start()
         database.initialize_database()
+        blacklist.clear_cache()
 
     def tearDown(self):
+        blacklist.clear_cache()
         self.db_patch.stop()
         self.temp.cleanup()
 
@@ -77,6 +79,42 @@ class PersistentBlacklistTests(unittest.TestCase):
         blacklist.add_entry("account", SYSTEM, "known hostile authority")
         self.assertEqual(blacklist.match_token_security_accounts({}), [])
 
+
+    def test_match_results_are_cached_until_expiry(self):
+        blacklist.add_entry("account", SYSTEM, "cached authority")
+        with patch.object(
+            database, "match_blacklist_entries",
+            wraps=database.match_blacklist_entries
+        ) as query:
+            first = blacklist.match_entries([("account", SYSTEM)])
+            second = blacklist.match_entries([("account", SYSTEM)])
+        self.assertEqual(len(first), 1)
+        self.assertEqual(first, second)
+        query.assert_called_once()
+
+    def test_add_and_remove_invalidate_cached_positive_and_negative_matches(self):
+        with patch.object(
+            database, "match_blacklist_entries",
+            wraps=database.match_blacklist_entries
+        ) as query:
+            self.assertEqual(blacklist.match_entries([("account", SYSTEM)]), [])
+            blacklist.add_entry("account", SYSTEM, "newly blocked")
+            self.assertEqual(len(blacklist.match_entries([("account", SYSTEM)])), 1)
+            blacklist.remove_entry("account", SYSTEM)
+            self.assertEqual(blacklist.match_entries([("account", SYSTEM)]), [])
+        self.assertEqual(query.call_count, 3)
+
+    def test_expired_match_cache_is_refreshed(self):
+        blacklist.add_entry("account", SYSTEM, "expiring authority")
+        with patch.dict(os.environ, {"TROJAN_BLACKLIST_CACHE_SECONDS": "1"}), \
+             patch.object(blacklist.time, "monotonic", side_effect=[10.0, 12.0]), \
+             patch.object(
+                 database, "match_blacklist_entries",
+                 wraps=database.match_blacklist_entries
+             ) as query:
+            blacklist.match_entries([("account", SYSTEM)])
+            blacklist.match_entries([("account", SYSTEM)])
+        self.assertEqual(query.call_count, 2)
 
     def test_initialize_creates_blacklist_table_and_schema_version(self):
         with database.connect() as connection:
