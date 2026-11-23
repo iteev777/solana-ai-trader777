@@ -29,6 +29,43 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             {"rugcheck_new", "rugcheck_recent", "rugcheck_trending", "rugcheck_verified"},
         )
 
+    def test_rugcheck_feed_metadata_and_security_fields_are_preserved(self):
+        payload = [
+            {
+                "mint": VALID_MINT, "creator": "creator-address",
+                "mintAuthority": "mint-authority", "freezeAuthority": None,
+                "program": "Tokenkeg", "createAt": "2026-01-01T00:00:00Z",
+                "updatedAt": "2026-01-02T00:00:00Z", "decimals": 6,
+            },
+            {
+                "mint": VALID_MINT,
+                "metadata": {
+                    "name": "Token", "symbol": "TOK", "uri": "https://example.test/token.json",
+                    "mutable": False, "updateAuthority": "update-authority",
+                },
+            },
+            {"mint": VALID_MINT, "score": 321, "user_visits": 12, "visits": 90},
+            {"mint": VALID_MINT, "vote_count": 7, "up_count": 5},
+            {
+                "mint": VALID_MINT, "payer": "verified-payer", "jup_verified": True,
+                "jup_strict": False, "description": "Verified token",
+                "links": {"website": "https://example.test"},
+            },
+        ]
+        with patch.object(sources, "_safe_fetch", side_effect=payload):
+            result = sources.scan_rugcheck()
+        self.assertEqual(len(result), 1)
+        token = result[0]
+        self.assertEqual(token["creator"], "creator-address")
+        self.assertEqual(token["mint_authority"], "mint-authority")
+        self.assertEqual(token["update_authority"], "update-authority")
+        self.assertFalse(token["is_mutable"])
+        self.assertEqual(token["rugcheck_score"], 321)
+        self.assertEqual(token["rugcheck_vote_count"], 7)
+        self.assertTrue(token["jup_verified"])
+        self.assertEqual(token["rugcheck_payer"], "verified-payer")
+        self.assertEqual(len(token["discovery_sources"]), 5)
+
     def test_jupiter_merges_recent_organic_traded_and_trending(self):
         responses = [
             [{"id": VALID_MINT, "name": "Jupiter Token", "symbol": "JUPX"}],
