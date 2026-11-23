@@ -82,6 +82,15 @@ def get_token_security_report(mint, largest_limit=20):
     top10_pct = min(100.0, top10_raw / supply_raw * 100.0)
 
     owner_concentration = None
+    account_details = [
+        {
+            "address": item["address"],
+            "amount": item["amount"],
+            "supply_pct": round(item["amount"] / supply_raw * 100.0, 6),
+            "authority": None,
+        }
+        for item in amounts
+    ]
     try:
         owner_result = chain._rpc(
             "getMultipleAccounts",
@@ -90,7 +99,7 @@ def get_token_security_report(mint, largest_limit=20):
         )
         owner_accounts = (owner_result or {}).get("value") or []
         owner_amounts = {}
-        for item, account in zip(amounts, owner_accounts):
+        for index, (item, account) in enumerate(zip(amounts, owner_accounts)):
             info = (
                 (((account or {}).get("data") or {}).get("parsed") or {})
                 .get("info") or {}
@@ -98,6 +107,7 @@ def get_token_security_report(mint, largest_limit=20):
             owner = info.get("owner")
             if isinstance(owner, str) and owner:
                 owner_amounts[owner] = owner_amounts.get(owner, 0.0) + item["amount"]
+                account_details[index]["authority"] = owner
         if owner_amounts:
             owner_concentration = min(
                 100.0, max(owner_amounts.values()) / supply_raw * 100.0
@@ -125,6 +135,8 @@ def get_token_security_report(mint, largest_limit=20):
         "freeze_authority": "ACTIVE" if freeze_authority else "DISABLED",
         "top10_token_account_pct": round(top10_pct, 4),
         "largest_token_accounts": len(amounts),
+        "largest_token_account_details": account_details,
+        "top_owner_account_authorities": sorted(owner_amounts) if owner_concentration is not None else [],
         "top_owner_account_authority_pct": (
             round(owner_concentration, 4)
             if owner_concentration is not None else None
