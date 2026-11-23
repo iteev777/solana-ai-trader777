@@ -51,9 +51,29 @@ class DexScreenerDiscoveryTests(unittest.TestCase):
         )
 
     @patch("discovery.dexscreener_scanner.get_json")
-    def test_feed_failure_isolated_from_other_feed(self, get_json):
+    def test_feed_failure_is_reported_to_aggregator(self, get_json):
         get_json.side_effect = RuntimeError("profiles unavailable")
-        self.assertEqual(scanner.scan_profiles(), [])
+        with self.assertRaisesRegex(RuntimeError, "profiles unavailable"):
+            scanner.scan_profiles()
+
+    @patch("discovery.dexscreener_scanner.get_json")
+    def test_invalid_payload_is_reported_as_source_failure(self, get_json):
+        get_json.return_value = {"unexpected": "object"}
+        with self.assertRaisesRegex(ValueError, "JSON array"):
+            scanner.scan_profiles()
+
+    @patch("discovery.dexscreener_scanner.get_json")
+    def test_legacy_wrapper_continues_after_one_feed_failure(self, get_json):
+        get_json.side_effect = [
+            RuntimeError("profiles unavailable"),
+            [{"chainId": "solana", "tokenAddress": "MintLatest"}],
+            [{"chainId": "solana", "tokenAddress": "MintTop"}],
+        ]
+        result = scanner.scan_dexscreener()
+        self.assertEqual(
+            {item["tokenAddress"] for item in result},
+            {"MintLatest", "MintTop"},
+        )
 
     @patch("discovery.dexscreener_scanner.get_json")
     def test_feed_does_not_truncate_valid_provider_results_at_100(self, get_json):
