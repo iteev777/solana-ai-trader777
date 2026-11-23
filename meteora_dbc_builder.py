@@ -110,6 +110,30 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         raise ValueError("Input mint does not belong to this DBC pool")
     if output_mint != expected_output:
         raise ValueError("Output mint does not match the opposite DBC pool side")
+    state_pairs = (
+        ("config", first["config"]),
+        ("base_mint", first["base_mint"]),
+        ("quote_mint", first_config["quote_mint"]),
+        ("base_vault", first["base_vault"]),
+        ("quote_vault", first["quote_vault"]),
+        ("base_reserve", first["base_reserve"]),
+        ("quote_reserve", first["quote_reserve"]),
+        ("protocol_base_fee", first["protocol_base_fee"]),
+        ("protocol_quote_fee", first["protocol_quote_fee"]),
+        ("partner_base_fee", first["partner_base_fee"]),
+        ("partner_quote_fee", first["partner_quote_fee"]),
+        ("sqrt_price_before_x64", first["sqrt_price"]),
+        ("is_migrated", first["is_migrated"]),
+        ("activation_point", first["activation_point"]),
+        ("pool_type", first["pool_type"]),
+        ("cliff_fee_numerator", first_config["cliff_fee_numerator"]),
+        ("collect_fee_mode", first_config["collect_fee_mode"]),
+        ("sqrt_start_price", first_config["sqrt_start_price"]),
+        ("curve_points", first_config["points"]),
+    )
+    for field, expected in state_pairs:
+        if quote.get(field) != fresh.get(field) or fresh.get(field) != expected:
+            raise ValueError("Meteora DBC curve/config state changed since the supplied quote")
 
     keys = [pool, first["config"], first["base_mint"], first_config["quote_mint"],
             first["base_vault"], first["quote_vault"],
@@ -146,8 +170,15 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         raise ValueError("Meteora DBC mint account layout is invalid")
 
     pool_authority = POOL_AUTHORITY
-    _token_account(base_vault_acc, pool_authority, current["base_mint"], "DBC base vault", 1)
-    _token_account(quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault", 1)
+    base_balance = _token_account(
+        base_vault_acc, pool_authority, current["base_mint"], "DBC base vault", 1
+    )
+    quote_balance = _token_account(
+        quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault", 1
+    )
+    output_reserve = quote_balance if input_is_base else base_balance
+    if fresh.get("output_amount_gross", 0) >= output_reserve:
+        raise ValueError("Meteora DBC fresh quote exceeds confirmed output vault balance")
     _token_account(user_in_acc, wallet, input_mint, "User input token account", amount)
     _token_account(user_out_acc, wallet, output_mint, "User output token account")
     for mint, account_address in ((input_mint, user_input_token_account),
