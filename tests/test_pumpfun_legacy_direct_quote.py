@@ -153,8 +153,25 @@ class PumpFunLegacyDirectQuoteTests(unittest.TestCase):
                     self.pool, chain.SOL_MINT, self.token_mint, 1000
                 )
 
-    def test_rejects_mayhem_cashback_and_holder_reward_modes(self):
-        for offset in (81, 82, 124):
+    def test_mayhem_curve_uses_supported_fee_tier_without_crossing_curve(self):
+        curve = bytearray(self.curve_data)
+        curve[81] = 1
+        accounts = list(self.accounts)
+        accounts[0] = dict(accounts[0], data=bytes(curve))
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["pumpfun_legacy"], "data": bytes(curve)
+            }),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 654)),
+        ):
+            result = chain.quote_pumpfun_legacy_pool(
+                self.pool, chain.SOL_MINT, self.token_mint, 1000
+            )
+        self.assertTrue(result["is_mayhem_mode"])
+        self.assertEqual(result["fee_rates_bps"], [0, 95, 30])
+
+    def test_rejects_cashback_and_holder_reward_modes(self):
+        for offset in (82, 124):
             curve = bytearray(self.curve_data)
             curve[offset] = 1
             with patch.object(chain, "_account", return_value={
