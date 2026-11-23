@@ -383,6 +383,36 @@ def get_engine_status():
         registry_status = pool_registry.get_pool_registry_status()
     except Exception as error:
         registry_status = {"available": False, "error": str(error)[:160]}
+    import dex_capabilities
+    capability_report = dex_capabilities.get_dex_capabilities(
+        chain.get("supported_protocols", [])
+    )
+    protocol_capabilities = capability_report["protocols"]
+    native_builders = {
+        "raydium_cpmm": protocol_capabilities.get("raydium_cpmm", {}).get("transaction_builder", {}),
+        "pumpswap_v2": protocol_capabilities.get("pumpswap", {}).get("transaction_builder", {}),
+        "other_protocols": {
+            "available": False,
+            "reason": "No protocol-specific native builder is registered and validated",
+        },
+    }
+    # Preserve dashboard fields while adding the full, explicit protocol matrix.
+    for key in ("raydium_cpmm", "pumpswap_v2"):
+        native_builders[key] = {
+            **native_builders[key],
+            "instruction": "SwapBaseInput" if key == "raydium_cpmm" else None,
+            "instructions": ["buy_exact_quote_in_v2", "sell_v2"] if key == "pumpswap_v2" else None,
+            "transaction_version": "legacy",
+            "fresh_requote_required": True,
+            "rpc_simulation_required": True,
+            "token_program_support": ["legacy_spl_token"],
+            "existing_user_token_accounts_required": True,
+            "pool_modes": ["standard_non_cashback_non_mayhem"] if key == "pumpswap_v2" else None,
+            "buyback_recipient_ata_required": True if key == "pumpswap_v2" else None,
+            "signing": "external_wallet_only",
+            "broadcast": False,
+            "live_execution": False,
+        }
     return {
         "engine": "trojan_multi_pool_dex_engine_v2",
         "mode": "READ_ONLY_ROUTE_SELECTION",
@@ -397,45 +427,19 @@ def get_engine_status():
             "registry": registry_status,
         },
         "onchain_supported_protocols": chain.get("supported_protocols", []),
-        "native_transaction_builders": {
-            "raydium_cpmm": {
-                "available": True,
-                "instruction": "SwapBaseInput",
-                "transaction_version": "legacy",
-                "fresh_requote_required": True,
-                "rpc_simulation_required": True,
-                "token_program_support": ["legacy_spl_token"],
-                "existing_user_token_accounts_required": True,
-                "signing": "external_wallet_only",
-                "broadcast": False,
-                "live_execution": False,
-            },
-            "pumpswap_v2": {
-                "available": True,
-                "instructions": ["buy_exact_quote_in_v2", "sell_v2"],
-                "transaction_version": "legacy",
-                "fresh_requote_required": True,
-                "rpc_simulation_required": True,
-                "token_program_support": ["legacy_spl_token"],
-                "pool_modes": ["standard_non_cashback_non_mayhem"],
-                "existing_user_token_accounts_required": True,
-                "buyback_recipient_ata_required": True,
-                "signing": "external_wallet_only",
-                "broadcast": False,
-                "live_execution": False,
-            },
-            "other_protocols": {
-                "available": False,
-                "reason": "Protocol-specific account layouts and instruction builders are not yet validated",
-            },
+        "protocol_capabilities": protocol_capabilities,
+        "capability_summary": {
+            "quote_adapters": capability_report["quote_adapter_count"],
+            "native_builders": capability_report["native_builder_count"],
+            "execution_policy": capability_report["execution_policy"],
         },
+        "native_transaction_builders": native_builders,
         "native_execution": native_execution_status,
         "execution_locked": True,
         "signing_available": False,
         "broadcast_available": False,
         "live_trading_ready": False,
     }
-
 
 
 def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
