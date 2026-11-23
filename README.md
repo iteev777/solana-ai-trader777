@@ -344,3 +344,6 @@ RugCheck report retrieval coalesces simultaneous requests for the same mint into
 ## Paper position input safety
 
 Paper entry and exit paths reject non-finite or non-positive prices before reaching the database. Persisted trailing peaks are normalized before use, and DCA/exit policy configuration is fully parsed before a monitoring cycle mutates position state. Invalid policy configuration returns a controlled wait/error result rather than interrupting the position monitor. Reserved engine, strategy and adaptive-sizing metadata cannot be overwritten by caller metadata.
+
+
+Moonit direct quotes are read-only and limited to the verified ConstantProductV1 native-SOL curve. The adapter validates the ConfigAccount discriminator and fee, uses conservative ceiling arithmetic for remaining virtual reserves, and caps buy output by the curve's actual remaining token amount. Unsupported curve/collateral modes and Token-2022 mints remain refused.
