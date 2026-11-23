@@ -10,6 +10,7 @@ import struct
 import time
 
 import solana_onchain as chain
+import token2022_inspector as token2022
 from raydium_cpmm_builder import (
     _compile_legacy_message,
     _priority_fee_micro_lamports,
@@ -145,6 +146,14 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh quote minimum output")
     if minimum_out > fresh_out:
         raise ValueError("Fresh PumpSwap minimum output exceeds its quoted output")
+    for field in ("token_program_base", "token_program_quote"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("PumpSwap token program state changed since the supplied quote")
+    token_program_base = fresh.get("token_program_base")
+    token_program_quote = fresh.get("token_program_quote")
+    supported_programs = (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("PumpSwap quote contains an unsupported token program")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh PumpSwap quote is older than the supplied quote")
@@ -173,7 +182,7 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     pre_global = chain._account(global_config_pda)
     global_state = _validate_global_config(pre_global)
     buyback_candidates = [
-        (recipient, _ata(recipient, TOKEN_PROGRAM_ID, decoded["quote_mint"]))
+        (recipient, _ata(recipient, token_program_quote, decoded["quote_mint"]))
         for recipient in global_state["buyback_fee_recipients"]
     ]
     keys = [
@@ -222,21 +231,44 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         raise ValueError("PumpSwap FeeConfig is not owned by the Pump Fees program")
     chain._decode_pumpswap_fee_config(fee_acc.get("data", b""))
 
-    for mint_acc in (mint_base_acc, mint_quote_acc):
-        if mint_acc.get("owner") != TOKEN_PROGRAM_ID:
-            raise ValueError("PumpSwap native V2 builder currently accepts legacy SPL Token mints only")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM_ID or vault_quote_acc.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError("PumpSwap pool vaults must be owned by legacy SPL Token")
-    chain._token_amount(vault_base_acc, current["base_mint"])
-    chain._token_amount(vault_quote_acc, current["quote_mint"])
-    if (chain._key(vault_base_acc["data"], 32) != pool_id
-            or chain._key(vault_quote_acc["data"], 32) != pool_id):
-        raise ValueError("PumpSwap vault token authority does not match the pool PDA")
-    if vault_base_acc["data"][108] != 1 or vault_quote_acc["data"][108] != 1:
-        raise ValueError("PumpSwap pool vault is not initialized or is frozen")
+    if (mint_base_acc.get("owner") != token_program_base
+            or mint_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("PumpSwap mint owner changed during transaction preparation")
+    mint_base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_base_acc.get("data", b""))
+        if token_program_base == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint_quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc.get("data", b""))
+        if token_program_quote == chain.TOKEN_2022_PROGRAM else None
+    )
+    if (vault_base_acc.get("owner") != token_program_base
+            or vault_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("PumpSwap vault token program does not match its mint")
+    token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, current["base_mint"], pool_id,
+        "PumpSwap base vault",
+    )
+    token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, current["quote_mint"], pool_id,
+        "PumpSwap quote vault",
+    )
 
-    base_balance = _decode_user_token_account(user_base_acc, wallet, current["base_mint"], "User base token account")
-    quote_balance = _decode_user_token_account(user_quote_acc, wallet, current["quote_mint"], "User quote token account")
+    base_balance = token2022.validate_token_account_for_program(
+        user_base_acc, token_program_base, wallet, current["base_mint"],
+        "PumpSwap user base token account",
+    )
+    quote_balance = token2022.validate_token_account_for_program(
+        user_quote_acc, token_program_quote, wallet, current["quote_mint"],
+        "PumpSwap user quote token account",
+    )
+    for address, mint, token_program in (
+        (user_base_token_account, current["base_mint"], token_program_base),
+        (user_quote_token_account, current["quote_mint"], token_program_quote),
+    ):
+        expected_ata = _ata(wallet, token_program, mint)
+        if address != expected_ata:
+            raise ValueError("PumpSwap wallet token account is not the canonical associated token account")
     if is_buy and quote_balance < amount_in:
         raise ValueError("Wallet quote token account has insufficient balance")
     if is_sell and base_balance < amount_in:
@@ -244,16 +276,17 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
 
     selected_buyback = None
     for (recipient, ata), account in zip(buyback_candidates, buyback_accs):
-        if not account or account.get("owner") != TOKEN_PROGRAM_ID:
+        if not account or account.get("owner") != token_program_quote:
             continue
-        raw = account.get("data", b"")
-        if len(raw) < 165:
+        try:
+            token2022.validate_token_account_for_program(
+                account, token_program_quote, current["quote_mint"], recipient,
+                "PumpSwap buyback quote token account",
+            )
+        except (ValueError, token2022.Token2022LayoutError):
             continue
-        if (chain._key(raw, 0) == current["quote_mint"]
-                and chain._key(raw, 32) == recipient
-                and raw[108] == 1):
-            selected_buyback = (recipient, ata)
-            break
+        selected_buyback = (recipient, ata)
+        break
     if selected_buyback is None:
         raise ValueError("No configured PumpSwap buyback recipient has an existing valid quote ATA")
 
@@ -282,8 +315,8 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         {"pubkey": user_quote_token_account, "is_writable": True},
         {"pubkey": current["vault_base"], "is_writable": True},
         {"pubkey": current["vault_quote"], "is_writable": True},
-        {"pubkey": TOKEN_PROGRAM_ID},
-        {"pubkey": TOKEN_PROGRAM_ID},
+        {"pubkey": token_program_base},
+        {"pubkey": token_program_quote},
         {"pubkey": SYSTEM_PROGRAM_ID},
         {"pubkey": user_volume_accumulator, "is_writable": True},
         {"pubkey": fee_config_pda},
@@ -312,6 +345,11 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         "output_mint": output_mint,
         "input_amount": amount_in,
         "minimum_output_amount": minimum_out,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
+        "token_program_input": token_program_quote if is_buy else token_program_base,
+        "token_program_output": token_program_base if is_buy else token_program_quote,
+        "token2022_fee_aware_supported": chain.TOKEN_2022_PROGRAM in (token_program_base, token_program_quote),
         "instruction": instruction,
         "buyback_fee_recipient": selected_buyback[0],
         "buyback_fee_recipient_ata": selected_buyback[1],
