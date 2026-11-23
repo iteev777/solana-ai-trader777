@@ -75,7 +75,9 @@ def get_dex_capabilities(decoded_protocols=None):
         })
         entry["transaction_builder"] = builder
         entry["builder_variant"] = name
-        entry["simulation"] = bool(builder["available"])
+        # Builder presence does not prove that the protocol-specific RPC
+        # simulation entrypoint is present or callable.
+        entry["simulation"] = simulation
         # Builders only create unsigned transactions. Simulation is separate
         # from broadcast and requires the dedicated simulation path.
         entry["external_wallet_signing"] = False
