@@ -725,12 +725,12 @@ main{max-width:1440px;padding-top:16px}
 <div class="metric"><small>Daily realized P/L</small><strong id="daily">—</strong></div><div class="metric"><small>Daily loss used</small><strong id="loss">—</strong></div>
 <div class="metric"><small>Closed trades</small><strong id="closed">—</strong></div><div class="metric"><small>Open positions · live value</small><strong id="invested">—</strong></div></div>
 <section class="panel section"><h2>ROUTE COMPARISON · PAPER ONLY</h2>
-<div class="muted">Compare Jupiter, Raptor and (when a pool address is supplied) native Raydium CPMM output. No transaction is built, signed or sent. Amount is in input-token base units.</div>
+<div class="muted">Compare Jupiter, Raptor and (when a pool address is supplied) a verified native Solana DEX pool quote. Unsupported pool modes are reported unavailable. No transaction is built, signed or sent. Amount is in input-token base units.</div>
 <div class="actions" style="margin-top:10px;flex-wrap:wrap">
 <input id="route-input" aria-label="Input mint" value="So11111111111111111111111111111111111111112" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
 <input id="route-output" aria-label="Output mint" placeholder="Output token mint" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
 <input id="route-amount" aria-label="Amount in base units" value="10000000" inputmode="numeric" style="width:150px;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
-<input id="route-pool" aria-label="Raydium CPMM pool address (optional)" placeholder="Raydium CPMM pool address (optional)" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
+<input id="route-pool" aria-label="Solana DEX pool address (optional)" placeholder="Solana DEX pool address (optional)" style="min-width:260px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px">
 <button class="refresh" type="button" onclick="runRouteComparison()">Compare quotes</button>
 </div><div id="route-results" class="health" style="margin-top:12px">No quote comparison run yet.</div></section>
 <section class="panel section"><h2>PHANTOM WALLET ASSETS</h2><div class="muted" id="wallet-summary">Loading on-chain assets…</div><div style="overflow:auto;margin-top:10px"><table><thead><tr><th>Asset</th><th>Amount</th><th>Price</th><th>Value</th><th>Mint</th></tr></thead><tbody id="wallet-assets"><tr><td colspan="5" class="muted">Loading wallet…</td></tr></tbody></table></div></section>
