@@ -2,6 +2,14 @@ name: Trojan devnet signed E2E
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feature/dex-jupiter-noncustodial-execution-current
+    paths:
+      - devnet_e2e.py
+      - native_execution.py
+      - requirements.txt
+      - .github/workflows/devnet-e2e.yml
 
 permissions:
   contents: read
