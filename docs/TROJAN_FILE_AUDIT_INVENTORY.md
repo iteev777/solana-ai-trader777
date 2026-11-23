@@ -130,11 +130,11 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_quality_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_copy_event_parser.py` | `src/wallets/watch/runtime.rs`, `types.rs` tests | TESTED | Covers exact wallet deltas, rent correction, wrapped SOL, loaded addresses and ambiguous/missing metadata; full validation `45254436959`.  |
-| `tests/test_copy_freshness.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_copy_performance_protocol_telemetry.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_copy_risk.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_copy_freshness.py` | `src/trader/copy/guards.rs` tests | TESTED | Tests arrival-time age, queue-delay independence, stale/future/invalid timestamps and bounded fallback; 998-test full validation passed on `bbff47a`. |
+| `tests/test_copy_performance_protocol_telemetry.py` | `src/trader/copy/analytics_tests.rs`, protocol validation tests | PARTIAL | Full test file read; validates copy-wallet P&L attribution and open exposure plus protocol telemetry aggregation. Reference analytics/round ownership tests still require full comparison. |
+| `tests/test_copy_risk.py` | `src/trader/copy/risk.rs`, `src/trader/copy/sizing.rs` tests | TESTED | Full test file read; wallet isolation, budget caps, cross-wallet mint ownership, position limit and daily-loss gates covered; reference task-level gates remain unimplemented. |
 | `tests/test_copy_trade_subscriptions.py` | `src/wallets/watch/` poller tests | TESTED | Covers wallet subscription completeness, bounded pagination, durable cursor replay, null-index retry, skip cap and stale-event suppression; full validation `45254436959`.  |
-| `tests/test_copy_wallet_watchlist.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_copy_wallet_watchlist.py` | `src/wallets/watch/service_targets.rs`, `src/wallets/watch/database/` tests | TESTED | Full test file read; base58 validation, environment/dashboard merge, 20-wallet limit, re-enable and per-wallet cursor persistence covered; broader target reconciliation remains open. |
 | `tests/test_core_parity_learning.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_database_backup.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_database_dashboard_api.py` | Ei vielä kartoitettu | PENDING |  |
