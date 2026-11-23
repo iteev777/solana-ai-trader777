@@ -25,6 +25,7 @@ DEXSCREENER_BATCH_URL = (
 )
 
 MAX_BATCH_SIZE = 30
+MARKET_WINDOWS = ("m5", "h1", "h6", "h24")
 
 CACHE_TTL = 10
 MAX_CACHE_ENTRIES = 2000
@@ -227,6 +228,8 @@ def _gecko_token_address(token_id):
         value = value[len("solana_"):]
     elif value.startswith("solana:"):
         value = value[len("solana:"):]
+    elif ":" in value:
+        return None
     return value if valid_address(value) and "_" not in value else None
 
 
@@ -289,7 +292,7 @@ def normalize_gecko_pool(pool, requested_mint=None):
     changes = changes if isinstance(changes, dict) else {}
     transactions = transactions if isinstance(transactions, dict) else {}
     txns = {}
-    for window in ("m5", "h1", "h24"):
+    for window in MARKET_WINDOWS if token_is_base else ():
         item = transactions.get(window)
         if isinstance(item, dict):
             txns[window] = {"buys": item.get("buys"), "sells": item.get("sells")}
@@ -316,11 +319,9 @@ def normalize_gecko_pool(pool, requested_mint=None):
         "priceNative": price_native_text if price_native is not None and price_native > 0 else None,
         "liquidity": {"usd": reserve},
         "reserve_in_usd": reserve,
-        "volume": {"m5": safe_float(volumes.get("m5")), "h24": safe_float(volumes.get("h24"))},
+        "volume": {window: safe_float(volumes.get(window)) for window in MARKET_WINDOWS},
         "priceChange": {
-            "m5": safe_float(changes.get("m5")),
-            "h1": safe_float(changes.get("h1")),
-            "h24": safe_float(changes.get("h24")),
+            window: safe_float(changes.get(window)) for window in MARKET_WINDOWS
         } if token_is_base else {},
         "txns": txns,
         "pairCreatedAt": created_ms,
@@ -355,9 +356,10 @@ def get_gecko_pool_data_batch(pool_addresses):
             pools = response.get("data") if isinstance(response, dict) else None
             if not isinstance(pools, list):
                 continue
+            requested = set(batch)
             for pool in pools:
                 normalized = normalize_gecko_pool(pool)
-                if normalized:
+                if normalized and isinstance(normalized["pairAddress"], str) and normalized["pairAddress"] in requested:
                     results[normalized["baseToken"]["address"]] = normalized
         except Exception as error:
             print("[TROJAN V2] GECKO POOL FALLBACK ERROR:", repr(error), flush=True)
