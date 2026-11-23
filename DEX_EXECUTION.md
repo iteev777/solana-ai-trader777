@@ -438,3 +438,20 @@ vaults, wallet token-account extensions and canonical ATAs derived with each
 mint's own token program. The two actual token-program IDs are passed in the
 14-account Swap instruction. Transfer-hook and other unsupported extensions
 remain blocked. Signing and broadcasting remain disabled.
+
+
+## Token-2022 transfer-fee handling: Pump.fun legacy bonding curve
+
+The SOL-paired Pump.fun legacy quote path now supports the audited Token-2022
+transfer-fee extension subset. On buys, the curve's token output is reduced by
+the mint's conservative transfer-fee allowance before calculating the wallet's
+minimum received amount. On sells, the amount arriving at the bonding curve is
+reduced before the bonding-curve calculation. Unsupported extensions such as
+transfer hooks remain blocked.
+
+The native builder rechecks the mint owner and extension set at the confirmed
+transaction snapshot, derives both the curve ATA and wallet ATA using the mint's
+actual token program, validates their extension-aware account layouts, and
+places that token program in the instruction's token-program account slot. SOL
+remains the native system-account side; the builder does not create accounts,
+sign, or broadcast.
