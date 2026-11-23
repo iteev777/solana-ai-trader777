@@ -82,6 +82,7 @@ def get_token_security_report(mint, largest_limit=20):
     top10_pct = min(100.0, top10_raw / supply_raw * 100.0)
 
     owner_concentration = None
+    owner_amounts = {}
     account_details = [
         {
             "address": item["address"],
