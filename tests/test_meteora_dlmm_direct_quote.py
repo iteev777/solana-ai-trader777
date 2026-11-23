@@ -49,16 +49,33 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         pair[552:584] = bytes([67]) * 32
         self.pair_data = bytes(pair)
 
-        def token_account(mint, amount):
-            raw = bytearray(165)
+        def token_account(mint, amount, token_program=chain.TOKEN_PROGRAM,
+                          transfer_fee=False, immutable_owner=False, authority=None):
+            raw = bytearray(182 if immutable_owner else (178 if transfer_fee else 165))
             raw[:32] = chain._b58decode(mint)
+            raw[32:64] = chain._b58decode(authority or self.pool)
             raw[64:72] = amount.to_bytes(8, "little")
-            return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+            raw[108] = 1
+            if transfer_fee:
+                raw[165] = 2
+                raw[166:168] = (2).to_bytes(2, "little")
+                raw[168:170] = (8).to_bytes(2, "little")
+            if immutable_owner:
+                raw[178:180] = (7).to_bytes(2, "little")
+                raw[180:182] = (0).to_bytes(2, "little")
+            return {"owner": token_program, "data": bytes(raw)}
 
+        self.token_account = token_account
         self.reserve_x_account = token_account(self.mint_x, 10**12)
         self.reserve_y_account = token_account(self.mint_y, 10**12)
-        self.mint_x_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(82)}
-        self.mint_y_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(82)}
+        mint_x = bytearray(82)
+        mint_x[44] = 6
+        mint_x[45] = 1
+        mint_y = bytearray(82)
+        mint_y[44] = 9
+        mint_y[45] = 1
+        self.mint_x_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint_x)}
+        self.mint_y_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint_y)}
 
         self.bin_accounts = {}
         for array_index, address in self.array_addresses.items():
@@ -189,10 +206,63 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "active bin array"):
             self.quote(overrides={self.array_addresses[1]: None})
 
-    def test_token_2022_mints_are_refused(self):
-        with self.assertRaisesRegex(ValueError, "Token-2022"):
+    def test_token2022_zero_fee_mint_is_accepted_with_matching_reserve_program(self):
+        mint = bytearray(82)
+        mint[44] = 9
+        mint[45] = 1
+        result = self.quote(overrides={
+            "mint_y": {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)},
+            "reserve_y": self.token_account(
+                self.mint_y, 10**12, token_program=chain.TOKEN_2022_PROGRAM
+            ),
+        })
+        self.assertEqual(result["token_program_output"], chain.TOKEN_2022_PROGRAM)
+        self.assertFalse(result["token2022_output_transfer_fee"])
+        self.assertGreater(result["out_amount"], 0)
+
+    def test_token2022_transfer_fees_are_applied_to_both_dlmm_swap_legs(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        mint = bytearray(166)
+        mint[44] = 6
+        mint[45] = 1
+        mint[165] = MINT_ACCOUNT_TYPE
+        mint.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        overrides = {
+            "mint_x": {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)},
+            "mint_y": {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)},
+            "reserve_x": self.token_account(
+                self.mint_x, 10**12, token_program=chain.TOKEN_2022_PROGRAM,
+                transfer_fee=True,
+            ),
+            "reserve_y": self.token_account(
+                self.mint_y, 10**12, token_program=chain.TOKEN_2022_PROGRAM,
+                transfer_fee=True,
+            ),
+        }
+        result = self.quote(amount=10_000, overrides=overrides)
+        self.assertTrue(result["token2022_input_transfer_fee"])
+        self.assertEqual(result["token2022_input_received_by_pool"], 9_900)
+        self.assertTrue(result["token2022_output_transfer_fee"])
+        self.assertLess(result["out_amount"], result["token2022_output_gross_amount"])
+
+    def test_token2022_transfer_hook_mint_is_rejected(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        mint = bytearray(166)
+        mint[44] = 6
+        mint[45] = 1
+        mint[165] = MINT_ACCOUNT_TYPE
+        mint.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
+        with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
             self.quote(overrides={
-                "mint_y": dict(self.mint_y_account, owner=chain.TOKEN_2022_PROGRAM)
+                "mint_y": {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)},
+                "reserve_y": self.token_account(
+                    self.mint_y, 10**12, token_program=chain.TOKEN_2022_PROGRAM
+                ),
             })
 
     def test_disabled_pair_is_rejected(self):
