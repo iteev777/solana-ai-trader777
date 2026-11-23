@@ -197,10 +197,11 @@ def _quote_bins(state, bins, input_is_x, amount_in):
         if last_price is None and price > 0:
             last_price = price
         rate, volatility = _fee_rate(state, active_id)
+        state["volatility_accumulator"] = volatility
         max_rate = max(max_rate, rate)
         bins_visited += 1
         if amount_x == 0 and amount_y == 0:
-            active_id = bin_id
+            active_id = bin_id - 1 if zero_for_one else bin_id + 1
             continue
         if price <= 0:
             raise ValueError("Meteora DLMM bin price is unavailable")
