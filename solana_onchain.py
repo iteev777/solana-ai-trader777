@@ -152,18 +152,20 @@ def _multiple_accounts(keys):
 
 def _decode_pool(protocol, raw):
     if protocol == "pumpswap":
-        if len(raw) < 244 or raw[:8] != bytes([241,154,109,4,17,177,109,188]):
-            raise ValueError("invalid PumpSwap Pool discriminator/layout")
+        # The quote-critical extension reaches byte 270. Older/truncated
+        # layouts cannot safely imply zero virtual reserves or disabled flags.
+        if len(raw) < 271 or raw[:8] != bytes([241,154,109,4,17,177,109,188]):
+            raise ValueError("invalid or truncated PumpSwap Pool discriminator/layout")
         return {
             "creator": _key(raw, 11),
             "base_mint": _key(raw, 43), "quote_mint": _key(raw, 75),
             "vault_base": _key(raw, 139), "vault_quote": _key(raw, 171),
-            "coin_creator": _key(raw, 211) if len(raw) >= 243 else None,
-            "is_mayhem_mode": bool(raw[243]) if len(raw) >= 244 else False,
-            "is_cashback_coin": bool(raw[244]) if len(raw) >= 245 else False,
-            "virtual_quote_reserves": int.from_bytes(raw[245:261], "little", signed=True) if len(raw) >= 261 else 0,
-            "creator_fee_bps": _u64(raw, 261) if len(raw) >= 269 else 0,
-            "is_holder_reward": bool(raw[270]) if len(raw) >= 271 else False,
+            "coin_creator": _key(raw, 211),
+            "is_mayhem_mode": bool(raw[243]),
+            "is_cashback_coin": bool(raw[244]),
+            "virtual_quote_reserves": int.from_bytes(raw[245:261], "little", signed=True),
+            "creator_fee_bps": _u64(raw, 261),
+            "is_holder_reward": bool(raw[270]),
             "status": "active", "price_mode": "reserves"
         }
     if protocol == "raydium_cpmm":
@@ -453,6 +455,8 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if discovered.get("owner") != PROGRAMS["pumpswap"]:
         raise ValueError("Pool account is not owned by the PumpSwap AMM program")
     first = _decode_pool("pumpswap", discovered["data"])
+    if first.get("is_mayhem_mode"):
+        raise ValueError("PumpSwap mayhem-mode pools are not supported")
     if first.get("is_cashback_coin"):
         raise ValueError("PumpSwap cashback pools are not supported")
     if first.get("is_holder_reward"):
@@ -473,20 +477,27 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     decoded = _decode_pool("pumpswap", pool_acc["data"])
     for field in (
         "creator", "base_mint", "quote_mint", "vault_base", "vault_quote",
-        "coin_creator", "is_cashback_coin", "is_holder_reward",
+        "coin_creator", "is_mayhem_mode", "is_cashback_coin", "is_holder_reward",
         "virtual_quote_reserves", "creator_fee_bps",
     ):
         if decoded.get(field) != first.get(field):
             raise ValueError("PumpSwap pool relationships or quote-reserve state changed during snapshot")
-    if decoded.get("is_cashback_coin") or decoded.get("is_holder_reward"):
-        raise ValueError("PumpSwap pool has an unsupported fee or reward mode")
+    if decoded.get("is_mayhem_mode") or decoded.get("is_cashback_coin") or decoded.get("is_holder_reward"):
+        raise ValueError("PumpSwap pool has an unsupported mayhem, cashback or reward mode")
 
     if global_acc.get("owner") != PROGRAMS["pumpswap"]:
         raise ValueError("PumpSwap global config is not owned by the AMM program")
     global_raw = global_acc.get("data", b"")
-    if len(global_raw) < 57 or global_raw[:8] != PUMPSWAP_GLOBAL_CONFIG_DISCRIMINATOR:
-        raise ValueError("PumpSwap global config discriminator or layout is invalid")
+    if len(global_raw) < 321 or global_raw[:8] != PUMPSWAP_GLOBAL_CONFIG_DISCRIMINATOR:
+        raise ValueError("PumpSwap global config discriminator or fee layout is invalid")
     disable_flags = global_raw[56]
+    global_flat_fees = {
+        "lp_fee_bps": _u64(global_raw, 40),
+        "protocol_fee_bps": _u64(global_raw, 48),
+        "creator_fee_bps": _u64(global_raw, 313),
+    }
+    if any(value > 10_000 for value in global_flat_fees.values()):
+        raise ValueError("PumpSwap GlobalConfig fee rate is invalid")
     is_buy = input_mint == decoded["quote_mint"]
     if is_buy and disable_flags & (1 << 3):
         raise ValueError("PumpSwap buy instructions are disabled by GlobalConfig")
@@ -511,14 +522,31 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("Input mint does not belong to this PumpSwap pool")
 
-    fees = fee_config["conservative_fees"]
-    fee_rates = [fees["lp_fee_bps"], fees["protocol_fee_bps"], fees["creator_fee_bps"]]
+    if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
+        raise ValueError("Input mint does not belong to this PumpSwap pool")
+
+    creator_pool = decoded["coin_creator"] != "11111111111111111111111111111111"
+    fee_candidates = [fee_config["conservative_fees"], global_flat_fees]
+    if not creator_pool:
+        fee_candidates = [
+            {**candidate, "creator_fee_bps": 0}
+            for candidate in fee_candidates
+        ]
+    fees = max(fee_candidates, key=lambda item: sum(item.values()))
+    fee_rates = [fees["lp_fee_bps"], fees["protocol_fee_bps"]]
+    if creator_pool:
+        fee_rates.append(fees["creator_fee_bps"])
     total_fee_bps = sum(fee_rates)
     if total_fee_bps >= 10_000:
         raise ValueError("PumpSwap fee configuration is not tradable")
 
     if is_buy:
-        net_input, fee_amounts = _pumpswap_spendable_quote(amount_in, fee_rates)
+        net_input, _ = _pumpswap_spendable_quote(amount_in, fee_rates)
+        # The deployed buy path uses one raw unit less than the mathematical
+        # maximum affordable amount. Recompute each separately rounded fee
+        # after that adjustment so the quote never overstates token output.
+        net_input = max(0, net_input - 1)
+        fee_amounts = [_fee_amount_ceil(net_input, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
         if net_input <= 0:
             raise ValueError("PumpSwap quote input is consumed by fees")
@@ -528,7 +556,10 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         output_mint = decoded["base_mint"]
         unspent_input = amount_in - net_input - total_fee
     else:
-        gross_quote_out = (reserve_quote * amount_in) // (reserve_base + amount_in)
+        gross_quote_out = min(
+            (reserve_quote * amount_in) // (reserve_base + amount_in),
+            raw_quote_reserve,
+        )
         fee_amounts = [_fee_amount_ceil(gross_quote_out, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
         output_amount = gross_quote_out - total_fee
@@ -541,7 +572,7 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if is_buy:
         impact_output_amount = output_amount
 
-    output_reserve = reserve_base if is_buy else reserve_quote
+    output_reserve = reserve_base if is_buy else raw_quote_reserve
     gross_output_amount = output_amount if is_buy else gross_quote_out
     if output_amount <= 0 or output_amount >= output_reserve:
         raise ValueError("PumpSwap quote rounds to zero or exceeds available pool reserves")
