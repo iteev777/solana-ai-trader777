@@ -211,7 +211,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_raydium_clmm_direct_quote.py` | `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` and `raydium_clmm.rs` tests | UPDATED | Full 514-line suite read. Added integer-width, malformed/duplicate tick, output saturation, tick-price consistency, positive slot, vault reserve equality and fixed swap_v2 program-account assertions. Full validation passed on 1,045-test run. | Added integer/tick/slot/reserve and fixed swap_v2 account-list cases. Historical 1,045-test run predates later filter changes; final validation pending. |
 | `tests/test_raydium_cpmm_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_raydium_cpmm_quotes.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_risk_guard_extensions.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_risk_guard_extensions.py` | `tests/trader_loss_limit.rs`, `src/trader/safety/cooldown.rs`, `limits.rs` tests | PARTIAL | Testaa rolling realized loss, mode isolation, fail-closed history errors, re-entry cooldown, strategy scope, tokenless loss guard ja invalid mode. Uudet strategy-scope/tokenless regressiot odottavat CI:tä. |
 | `tests/test_route_comparison.py` | `src/swaps/` quote/route tests | TESTED | Quote comparison now verifies typed rejection status; full validation `45254436959`.  |
 | `tests/test_rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_cache_concurrency.py` | Ei vielä kartoitettu | PENDING |  |
