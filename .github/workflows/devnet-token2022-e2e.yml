@@ -2,15 +2,6 @@ name: Trojan Token-2022 Devnet E2E
 
 on:
   workflow_dispatch:
-  branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - devnet_token2022_e2e.py
-      - token2022_inspector.py
-      - ata_manager.py
-      - solana_onchain.py
-      - rpc_transport.py
-      - .github/workflows/devnet-token2022-e2e.yml
 
 permissions:
   contents: read
