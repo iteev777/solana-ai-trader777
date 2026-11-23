@@ -115,6 +115,10 @@ def main():
 
     require_devnet()
 
+    # Reuse Trojan's audited Token-2022 account-layout validator when checking
+    # the finalized ATA; a matching byte length alone is not sufficient.
+    import token2022_inspector as token2022
+
     mint_account = read_account(MINT)
     if mint_account is None or mint_account["owner"] != str(TOKEN_2022_PROGRAM):
         raise RuntimeError("Configured mint is missing or not owned by Token-2022")
@@ -203,6 +207,9 @@ def main():
     ])
     if not isinstance(signature, str) or not signature:
         raise RuntimeError("Devnet did not return a transaction signature")
+    expected_signature = str(signed.signatures[0])
+    if signature != expected_signature:
+        raise RuntimeError("RPC signature does not match the locally signed transaction")
 
     final_status = wait_finalized(signature, last_valid_height)
     created = read_account(ata, commitment="finalized")
@@ -218,6 +225,20 @@ def main():
         raise RuntimeError("Created ATA owner field does not match ephemeral owner")
     if created["data"][108] != 1:
         raise RuntimeError("Created Token-2022 ATA is not initialized")
+    token2022.validate_token_account_for_program(
+        created,
+        str(TOKEN_2022_PROGRAM),
+        str(MINT),
+        str(payer_pubkey),
+        "Finalized Devnet Token-2022 ATA",
+    )
+    created_lamports = created.get("lamports")
+    if (
+        isinstance(created_lamports, bool)
+        or not isinstance(created_lamports, int)
+        or created_lamports < rent_lamports
+    ):
+        raise RuntimeError("Finalized ATA does not hold the required rent-exempt balance")
 
     final_balance = rpc("getBalance", [str(payer_pubkey), {"commitment": "finalized"}])
     remaining_lamports = (final_balance or {}).get("value")
