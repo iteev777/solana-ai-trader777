@@ -227,7 +227,8 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_token2022_inspector_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token_aggregator.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_trading_control.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_wallet_balances.py` | `src/chains/solana/accounts/balances.rs` tests | TESTED | Uudet testit tyhjälle syötteelle, järjestykselle, invalid-keylle, 50-koon erärajalle, tuntemattomalle saldolle, virheelliselle vastaukselle ja eräkohtaiselle RPC-virheelle. Commit `f71e667`; validointi odottaa. |\n| `tests/test_wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs` | PARTIAL | Wallet preflight -testit luettu; testaa legacy-token-tilien omistajuuden, mintin, määrän, reserve-vaatimuksen ja yhden confirmed-snapshotin. Batch SOL-balance -ominaisuus katetaan erillisessä uudessa moduulissa. |
+| `tests/test_wallet_balances.py` | `src/chains/solana/accounts/balances.rs` tests | TESTED | Uudet testit tyhjälle syötteelle, järjestykselle, invalid-keylle, 50-koon erärajalle, tuntemattomalle saldolle, virheelliselle vastaukselle ja eräkohtaiselle RPC-virheelle. Commit `f71e667`; validointi odottaa. |
+| `tests/test_wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs` | PARTIAL | Wallet preflight -testit luettu; testaa legacy-token-tilien omistajuuden, mintin, määrän, reserve-vaatimuksen ja yhden confirmed-snapshotin. Batch SOL-balance -ominaisuus katetaan erillisessä uudessa moduulissa. |
 | `tests/test_wallet_preflight_api.py` | `src/chains/solana/accounts/balances.rs` | PENDING | API-reitin ja virhetilanteiden tiedostokohtainen tarkastus avoin. |
 | `token2022_inspector.py` | Ei vielä kartoitettu | PENDING |  |
 | `token_security.py` | Ei vielä kartoitettu | PENDING |  |
