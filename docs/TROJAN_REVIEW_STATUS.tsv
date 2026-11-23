@@ -32,11 +32,11 @@ entry_intelligence.py	production	unreviewed
 exit_policy.py	production	unreviewed
 filter_pipeline.py	production	reviewed
 indicators.py	production	unreviewed
-liquidity_monitor.py	production	unreviewed
+liquidity_monitor.py	production	reviewed
 live_execution.py	production	unreviewed
 live_trading.py	production	unreviewed
 main.py	production	unreviewed
-market_data.py	production	unreviewed
+market_data.py	production	reviewed
 meteora_damm_quote.py	production	unreviewed
 meteora_dbc_quote.py	production	unreviewed
 meteora_dlmm_quote.py	production	unreviewed

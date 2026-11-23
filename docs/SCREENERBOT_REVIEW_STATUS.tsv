@@ -1511,8 +1511,8 @@ src/tokens/discovery_sources.rs	source	reviewed	discovery/token_aggregator.py an
 src/tokens/error.rs	source	unreviewed	Pending review
 src/tokens/favorites.rs	source	unreviewed	Pending review
 src/tokens/filtered.rs	source	unreviewed	Pending review
-src/tokens/market/dexscreener.rs	source	unreviewed	Pending review
-src/tokens/market/geckoterminal.rs	source	unreviewed	Pending review
+src/tokens/market/dexscreener.rs	source	reviewed	market_data.py batches by 30, admits only the requested base mint and selects pools locally. Reference distinguishes not listed and storage failures and persists provider snapshots.
+src/tokens/market/geckoterminal.rs	source	reviewed	market_data.py has pool-address fallback and horizon mapping. Reference uses aggregated token reads with persistent snapshots and request lanes.
 src/tokens/market/mod.rs	source	unreviewed	Pending review
 src/tokens/market/persist.rs	source	unreviewed	Pending review
 src/tokens/market/persist_tests.rs	source	unreviewed	Pending review

@@ -33,21 +33,24 @@ status in this review.
 
 | `risk_manager.py` | `src/trader/safety/{limits,risk}.rs` | Trojan checks supplied paper counts, budget and loss limits. Reference derives capacity from held and pending position state and separates emergency exit decisions. | `a8ad7a6` Reject inconsistent position counts, normalize validated count strings consistently, constrain stop-loss configuration and prevent nonfinite price outputs. | All 586 tests passed. |
 
+| `market_data.py` | `src/tokens/market/{dexscreener,geckoterminal}.rs` | Both batch DexScreener and accept only requested identities. Reference persists aggregate Gecko token reads; Trojan uses pool-specific data for trading. Persistent provider snapshots and request lanes remain open. | `077e794` Preserve h1/h6 volume and h6 directional data, omit base-side direction on quote-side fallback, and reject unrequested Gecko pools. | 588 tests passed after this commit. |
+| `liquidity_monitor.py` | `src/filtering/sources/bounds.rs` (numeric validity) | No direct peak-based collapse monitor identified. Trojan maintains a per-token high-water mark and confirmations. Pool-specific baselines remain open. | `87f5e20` Treat boolean and overflowing readings as unknown. Keep explicit zero as collapse and update recovery timestamp. | 589 tests passed. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Sixteen of 61 production
+path in this branch, including review artifacts. Eighteen of 61 production
 Python files have completed this review. The last completed file is
-`risk_manager.py`. Resume at `market_data.py` for market data and prices.
+`liquidity_monitor.py`. Resume at `api_client.py` for request limits and provider recovery.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Twenty-five source files are reviewed and 1,986 remain
+are listed as well. Twenty-seven source files are reviewed and 1,984 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 586 tests passed, including the process-level paper/dashboard and live
+All 589 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.
