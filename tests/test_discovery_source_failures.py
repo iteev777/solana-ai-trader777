@@ -16,6 +16,26 @@ class DiscoverySourceFailureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid response shape"):
                 gecko_scanner.scan_new_pools()
 
+    def test_gecko_pool_deduplication_prefers_identity_matched_snapshot(self):
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+
+        def pool(address, price, resource_id):
+            return {
+                "id": resource_id,
+                "attributes": {"address": address, "reserve_in_usd": "100", "base_token_price_usd": price},
+                "relationships": {"base_token": {"data": {"id": f"solana_{mint}"}}},
+            }
+
+        records = [
+            pool("wrong", "9", "ethereum_wrong"),
+            pool("empty", None, "solana_empty"),
+            pool("priced", "0.25", "solana_priced"),
+        ]
+        with patch.object(gecko_scanner, "get_json", return_value={"data": records}):
+            token, = gecko_scanner.scan_new_pools()
+        self.assertEqual(token["poolAddress"], "priced")
+        self.assertEqual(token["market_data"]["priceUsd"], "0.25")
+
     def test_gecko_recent_updates_only_return_verified_solana_metadata(self):
         mint = "So11111111111111111111111111111111111111112"
         other_mint = "11111111111111111111111111111111"
