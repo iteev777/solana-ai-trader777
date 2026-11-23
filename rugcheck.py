@@ -217,6 +217,25 @@ def analyze_rugcheck_report(data):
         medium_risks += 1
         reasons.append("Token metadata update authority is active")
 
+    # Optional minimum unique-holder gate. A configured floor cannot pass on
+    # missing, zero-placeholder, negative, or fractional provider data.
+    minimum_holders = int(_risk_threshold(
+        "TROJAN_RUGCHECK_MIN_HOLDERS", 0.0, 0.0, 100000000.0
+    ))
+    total_holders_raw = get_number(data.get("totalHolders"))
+    total_holders_valid = (
+        total_holders_raw is not None
+        and total_holders_raw > 0
+        and total_holders_raw.is_integer()
+    )
+    if minimum_holders > 0:
+        if not total_holders_valid:
+            unknown_risks += 1
+            reasons.append("Unique holder count required but unavailable or invalid")
+        elif total_holders_raw < minimum_holders:
+            high_risks += 1
+            reasons.append("Unique holder count is below configured minimum")
+
     top_holders = data.get("topHolders")
     holders_valid = isinstance(top_holders, list) and len(top_holders) > 0
     holder_percentages = []
@@ -316,14 +335,23 @@ def analyze_rugcheck_report(data):
         data.get("tokenType") or token.get("tokenType")
         or token_meta.get("tokenType") or ""
     ).lower()
-    minimum_lp_lock = _risk_threshold("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
-    if minimum_lp_lock > 0 and "pump" in token_type:
+    is_pump_token = "pump" in token_type
+    legacy_pump_lock = _risk_threshold("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
+    pump_lock_required = _risk_threshold(
+        "TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT", legacy_pump_lock
+    )
+    regular_lock_required = _risk_threshold(
+        "TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT", 0.0
+    )
+    minimum_lp_lock = pump_lock_required if is_pump_token else regular_lock_required
+    if minimum_lp_lock > 0:
+        token_label = "Pump" if is_pump_token else "Regular"
         if lp_lock_pct is None:
             unknown_risks += 1
-            reasons.append("Pump token LP lock data required but unavailable")
+            reasons.append(token_label + " token LP lock data required but unavailable")
         elif lp_lock_pct < minimum_lp_lock:
             high_risks += 1
-            reasons.append("Pump token LP lock is below configured minimum")
+            reasons.append(token_label + " token LP lock is below configured minimum")
 
     creator_balance = _first_present(data.get("creatorBalance"), token.get("creatorBalance"))
     token_supply = _first_present(data.get("tokenSupply"), token.get("supply"))
@@ -436,6 +464,10 @@ def analyze_rugcheck_report(data):
             "insider_total_pct": round(insider_total_pct, 4) if insider_total_pct is not None else None,
             "graph_insider_share_pct": round(graph_insider_share_pct, 4) if graph_insider_share_pct is not None else None,
             "lp_lock_pct": lp_lock_pct,
+            "lp_lock_required_pct": minimum_lp_lock,
+            "lp_lock_required": minimum_lp_lock > 0,
+            "unique_holders": int(total_holders_raw) if total_holders_valid else None,
+            "minimum_unique_holders": minimum_holders,
             "creator_pct": round(creator_pct, 4) if creator_pct is not None else None,
             "transfer_fee_pct": transfer_fee_pct,
             "transfer_fee_authority_active": transfer_fee_authority not in (None, "", False),
