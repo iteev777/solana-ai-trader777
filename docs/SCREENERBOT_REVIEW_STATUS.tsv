@@ -795,9 +795,9 @@ src/apis/dexscreener/endpoints.rs	reviewed	scanner.py and discovery/dexscreener_
 src/apis/dexscreener/mod.rs	reviewed	api_client.py and scanner.py overlap in timeout and rate controls; dedicated endpoint buckets and tracked request metrics remain for API-client review.
 src/apis/dexscreener/types.rs	reviewed	scanner.py uses partial dictionaries and row-level mint checks; typed pool/metadata conversion belongs to market-data review.
 src/apis/error.rs	unreviewed	
-src/apis/geckoterminal/endpoints.rs	unreviewed	
+src/apis/geckoterminal/endpoints.rs	reviewed	discovery/gecko_scanner.py covers new/trending/recent; indicators.py and pool registry are candidates for OHLCV/pool endpoint comparison. Token multi metadata and lane controls remain unverified.
 src/apis/geckoterminal/mod.rs	unreviewed	
-src/apis/geckoterminal/types.rs	unreviewed	
+src/apis/geckoterminal/types.rs	reviewed	discovery/gecko_scanner.py and market_data.py: base identity and snapshot validation; extra horizons, quote orientation and token metadata models await downstream review.
 src/apis/llm/anthropic/mod.rs	unreviewed	
 src/apis/llm/anthropic/types.rs	unreviewed	
 src/apis/llm/deepseek/README.md	unreviewed	
