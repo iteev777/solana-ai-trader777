@@ -1,66 +1,58 @@
-# Native signed transaction execution gate
+# Native transaction preparation and execution lock
 
-Raydium CPMM and PumpSwap V2 order endpoints now register a single-use
-approval only after their unsigned transaction has passed Solana RPC
-simulation. The order response includes a random `request_id`, a 120-second
-approval TTL and the SHA-256 digest of the exact message that was simulated.
+Trojan can prepare and simulate unsigned legacy transactions for a restricted
+set of native Solana pool builders: Raydium CPMM, PumpSwap V2, Orca Whirlpool
+and Meteora DLMM. Each builder validates protocol-specific account state and
+requires a fresh quote plus a successful unsigned RPC simulation before a
+single-use approval is registered.
 
-## External wallet flow
+## Current safety state
 
-1. Request and simulate a native order using the protocol-specific order API.
-2. Sign the returned base64 legacy transaction in the user's external wallet.
-3. POST `/api/native-execute` with `X-Trojan-Action: 1`,
-   `X-Trojan-Confirm-Live: 1`, and JSON fields `request_id` and
-   `signed_transaction`.
+**Broadcast is hard locked in code.** The `TROJAN_NATIVE_EXECUTE_ENABLED`
+environment variable is not sufficient to enable a real transaction. The
+`NATIVE_BROADCAST_HARD_LOCK` constant deliberately forces
+`broadcast_available=false` until a separately reviewed live-trading release.
+Do not remove this lock during routine development.
 
-The server:
-- requires `TROJAN_NATIVE_EXECUTE_ENABLED=true` (default: false);
-- consumes the approval atomically before proceeding, so it cannot be replayed;
-- verifies the signed transaction has exactly one non-zero external signature;
-- compares the entire serialized message byte-for-byte with the approved
-  simulated message;
-- checks approval expiry and the transaction's last valid block height;
-- re-simulates the signed transaction with signature verification enabled;
-- checks approval expiry and blockhash validity again immediately before
-  broadcasting with Solana RPC preflight enabled.
+- No server private key or seed phrase is accepted.
+- The server does not sign transactions.
+- The server does not broadcast native transactions while the hard lock is set.
+- Unsigned transaction preparation and simulation are not proof of a successful
+  signed transaction.
+- Approval records are process-local and single-use; multi-replica deployments
+  need shared durable storage or enforced sticky routing before any future
+  broadcast release.
+- A successful simulation is not a guarantee of execution or profitability.
 
-The response is `SUBMITTED_NOT_CONFIRMED`, not a confirmation claim. The
-caller must independently track the returned signature to finality.
+## Supported subset and limitations
 
-## Broadcast request
+| Builder | Instruction | Important limits |
+|---|---|---|
+| Raydium CPMM | SwapBaseInput | Legacy SPL Token; existing user token accounts |
+| PumpSwap V2 | buy_exact_quote_in_v2 / sell_v2 | Legacy SPL Token; standard non-cashback/non-mayhem pool subset; existing buyback ATA |
+| Orca Whirlpool | Swap | Legacy SPL Token; supported account/tick-array subset |
+| Meteora DLMM | Swap2 | Legacy SPL Token; restricted initialized bin-array discovery; not full bitmap traversal |
 
-After the external wallet signs the exact unsigned transaction returned by the
-order endpoint:
+Token-2022 transfer fees/hooks, automatic ATA creation and unsupported pool
+modes must be rejected rather than silently treated as supported. Meteora DLMM
+currently has a restricted bin-array window; fragmented or wider liquidity can
+remain unsupported.
 
-```http
-POST /api/native-execute
-Content-Type: application/json
-X-Trojan-Action: 1
-X-Trojan-Confirm-Live: 1
+## Readiness API
 
-{
-  "request_id": "<single-use-order-request-id>",
-  "signed_transaction": "<base64-signed-legacy-transaction>"
-}
-```
+Authenticated dashboard endpoints expose:
+- `GET /api/native-execution-status` — code hard-lock and signing/broadcast status.
+- `GET /api/readiness` — paper readiness and integration health.
+- `GET /api/protocol-validation` — observed RPC decode attempts and results.
 
-A successful RPC submission returns the transaction signature and
-`SUBMITTED_NOT_CONFIRMED`. Do not treat that response as finality; monitor the
-signature independently. If the RPC call times out, the response includes the
-expected signature where possible so the caller can check chain state before
-requesting another order.
+A protocol with zero real decode attempts is unobserved, not validated. Unit
+tests do not count as mainnet protocol validation.
 
-## Safety and deployment constraints
+## Future release gate
 
-- The server never receives or stores a private key and never signs.
-- No native transaction is broadcast unless the environment gate and explicit
-  confirmation header are both present.
-- The native approval cache is process-local. Order and execute must reach the
-  same app instance. Multi-replica deployments need sticky routing or a shared
-  durable, atomic approval store before enabling the environment gate.
-- An approval is consumed even when later signature verification or simulation
-  fails. The user must request a new quote/order.
-- Keep the environment gate disabled until devnet end-to-end signing,
-  simulation, submission and confirmation tests pass for each protocol.
-- This gate does not enable the separate Jupiter execution adapter, which has
-  its own environment and confirmation controls.
+Before the code hard lock can be removed, require a separately reviewed change
+that demonstrates a devnet end-to-end transaction using an external wallet,
+signature-verifying simulation, safe submission, confirmation/finality
+tracking, expiry/replay protection, durable approval handling where needed,
+Token-2022 decisions, and explicit user approval. Mainnet live trading is not
+part of this readiness task.
