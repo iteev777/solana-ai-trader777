@@ -1779,6 +1779,50 @@ def get_recent_copy_trade_events(limit=50):
     return [dict(row) for row in rows]
 
 
+def get_copy_watch_cursor(wallet):
+    """Return the last fully processed signature for a watched wallet."""
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch_cursors (
+                wallet TEXT PRIMARY KEY,
+                signature TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        row = connection.execute(
+            "SELECT signature FROM copy_wallet_watch_cursors WHERE wallet = ?",
+            (wallet.strip(),)
+        ).fetchone()
+    return row["signature"] if row else None
+
+
+def set_copy_watch_cursor(wallet, signature):
+    """Persist a cursor only after the complete older-to-newer range was processed."""
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    if not isinstance(signature, str) or not signature.strip() or len(signature) > 128:
+        raise ValueError("signature cursor is invalid")
+    address = wallet.strip()
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch_cursors (
+                wallet TEXT PRIMARY KEY,
+                signature TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            INSERT INTO copy_wallet_watch_cursors (wallet, signature, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                signature=excluded.signature,
+                updated_at=excluded.updated_at
+        """, (address, signature.strip(), now()))
+    return signature.strip()
+
+
 # ==========================================
 # HEALTH CHECK
 # ==========================================
