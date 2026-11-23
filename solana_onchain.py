@@ -332,6 +332,8 @@ def _decode_pool(protocol, raw):
         return {
             "base_mint": _key(raw, 131), "quote_mint": _key(raw, 163),
             "vault_base": _key(raw, 35), "vault_quote": _key(raw, 67),
+            "pool_mint": _key(raw, 99), "fee_account": _key(raw, 195),
+            "is_initialized": bool(raw[1]),
             "trade_fee_numerator": trade_fee_numerator,
             "trade_fee_denominator": trade_fee_denominator,
             "owner_fee_numerator": owner_fee_numerator,
