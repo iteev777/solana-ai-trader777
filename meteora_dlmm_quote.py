@@ -148,7 +148,7 @@ def _decode_bin_array(account, pool_address, expected_index, state, chain):
         raise ValueError("Meteora DLMM BinArray has an invalid length")
     if raw[:8] != chain._discriminator("BinArray"):
         raise ValueError("Meteora DLMM BinArray discriminator is invalid")
-    array_index = chain._i64(raw, 8)
+    array_index = _i64(raw, 8)
     if array_index != expected_index:
         raise ValueError("Meteora DLMM BinArray index does not match its PDA")
     if chain._key(raw, 24) != pool_address:
