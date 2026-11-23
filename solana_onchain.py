@@ -902,8 +902,9 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     first = _decode_pool("raydium_amm_v4", discovered["data"])
     keys = [pool_address, first["vault_base"], first["vault_quote"],
             first["base_mint"], first["quote_mint"]]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Raydium AMM v4 snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Raydium AMM v4 snapshot is missing a required account")
     pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -1180,8 +1181,9 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
         raise ValueError("Moonit ConstantProductV1 direct quotes require the verified 9-decimal token format")
 
     keys = [pool_address, first["base_mint"], config_address]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Moonit snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Moonit snapshot is missing a required account")
     pool_acc, mint_acc, config_acc = accounts
