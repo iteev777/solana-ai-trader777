@@ -1154,8 +1154,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     if discovered.get("owner") != PROGRAMS["pumpfun_legacy"]:
         raise ValueError("Bonding curve account is not owned by the Pump.fun program")
     first = _decode_pool("pumpfun_legacy", discovered["data"])
+    token_mint_bytes = _b58decode(token_mint)
+    if len(token_mint_bytes) != 32:
+        raise ValueError("Pump.fun token mint must decode to 32 bytes")
     expected_curve, _ = _find_program_address(
-        [b"bonding-curve", _b58decode(token_mint)], PROGRAMS["pumpfun_legacy"]
+        [b"bonding-curve", token_mint_bytes], PROGRAMS["pumpfun_legacy"]
     )
     if expected_curve != pool_address:
         raise ValueError("Pump.fun bonding curve PDA does not match the requested token mint")
@@ -1210,8 +1213,8 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     real_token = curve["real_token_reserves"]
     real_quote = curve["real_quote_reserves"]
     supply = curve["token_total_supply"]
-    if min(virtual_token, virtual_quote, real_token, real_quote, supply) <= 0:
-        raise ValueError("Pump.fun bonding curve reserves or supply are invalid")
+    if min(virtual_token, virtual_quote, real_token, supply) <= 0:
+        raise ValueError("Pump.fun virtual reserves, real token reserve or supply are invalid")
     market_cap_lamports = (virtual_quote * supply) // virtual_token
 
     tiers = fee_config["fee_tiers"]
@@ -1254,6 +1257,8 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         unspent_input = amount_in - net_quote - total_fee
         gross_output = output_amount
     else:
+        if amount_in > supply:
+            raise ValueError("Pump.fun sell input exceeds total token supply")
         gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
         if real_quote <= 0:
             raise ValueError("Pump.fun curve has no real SOL reserve for this sell")
