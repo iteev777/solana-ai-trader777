@@ -31,3 +31,18 @@ remain responsible for entry eligibility. Run the full test suite with:
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+
+## Feed reliability and multi-source merge
+
+The token aggregator records per-feed success/failure counts, consecutive failures,
+last error, result count and latency in SQLite. The last completed scan timestamp
+and unique-token count are persisted as well, so the dashboard can report feed
+health after a process restart. Pump.fun is tracked as its own provider family;
+it is not mislabeled as a Birdeye feed.
+
+When multiple feeds return the same mint, later feeds can fill missing metadata,
+replace placeholder strings and replace non-positive numeric market metrics with
+positive observations. Existing positive values are retained rather than being
+overwritten blindly. Raw source provenance is merged so consensus scoring still
+counts independent provider families, not endpoint count.
