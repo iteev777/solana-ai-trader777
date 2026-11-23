@@ -322,6 +322,10 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.assertEqual(len(result["instruction_accounts"]), 15)
         self.assertEqual(result["instruction_accounts"][5:8],
                          [self.vault1, self.vault0, observation])
+        self.assertEqual(
+            result["instruction_accounts"][8:10],
+            [chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM],
+        )
         self.assertEqual(result["instruction_accounts"][13:],
                          [self.bitmap_extension, self.tick_array])
         self.assertEqual(result["execution"], "LOCKED")
