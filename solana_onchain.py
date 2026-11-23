@@ -524,7 +524,6 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         pool_address, PUMPSWAP_GLOBAL_CONFIG, PUMPSWAP_FEE_CONFIG,
         first["vault_base"], first["vault_quote"], first["base_mint"], first["quote_mint"],
     ]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
     if any(item is None for item in accounts):
         raise ValueError("PumpSwap confirmed snapshot is missing a required account")
@@ -1208,9 +1207,14 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_for_impact
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Moonit confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Moonit snapshot is stale")
+        raise ValueError("Moonit confirmed snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Moonit price impact is invalid")
 
