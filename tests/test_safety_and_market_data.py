@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import ai_analyzer
 import market_data
@@ -6,6 +7,19 @@ import risk_manager
 
 
 class RiskManagerTests(unittest.TestCase):
+    def test_malformed_liquidity_cannot_trigger_collapse(self):
+        import liquidity_monitor
+
+        with (
+            patch.object(liquidity_monitor, "liquidity_states", {}),
+            patch.object(liquidity_monitor, "previous_liquidity", {}),
+        ):
+            self.assertEqual(liquidity_monitor.check_liquidity("Mint", 100), "NORMAL")
+            self.assertEqual(liquidity_monitor.check_liquidity("Mint", False), "UNKNOWN")
+            self.assertEqual(liquidity_monitor.check_liquidity("Mint", 10**400), "UNKNOWN")
+            self.assertEqual(liquidity_monitor.get_liquidity_status("Mint")["previous"], 100)
+            self.assertEqual(liquidity_monitor.check_liquidity("Mint", 0), "COLLAPSE")
+
     def test_position_counts_normalize_without_bypassing_capacity(self):
         check = risk_manager.check_trade_risk
         self.assertTrue(check(100, "1.0", 0, 2, main_positions="1e0")[0])

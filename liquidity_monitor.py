@@ -27,6 +27,9 @@ def now():
 
 def valid_liquidity(value):
 
+    if isinstance(value, bool):
+        return None
+
     try:
         value = float(value)
 
@@ -38,7 +41,7 @@ def valid_liquidity(value):
 
         return value
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -48,7 +51,7 @@ def valid_liquidity(value):
 
 def check_liquidity(token_address, current_liquidity):
 
-    if not token_address:
+    if not isinstance(token_address, str) or not token_address.strip():
         return "UNKNOWN"
 
     current = valid_liquidity(current_liquidity)
@@ -124,6 +127,7 @@ def check_liquidity(token_address, current_liquidity):
             state["previous"] = current
             state["drop_streak"] = 0
             state["status"] = "NORMAL"
+            state["last_update"] = now()
 
             previous_liquidity[token_address] = current
 
