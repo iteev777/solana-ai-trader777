@@ -7,6 +7,7 @@ TRITON_RPC_URL and ALCHEMY_RPC_URL. Endpoint URLs are never logged or exposed.
 import os
 import json
 import subprocess
+import select
 import threading
 import time
 from urllib.parse import urlparse
@@ -49,14 +50,37 @@ def _rust_rpc_call(url, method, params):
         )
         process.stdin.write(request + "\n")
         process.stdin.flush()
+        ready, _, _ = select.select([process.stdout], [], [], _TIMEOUT)
+        if not ready:
+            try:
+                process.kill()
+                process.wait(timeout=1)
+            except Exception:
+                pass
+            with _guard:
+                if _rust_sidecars.get(url) is process:
+                    _rust_sidecars.pop(url, None)
+            raise TimeoutError("Rust RPC sidecar response timed out")
         line = process.stdout.readline()
         if not line:
             raise RuntimeError("Rust RPC sidecar closed its output")
+        if len(line) > 16 * 1024 * 1024:
+            raise RuntimeError("Rust RPC sidecar response exceeded the size limit")
         payload = json.loads(line)
         if not isinstance(payload, dict) or payload.get("ok") is not True:
             message = payload.get("error", "Rust RPC sidecar request failed")
             raise RuntimeError(str(message)[:200])
-        return payload.get("result")
+        result = payload.get("result")
+        values = result.get("value") if isinstance(result, dict) else None
+        context = result.get("context") if isinstance(result, dict) else None
+        expected_count = len(params[0]) if params and isinstance(params[0], list) else -1
+        if (not isinstance(values, list) or len(values) != expected_count
+                or not isinstance(context, dict)
+                or isinstance(context.get("slot"), bool)
+                or not isinstance(context.get("slot"), int)
+                or context["slot"] <= 0):
+            raise RuntimeError("Rust RPC sidecar returned an invalid getMultipleAccounts snapshot")
+        return result
 
 
 def _urls():
