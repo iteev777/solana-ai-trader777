@@ -43,13 +43,36 @@ def _dbc_key(value):
     return chain._b58encode(bytes([value]) * 32)
 
 
-def _dbc_token_account(mint, authority, amount):
-    raw = bytearray(165)
+def _dbc_token_account(mint, authority, amount, token_program=chain.TOKEN_PROGRAM,
+                       transfer_fee=False, immutable_owner=False):
+    raw = bytearray(182 if immutable_owner else (178 if transfer_fee else 165))
     raw[:32] = chain._b58decode(mint)
     raw[32:64] = chain._b58decode(authority)
     raw[64:72] = amount.to_bytes(8, "little")
     raw[108] = 1
-    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+    if transfer_fee:
+        raw[165] = 2
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (8).to_bytes(2, "little")
+    if immutable_owner:
+        raw[178:180] = (7).to_bytes(2, "little")
+        raw[180:182] = (0).to_bytes(2, "little")
+    return {"owner": token_program, "data": bytes(raw)}
+
+
+def _dbc_token2022_mint():
+    from token2022_inspector import MINT_ACCOUNT_TYPE
+    raw = bytearray(166)
+    raw[44] = 9
+    raw[45] = 1
+    raw[165] = MINT_ACCOUNT_TYPE
+    config = bytearray(108)
+    config[80:88] = (10_000).to_bytes(8, "little")
+    config[88:90] = (100).to_bytes(2, "little")
+    config[98:106] = (10_000).to_bytes(8, "little")
+    config[106:108] = (100).to_bytes(2, "little")
+    raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+    return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
 
 
 class MeteoraDbcBuilderIntegrationTests(unittest.TestCase):
@@ -144,8 +167,18 @@ class MeteoraDbcBuilderIntegrationTests(unittest.TestCase):
                 self.pool, input_mint, amount, output_mint=output_mint
             )
         user_in_address = _dbc_key(60) if wrong_ata else input_ata
-        user_in = _dbc_token_account(input_mint, self.wallet, amount)
-        user_out = _dbc_token_account(output_mint, self.wallet, 0)
+        input_program = self.base_mint_acc["owner"] if input_is_base else self.quote_mint_acc["owner"]
+        output_program = self.quote_mint_acc["owner"] if input_is_base else self.base_mint_acc["owner"]
+        user_in = _dbc_token_account(
+            input_mint, self.wallet, amount, token_program=input_program,
+            transfer_fee=input_program == chain.TOKEN_2022_PROGRAM,
+            immutable_owner=input_program == chain.TOKEN_2022_PROGRAM,
+        )
+        user_out = _dbc_token_account(
+            output_mint, self.wallet, 0, token_program=output_program,
+            transfer_fee=output_program == chain.TOKEN_2022_PROGRAM,
+            immutable_owner=output_program == chain.TOKEN_2022_PROGRAM,
+        )
         builder_accounts = [
             self.pool_acc, self.config_acc, self.base_mint_acc, self.quote_mint_acc,
             self.quote_accounts[4], self.quote_accounts[5], user_in, user_out,
@@ -180,6 +213,27 @@ class MeteoraDbcBuilderIntegrationTests(unittest.TestCase):
             self.assertEqual(result["instruction_accounts"][14], builder.PROGRAM_ID)
             self.assertEqual(result["execution"], "LOCKED")
             self.assertFalse(result["live_trading_ready"])
+
+    def test_builds_fee_bearing_token2022_dbc_swap_with_correct_program_accounts(self):
+        self.quote_mint_acc = _dbc_token2022_mint()
+        self.quote_accounts[3] = self.quote_mint_acc
+        self.quote_accounts[5] = _dbc_token_account(
+            self.quote_mint, builder.POOL_AUTHORITY, 10**12,
+            token_program=chain.TOKEN_2022_PROGRAM, transfer_fee=True,
+        )
+        self.quote_ata = chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_2022_PROGRAM),
+             chain._b58decode(self.quote_mint)],
+            builder.ASSOCIATED_TOKEN_PROGRAM_ID,
+        )[0]
+        result = self._build(input_is_base=True)
+        self.assertEqual(result["token_program_input"], chain.TOKEN_PROGRAM)
+        self.assertEqual(result["token_program_output"], chain.TOKEN_2022_PROGRAM)
+        self.assertTrue(result["token2022_fee_aware_supported"])
+        self.assertEqual(
+            result["instruction_accounts"][10:12],
+            [chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM],
+        )
 
     def test_rejects_noncanonical_user_ata(self):
         with self.assertRaisesRegex(ValueError, "canonical associated token account"):
