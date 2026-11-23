@@ -102,8 +102,8 @@ class FluxbeamDirectQuoteTests(unittest.TestCase):
 
     def test_zero_fee_token2022_mint_is_supported_with_matching_vault(self):
         accounts = list(self.accounts)
-        accounts[3] = mint_account(owner=chain.TOKEN_2022_PROGRAM)
-        accounts[1] = token_account(
+        accounts[3] = self.mint_account(owner=chain.TOKEN_2022_PROGRAM)
+        accounts[1] = self.token_account(
             self.base_mint, 1_000_000, owner=chain.TOKEN_2022_PROGRAM
         )
         with patch.object(chain, "_account", return_value={
