@@ -141,10 +141,9 @@ def main():
         raise RuntimeError("Configured mint is missing or not owned by Token-2022")
     if len(mint_account["data"]) != 278:
         raise RuntimeError("Configured Token-2022 mint data size changed; review before proceeding")
-    mint_inspection = token2022.inspect_token2022_mint(str(MINT))
     mint_compatibility = token2022.validate_swap_compatible_mint_data(mint_account["data"])
     transfer_fee_config = mint_compatibility.get("transfer_fee_config")
-    if mint_inspection.get("decimals") != 6 or transfer_fee_config is None:
+    if mint_account["data"][44] != 6 or transfer_fee_config is None:
         raise RuntimeError("Configured Token-2022 mint extension/decimal layout is not the expected test mint")
     epoch_info = rpc("getEpochInfo", [{"commitment": "confirmed"}])
     epoch = (epoch_info or {}).get("epoch")
