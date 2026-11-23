@@ -90,6 +90,68 @@ class CopyWalletWatchlistTests(unittest.TestCase):
         self.assertEqual(database.get_copy_watch_cursor(DASHBOARD_WALLET), "signature-next")
         self.assertIsNone(database.get_copy_watch_cursor(ENV_WALLET))
 
+    def test_copy_event_and_subject_asset_deltas_are_persisted_atomically(self):
+        signature = "asset-delta-signature"
+        large_raw = 1 << 100
+        delta = {
+            "chain": "solana",
+            "wallet_address": DASHBOARD_WALLET,
+            "signature": signature,
+            "mint": "TokenMint111111111111111111111111111111111",
+            "slot": 123,
+            "block_time": 456,
+            "tx_index": 0,
+            "delta_raw": str(large_raw),
+            "before_raw": str(large_raw),
+            "after_raw": str(large_raw + 1),
+            "decimals": 6,
+            "kind": "trade",
+            "venue": "raydium_cpmm",
+            "fee_native_raw": "5000",
+            "success": True,
+        }
+        inserted = database.record_copy_trade_event(
+            DASHBOARD_WALLET, signature, "BUY", delta["mint"], 1.0, -0.1,
+            asset_deltas=[delta],
+        )
+        self.assertTrue(inserted)
+        rows = database.get_subject_asset_deltas(DASHBOARD_WALLET)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["delta_raw"], large_raw)
+        self.assertEqual(rows[0]["after_raw"], large_raw + 1)
+        self.assertEqual(rows[0]["kind"], "trade")
+        self.assertTrue(rows[0]["success"])
+
+        # Duplicate event delivery is idempotent for both event and ledger rows.
+        self.assertFalse(database.record_copy_trade_event(
+            DASHBOARD_WALLET, signature, "BUY", delta["mint"], 1.0, -0.1,
+            asset_deltas=[delta],
+        ))
+        self.assertEqual(len(database.get_subject_asset_deltas(DASHBOARD_WALLET)), 1)
+
+    def test_invalid_asset_delta_rolls_back_copy_event_insert(self):
+        delta = {
+            "chain": "solana",
+            "wallet_address": ENV_WALLET,
+            "signature": "wrong-subject-signature",
+            "mint": "TokenMint111111111111111111111111111111111",
+            "slot": 1, "block_time": 2, "tx_index": 0, "delta_raw": 1,
+            "before_raw": 0, "after_raw": 1, "decimals": 6,
+            "kind": "trade", "venue": None, "fee_native_raw": 0, "success": True,
+        }
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            database.record_copy_trade_event(
+                DASHBOARD_WALLET, "wrong-subject-signature", "BUY",
+                delta["mint"], 1.0, -0.1, asset_deltas=[delta],
+            )
+        self.assertEqual(database.get_recent_copy_trade_events(), [])
+
+    def test_subject_asset_delta_query_validates_limit(self):
+        with self.assertRaises(ValueError):
+            database.get_subject_asset_deltas(DASHBOARD_WALLET, True)
+        with self.assertRaises(ValueError):
+            database.get_subject_asset_deltas(DASHBOARD_WALLET, 1001)
+
     def test_copy_watch_cursor_rejects_invalid_values(self):
         with self.assertRaises(ValueError):
             database.get_copy_watch_cursor(" ")
