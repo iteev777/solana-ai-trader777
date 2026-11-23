@@ -123,6 +123,8 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
         raise ValueError("Pool account is not owned by the PumpSwap program")
     decoded = chain._decode_pool("pumpswap", first["data"])
     _validate_pool_identity(pool_id, first["data"], decoded)
+    if decoded.get("is_mayhem_mode") or decoded.get("is_cashback_coin") or decoded.get("is_holder_reward"):
+        raise ValueError("PumpSwap native V2 builder currently refuses mayhem, cashback and holder-reward pools")
     is_buy = input_mint == decoded["quote_mint"] and output_mint == decoded["base_mint"]
     is_sell = input_mint == decoded["base_mint"] and output_mint == decoded["quote_mint"]
     if not (is_buy or is_sell):
@@ -144,8 +146,6 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh PumpSwap quote is older than the supplied quote")
 
-    if decoded.get("is_mayhem_mode") or decoded.get("is_cashback_coin") or decoded.get("is_holder_reward"):
-        raise ValueError("PumpSwap native V2 builder currently refuses mayhem, cashback and holder-reward pools")
     if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
         raise ValueError("Input mint does not belong to the PumpSwap pool")
     if output_mint != (decoded["base_mint"] if input_mint == decoded["quote_mint"] else decoded["quote_mint"]):
