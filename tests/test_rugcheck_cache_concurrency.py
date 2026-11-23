@@ -58,7 +58,13 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         first = rugcheck.get_rugcheck_report("MintCache1")
         second = rugcheck.get_rugcheck_report("MintCache1")
         self.assertIs(first, second)
-        get.assert_called_once()
+        get.assert_called_once_with(
+            "https://api.rugcheck.xyz/v1/tokens/MintCache1/report",
+            headers={"Accept": "application/json"},
+            timeout=15,
+            cache_ttl=0,
+            max_retries=1,
+        )
 
     @patch("rugcheck.get_json")
     def test_report_survives_process_local_cache_reset_via_sqlite(self, get):
