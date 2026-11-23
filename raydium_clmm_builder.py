@@ -164,7 +164,7 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
     token_program_output = token_program_1 if input_mint == current["mint_0"] else token_program_0
     if (fresh.get("token_program_input") != token_program_input
             or fresh.get("token_program_output") != token_program_output):
-        raise ValueError("CLMM token program state changed during transaction preparation")
+        raise ValueError("CLMM token program state changed during transaction preparation: quote=" + str((fresh.get("token_program_input"), fresh.get("token_program_output"))) + " snapshot=" + str((token_program_input, token_program_output)))
     # Raydium CLMM vault authority is the pool address itself.
     authority = pool
     _token_account(vault0_acc, token_program_0, authority, current["mint_0"], "CLMM vault 0", 1)
