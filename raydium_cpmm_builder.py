@@ -173,9 +173,15 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     )
     if (not isinstance(fresh_quote, dict)
             or fresh_quote.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT"
-            or fresh_quote.get("output_mint") != output_mint):
-        raise ValueError("Fresh Raydium CPMM quote did not validate the requested pair")
+            or fresh_quote.get("pool_id") != pool_id
+            or fresh_quote.get("input_mint") != input_mint
+            or fresh_quote.get("output_mint") != output_mint
+            or fresh_quote.get("input_amount") != amount_in):
+        raise ValueError("Fresh Raydium CPMM quote did not validate the requested pool, pair and amount")
+    fresh_out = _u64(fresh_quote.get("out_amount"), "fresh quote output")
     minimum_out = _u64(fresh_quote.get("minimum_out_amount"), "fresh quote minimum output")
+    if minimum_out > fresh_out:
+        raise ValueError("Fresh quote minimum output exceeds its quoted output")
     fresh_quote_slot = fresh_quote.get("slot")
     if isinstance(fresh_quote_slot, bool) or not isinstance(fresh_quote_slot, int) or fresh_quote_slot < quote_slot:
         raise ValueError("Fresh Raydium CPMM quote is older than the supplied quote")
