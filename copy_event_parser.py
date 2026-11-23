@@ -262,6 +262,17 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
             else:
                 reason = "SWAP_PROGRAM_WITH_AMBIGUOUS_BALANCE_FLOW"
 
+    from transaction_deltas import extract_subject_deltas
+    try:
+        asset_deltas = [
+            item.as_dict()
+            for item in extract_subject_deltas(wallet, tx, signature=signature)
+        ]
+    except Exception:
+        # A failed ledger extraction must never silently produce a partial
+        # transaction event that downstream persistence could mistake as complete.
+        return None
+
     return {
         "wallet": wallet,
         "signature": signature,
@@ -276,4 +287,5 @@ def parse_wallet_transaction(tx, wallet, signature=None, received_at=None):
         "received_at": time.time() if received_at is None else received_at,
         "logs": (meta.get("logMessages") or [])[-5:],
         "invoked_programs": sorted(invoked & _swap_program_allowlist()),
+        "asset_deltas": asset_deltas,
     }
