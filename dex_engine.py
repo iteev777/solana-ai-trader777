@@ -174,7 +174,6 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         for key, value in network_fee_output_amounts.items()
     }
     started = time.perf_counter()
-    now = time.time()
     raw_quotes = {}
     rejected = {}
 
@@ -199,6 +198,7 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
             except Exception as error:
                 rejected[key] = (str(error) or type(error).__name__)[:180]
 
+    now = time.time()
     candidates = []
     aggregate = raw_quotes.get("aggregators") or {}
     for provider in ("jupiter", "raptor"):
