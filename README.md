@@ -260,7 +260,7 @@ Named conditions can be nested in the existing `all`, `any`, and `not` groups. P
 
 ## Native direct quote adapters
 
-The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, Orca Whirlpool, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
+The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, Orca Whirlpool, Meteora DAMM v2, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
 
 
 ## Configurable paper exit policy
@@ -421,3 +421,13 @@ Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, 
 ## Orca Whirlpool direct quote adapter
 
 The read-only Orca Whirlpool adapter uses the pool fee_rate and the same integer Q64.64 concentrated-liquidity step math as Raydium CLMM, with Orca's distinct 88-tick fixed-array layout and decimal-string tick-array PDA seeds. It reads the pool, vaults, legacy SPL mints, optional oracle and direction-specific tick-array sequence at one confirmed RPC slot. Active adaptive-fee oracles, DynamicTickArray layouts and Token-2022 mints are refused. An absent fixed tick array is treated as an empty sequence element; quotes are capped at the derived sequence boundary. No transaction is built or signed.
+
+
+## Meteora DAMM v2 direct quote adapter
+
+The read-only DAMM v2 adapter models its single-band Q64.64 constant-liquidity curve and pool price bounds. It reads the pool, both vaults and legacy SPL mints at one confirmed RPC slot, subtracts accrued protocol fees from the spendable output reserve, and validates the pool status and fee version. To avoid underestimating fees, time-scheduler fees use the cliff, rate-limiter fees use their configured ceiling, and the stored dynamic-volatility accumulator is used without decay; the combined fee is capped by the pool's fee version. Fee collection direction follows the pool's OnlyB/both-token/compounding mode. Token-2022 mints and unsupported fee versions remain refused. No instruction is built or signed.
+
+ 
+## Meteora DAMM v2 direct quote adapter
+
+The read-only DAMM v2 adapter models its single-band Q64.64 constant-liquidity curve and pool price bounds. It reads the pool, both vaults and legacy SPL mints at one confirmed RPC slot, subtracts accrued protocol fees from the spendable output reserve, and validates pool status and fee version. Time-scheduler fees use the cliff, rate-limiter fees use their configured ceiling, and the stored dynamic-volatility accumulator is used without decay to avoid underestimating fees; combined fees are capped by the pool's fee version. Fee collection direction follows the pool's OnlyB/both-token/compounding mode. Token-2022 mints and unsupported fee versions remain refused. No instruction is built or signed.

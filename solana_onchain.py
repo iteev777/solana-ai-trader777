@@ -1347,6 +1347,12 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100, out
             pool_address, input_mint, amount_in, slippage_bps,
             output_mint=output_mint,
         )
+    if protocol == "meteora_damm_v2":
+        from meteora_damm_quote import quote_meteora_damm_pool
+        return quote_meteora_damm_pool(
+            pool_address, input_mint, amount_in, slippage_bps,
+            output_mint=output_mint,
+        )
     if protocol == "raydium_cpmm":
         return quote_raydium_cpmm_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_amm_v4":
