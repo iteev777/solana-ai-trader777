@@ -431,3 +431,6 @@ The read-only DAMM v2 adapter models its single-band Q64.64 constant-liquidity c
 ## Meteora DAMM v2 direct quote adapter
 
 The read-only DAMM v2 adapter models its single-band Q64.64 constant-liquidity curve and pool price bounds. It reads the pool, both vaults and legacy SPL mints at one confirmed RPC slot, subtracts accrued protocol fees from the spendable output reserve, and validates pool status and fee version. Time-scheduler fees use the cliff, rate-limiter fees use their configured ceiling, and the stored dynamic-volatility accumulator is used without decay to avoid underestimating fees; combined fees are capped by the pool's fee version. Fee collection direction follows the pool's OnlyB/both-token/compounding mode. Token-2022 mints and unsupported fee versions remain refused. No instruction is built or signed.
+
+
+Orca Whirlpool direct quotes now require a full pool account snapshot, a classic static fee tier (`fee_tier_index == tick_spacing`), and fee rates within the protocol's documented caps. The quote subtracts `protocol_fee_owed_a` and `protocol_fee_owed_b` from vault balances before checking spendable reserves; owed protocol fees are not treated as swap liquidity. Adaptive-fee oracles, dynamic tick arrays and Token-2022 mints remain fail-closed.
