@@ -6,6 +6,7 @@ and simulates an unsigned CloseAccount transaction, and leaves signing and
 broadcast to the user's wallet. No close is submitted by this module.
 """
 import base64
+import os
 
 import ata_manager
 import solana_onchain as chain
@@ -115,7 +116,7 @@ def close_empty_ata_order(wallet, token_account, min_sol_reserve_lamports=None):
     _u64(wallet_account.get("lamports"), "Wallet account lamports")
 
     if min_sol_reserve_lamports is None:
-        raw_reserve = __import__("os").getenv("TROJAN_MIN_SOL_RESERVE_LAMPORTS", "10000000")
+        raw_reserve = os.getenv("TROJAN_MIN_SOL_RESERVE_LAMPORTS", "10000000")
         if not raw_reserve.isdigit():
             raise ValueError("TROJAN_MIN_SOL_RESERVE_LAMPORTS must be a non-negative integer")
         reserve = _u64(int(raw_reserve), "Minimum SOL reserve")
