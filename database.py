@@ -1639,7 +1639,8 @@ def get_market_candles(pool_address, timeframe="1m", limit=200):
         limit = int(limit)
     except (TypeError, ValueError, OverflowError):
         limit = 200
-    limit = max(1, min(limit, 1000))
+    # 30 days of 1m candles at the default retention period.
+    limit = max(1, min(limit, 43200))
     with connect() as connection:
         rows = connection.execute("""
             SELECT open_time AS timestamp, open, high, low, close, volume
