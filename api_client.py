@@ -23,7 +23,7 @@ HOST_INTERVALS = {
     "api.dexscreener.com": 1.1,
     "public-api.birdeye.so": 3.0,
     "api.geckoterminal.com": 7.0,
-    "api.rugcheck.xyz": 2.0,
+    "api.rugcheck.xyz": 1.0  # ScreenerBot parity: 60 requests/minute,
     "lite-api.jup.ag": 1.2,
     "api.jup.ag": 1.2,
     "api.coingecko.com": 1.5,
