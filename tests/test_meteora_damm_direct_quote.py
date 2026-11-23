@@ -1,4 +1,5 @@
 import unittest
+import time
 from unittest.mock import patch
 
 import solana_onchain as chain
@@ -55,6 +56,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
             patch.object(chain, "_multiple_accounts_with_context", return_value=(
                 self.accounts if accounts is None else accounts, 765432
             )),
+            patch.object(chain, "_rpc", side_effect=lambda method, params: int(time.time()) if method == "getBlockTime" else 765433),
         ):
             return quote_meteora_damm_pool(
                 self.pool, input_mint or self.mint_a, amount,
@@ -172,6 +174,48 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         import route_comparison
         status = route_comparison.get_router_status()
         self.assertIn("Meteora DAMM v2", status["direct_pool"]["quote_adapters"])
+
+
+    def test_pool_activation_point_is_enforced(self):
+        state = bytearray(self.state)
+        state[472:480] = (765434).to_bytes(8, "little")
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        with self.assertRaisesRegex(ValueError, "activation point"):
+            self.quote(accounts=accounts)
+
+    def test_unknown_activation_type_is_rejected(self):
+        state = bytearray(self.state)
+        state[480] = 2
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["meteora_damm_v2"], "data": bytes(state)
+        }):
+            with self.assertRaisesRegex(ValueError, "activation type"):
+                quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint=self.mint_b)
+
+    def test_confirmed_slot_block_time_is_required(self):
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
+            }),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 765432)),
+            patch.object(chain, "_rpc", return_value=None),
+        ):
+            with self.assertRaisesRegex(ValueError, "block time is unavailable"):
+                quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint=self.mint_b)
+
+    def test_stale_confirmed_slot_is_rejected(self):
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
+            }),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 765432)),
+            patch.object(chain, "_rpc", side_effect=lambda method, params: int(time.time() - 30) if method == "getBlockTime" else 765433),
+        ):
+            with self.assertRaisesRegex(ValueError, "snapshot is stale"):
+                quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint=self.mint_b)
+
 
 
 if __name__ == "__main__":
