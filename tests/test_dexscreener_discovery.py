@@ -47,6 +47,18 @@ class DexScreenerDiscoveryTests(unittest.TestCase):
         self.assertEqual(by_address["MintA"]["chainId"], "solana")
 
     @patch("discovery.dexscreener_scanner.get_json")
+    def test_later_feed_fills_missing_metadata_and_preserves_zero(self, get_json):
+        get_json.side_effect = [
+            [{"chainId": "solana", "tokenAddress": "MintA"}],
+            [{"chainId": "solana", "tokenAddress": "MintA", "symbol": "ABC",
+              "totalAmount": 0, "amount": 5}],
+            [{"chainId": "solana", "tokenAddress": "MintA", "totalAmount": 19}],
+        ]
+        token, = scan_dexscreener()
+        self.assertEqual(token["symbol"], "ABC")
+        self.assertEqual(token["boost_amount"], 0)
+
+    @patch("discovery.dexscreener_scanner.get_json")
     def test_provider_failure_does_not_abort_other_feeds(self, get_json):
         get_json.side_effect = [
             RuntimeError("profiles unavailable"),
