@@ -20,7 +20,7 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 
 **Still required before calling stabilization complete**
 - A clean deployment health/readiness snapshot after restart.
-- A verified database backup/restore drill on the deployed instance.
+- **Restore implementation added in code:** `database.restore_database()` validates SQLite integrity and exact schema version, creates an emergency snapshot, atomically replaces the database in offline maintenance mode, and requires restart. Automated restore tests are now added; the deployed backup/restore drill is still required.
 - A review of live provider error/latency telemetry during a sustained run.
 
 ## 2. Test runs
@@ -63,6 +63,7 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 
 **Current state: NOT READY; hard locked.**
 - Native broadcast hard lock is enabled in code. Environment configuration alone cannot unlock it.
+- Approval storage is currently process-local and single-use. Multi-server durable storage remains a blocker; a shared transactional store and deployment-level concurrency tests are required.
 - External-wallet-only signing design is retained; no server private-key custody or signing.
 - Native builders support a restricted subset of Raydium CPMM, PumpSwap V2, Orca Whirlpool and Meteora DLMM. This is not proof that all pools/tokens are executable.
 - Token-2022 execution support and full Meteora DLMM bin-array traversal remain incomplete.
@@ -71,11 +72,11 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 
 **Required before any future unlock**
 1. Complete devnet end-to-end transaction preparation, external wallet signing, signed simulation, submission and confirmation tracking with test funds only.
-2. Add Token-2022 and protocol edge-case coverage or reject unsupported assets explicitly.
-3. Resolve multi-replica approval storage (durable shared store or enforced sticky routing).
-4. Complete independent security review and failure/replay/expiry tests.
-5. Produce at least 24-hour paper evidence and a controlled same-market comparison against the ScreenerBot baseline.
-6. Obtain explicit user approval for a separately reviewed release. The hard lock must not be removed as part of ordinary feature work.
+3. Complete Meteora DLMM bitmap-extension and full bin-array discovery/traversal, with tests for negative indices, extension arrays, fragmented liquidity, missing arrays and transaction account limits.
+4. Resolve multi-replica approval storage using a shared transactional store with atomic single-use consumption, expiry and restart recovery.
+5. Complete independent security review and failure/replay/expiry tests.
+6. Produce at least 24-hour paper evidence and a controlled same-market comparison against the ScreenerBot baseline, with identical tokens, timestamps, fees and slippage assumptions.
+7. Obtain explicit user approval for a separately reviewed release. The hard lock must not be removed as part of ordinary feature work.
 
 ## Anti-loop rule
 
