@@ -9,7 +9,7 @@ from discovery.gecko_scanner import (
 )
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
-from discovery.dexscreener_scanner import scan_dexscreener
+from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
 from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coingecko, scan_defillama
 
 SCANNERS = [
@@ -18,14 +18,16 @@ SCANNERS = [
     ("geckoterminal_recently_updated", scan_recently_updated_tokens),
     ("birdeye_meme_listing", scan_pumpfun),
     ("birdeye", scan_birdeye),
-    ("dexscreener", scan_dexscreener),
+    ("dexscreener_profiles", scan_profiles),
+    ("dexscreener_latest_boosts", scan_latest_boosts),
+    ("dexscreener_top_boosts", scan_top_boosts),
     ("rugcheck", scan_rugcheck),
     ("jupiter", scan_jupiter),
     ("coingecko", scan_coingecko),
     ("defillama", scan_defillama),
 ]
 MAX_RESULTS = 500
-MAX_WORKERS = min(10, len(SCANNERS))
+MAX_WORKERS = min(12, len(SCANNERS))
 _aggregator_lock = threading.Lock()
 _last_source_stats = {}
 _last_scan_at = None
