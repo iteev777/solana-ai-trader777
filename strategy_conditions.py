@@ -4,6 +4,7 @@ All evaluations are deterministic and read-only. Missing inputs fail closed with
 an explicit reason; no candle, position, or market values are synthesized.
 """
 import math
+import os
 import time
 from datetime import datetime, timezone
 
