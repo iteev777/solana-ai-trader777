@@ -369,12 +369,30 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Meteora DLMM confirmed snapshot is missing a mint, vault or Clock sysvar")
     if bitmap_acc is not None and bitmap_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Meteora DLMM bitmap-extension owner is invalid")
-    if mint_x_acc.get("owner") != chain.TOKEN_PROGRAM or mint_y_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DLMM Token-2022 mints are refused until transfer hooks and fees are modelled")
-    if reserve_x_acc.get("owner") != chain.TOKEN_PROGRAM or reserve_y_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DLMM reserves must use the legacy SPL Token program")
-    reserve_x = chain._token_amount(reserve_x_acc, state["mint_x"])
-    reserve_y = chain._token_amount(reserve_y_acc, state["mint_y"])
+    import token2022_inspector as token2022
+    token_program_x = mint_x_acc.get("owner")
+    token_program_y = mint_y_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_x not in supported_programs or token_program_y not in supported_programs:
+        raise ValueError("Meteora DLMM mint uses an unsupported token program")
+    if reserve_x_acc.get("owner") != token_program_x or reserve_y_acc.get("owner") != token_program_y:
+        raise ValueError("Meteora DLMM reserve token program does not match its mint")
+    mint_x_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_x_acc.get("data", b""))
+        if token_program_x == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint_y_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_y_acc.get("data", b""))
+        if token_program_y == chain.TOKEN_2022_PROGRAM else None
+    )
+    reserve_x = token2022.validate_token_account_for_program(
+        reserve_x_acc, token_program_x, state["mint_x"], pool_address,
+        "Meteora DLMM reserve X",
+    )
+    reserve_y = token2022.validate_token_account_for_program(
+        reserve_y_acc, token_program_y, state["mint_y"], pool_address,
+        "Meteora DLMM reserve Y",
+    )
     if reserve_x <= 0 or reserve_y <= 0:
         raise ValueError("Meteora DLMM reserve vaults are empty")
 
@@ -396,18 +414,31 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if not loaded_indices or loaded_indices[0] != array_indices[0]:
         raise ValueError("Meteora DLMM active bin array is not initialized")
 
-    quote = _quote_bins(state, bins, input_is_x, amount_in)
+    input_token2022 = mint_x_token2022 if input_is_x else mint_y_token2022
+    output_token2022 = mint_y_token2022 if input_is_x else mint_x_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
+    quote = _quote_bins(state, bins, input_is_x, received_by_pool)
     protocol_fee = state["protocol_fee_y"] if input_is_x else state["protocol_fee_x"]
     output_reserve = reserve_y if input_is_x else reserve_x
     spendable_reserve = max(0, output_reserve - protocol_fee)
     if quote["out_amount"] >= spendable_reserve:
         raise ValueError("Meteora DLMM quote exceeds spendable output reserve")
+    gross_output = quote["out_amount"]
+    expected_output_amount = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), gross_output
+    )
+    if expected_output_amount <= 0:
+        raise ValueError("Token-2022 output transfer fee consumes the entire output amount")
 
     spot_price = quote["active_bin_price"]
     if spot_price is None or spot_price <= 0:
         raise ValueError("Meteora DLMM active bin price is unavailable")
     spot_ratio = spot_price / (1 << 64) if input_is_x else (1 << 64) / spot_price
-    average_ratio = quote["out_amount"] / amount_in
+    average_ratio = expected_output_amount / amount_in
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Meteora DLMM price impact is invalid")
@@ -425,7 +456,14 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "input_mint": input_mint,
         "output_mint": expected_output,
         "input_amount": amount_in,
-        "out_amount": quote["out_amount"],
+        "out_amount": expected_output_amount,
+        "gross_out_amount": gross_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": expected_output_amount < gross_output,
+        "token2022_output_gross_amount": gross_output,
+        "token_program_input": token_program_x if input_is_x else token_program_y,
+        "token_program_output": token_program_y if input_is_x else token_program_x,
         "minimum_out_amount": quote["out_amount"] * (10_000 - slippage_bps) // 10_000,
         "fee_mint": fee_mint,
         "fee_amount": quote["fee_amount"],
