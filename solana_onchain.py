@@ -1548,6 +1548,13 @@ def _mint_decimals(account):
     return account["data"][44]
 
 
+def get_mint_decimals(mint_address):
+    """Resolve and validate a mint's decimals from its confirmed on-chain account."""
+    if not isinstance(mint_address, str) or not mint_address.strip():
+        raise ValueError("mint address is required")
+    return _mint_decimals(_account(mint_address.strip()))
+
+
 def _quote_usd(mint):
     if mint in STABLES:
         return 1.0
