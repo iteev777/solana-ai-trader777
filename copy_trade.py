@@ -126,6 +126,65 @@ def _fetch_wallet_transaction(signature, wallet):
     )
 
 
+def _subscribe_wallets(ws, wallets, timeout_seconds=15):
+    """Subscribe every configured wallet or fail closed; retain early notifications."""
+    if not isinstance(wallets, list) or not wallets:
+        raise ValueError("At least one copy-watch wallet is required")
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+        raise ValueError("Subscription timeout must be positive")
+
+    request_wallets = {}
+    for request_id, wallet in enumerate(wallets, 1):
+        request_wallets[request_id] = wallet
+        ws.send(json.dumps({
+            "jsonrpc": "2.0", "id": request_id, "method": "logsSubscribe",
+            "params": [{"mentions": [wallet]}, {"commitment": "confirmed"}]
+        }))
+
+    subscriptions = {}
+    subscription_ids = set()
+    pending = set(request_wallets)
+    early_notifications = []
+    failures = {}
+    deadline = time.monotonic() + timeout_seconds
+    while pending and time.monotonic() < deadline:
+        payload = json.loads(ws.recv())
+        if not isinstance(payload, dict):
+            raise RuntimeError("Solana websocket returned a malformed subscription response")
+        request_id = payload.get("id")
+        if request_id in pending:
+            if payload.get("error") is not None:
+                failures[request_id] = str(payload["error"])[:160]
+                pending.discard(request_id)
+                continue
+            subscription_id = payload.get("result")
+            if isinstance(subscription_id, bool) or not isinstance(subscription_id, int) or subscription_id < 0:
+                failures[request_id] = "invalid subscription id"
+                pending.discard(request_id)
+                continue
+            if subscription_id in subscription_ids:
+                failures[request_id] = "duplicate subscription id"
+                pending.discard(request_id)
+                continue
+            subscriptions[request_wallets[request_id]] = subscription_id
+            subscription_ids.add(subscription_id)
+            pending.discard(request_id)
+        elif isinstance(payload.get("params"), dict):
+            # A notification can arrive before the last subscribe acknowledgement.
+            # Buffer it so the handshake does not silently drop a real wallet event.
+            early_notifications.append(payload)
+
+    if pending or failures or len(subscriptions) != len(wallets):
+        missing = [request_wallets[item] for item in sorted(pending)]
+        failed = [request_wallets[item] for item in sorted(failures)]
+        raise RuntimeError(
+            "Incomplete Solana wallet subscriptions; "
+            + "missing=" + ",".join(missing[:10])
+            + "; failed=" + ",".join(failed[:10])
+        )
+    return subscriptions, early_notifications
+
+
 def _monitor_loop():
     while True:
         ws = None
@@ -142,23 +201,8 @@ def _monitor_loop():
                 continue
             ws = websocket.create_connection(ws_url, timeout=20, enable_multithread=True)
             ws.settimeout(25)
-            request_wallets = {}
-            for request_id, wallet in enumerate(wallets, 1):
-                request_wallets[request_id] = wallet
-                ws.send(json.dumps({
-                    "jsonrpc": "2.0", "id": request_id, "method": "logsSubscribe",
-                    "params": [{"mentions": [wallet]}, {"commitment": "confirmed"}]
-                }))
-            subscriptions = {}
-            pending = set(request_wallets)
-            deadline = time.time() + 15
-            while pending and time.time() < deadline:
-                payload = json.loads(ws.recv())
-                if payload.get("id") in request_wallets and "result" in payload:
-                    subscriptions[request_wallets[payload["id"]]] = payload["result"]
-                    pending.discard(payload["id"])
-            if not subscriptions:
-                raise RuntimeError("Solana websocket returned no wallet subscriptions")
+            subscriptions, early_notifications = _subscribe_wallets(ws, wallets)
+            notification_queue = list(early_notifications)
             _status.update({
                 "running": True, "configured": True,
                 "wallet_count": len(subscriptions), "last_error": None
@@ -168,7 +212,7 @@ def _monitor_loop():
                     print("[TROJAN V2] COPY WATCHLIST CHANGED; RECONNECTING", flush=True)
                     break
                 try:
-                    payload = json.loads(ws.recv())
+                    payload = notification_queue.pop(0) if notification_queue else json.loads(ws.recv())
                 except websocket.WebSocketTimeoutException:
                     ws.ping()
                     if _wallets() != wallets:
