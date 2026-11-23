@@ -135,11 +135,14 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "DynamicTickArray"):
             self.quote(accounts=accounts)
 
-    def test_missing_current_tick_array_is_rejected(self):
+    def test_uninitialized_tick_array_pdas_are_treated_as_empty_arrays(self):
         accounts = list(self.accounts)
         accounts[6] = None
-        with self.assertRaisesRegex(ValueError, "current tick array"):
-            self.quote(accounts=accounts)
+        accounts[7] = None
+        accounts[8] = None
+        result = self.quote(accounts=accounts)
+        self.assertGreater(result["out_amount"], 0)
+        self.assertEqual(result["loaded_tick_arrays"], 0)
 
 
 if __name__ == "__main__":
