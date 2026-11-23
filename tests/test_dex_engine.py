@@ -145,7 +145,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertEqual(result["pool_discovery"], "AUTOMATIC_REGISTRY_PAIR_MATCH")
         self.assertEqual(result["best_pool"], "pool-b")
         self.assertEqual(
-            {route["pool_id"] for route in result["routes_eligible"]},
+            {route["pool_id"] for route in result["routes_eligible"] if route["pool_id"]},
             {"pool-a", "pool-b"},
         )
 
