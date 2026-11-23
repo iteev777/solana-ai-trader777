@@ -13,6 +13,7 @@ import struct
 import time
 
 import solana_onchain as chain
+import token2022_inspector as token2022
 
 
 CPMM_PROGRAM_ID = chain.PROGRAMS["raydium_cpmm"]
@@ -280,23 +281,51 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     if config_acc.get("owner") != CPMM_PROGRAM_ID:
         raise ValueError("AmmConfig is not owned by the Raydium CPMM program")
     chain._decode_raydium_amm_config(config_acc["data"])
-    for mint_acc in (mint_base_acc, mint_quote_acc):
-        if mint_acc.get("owner") != TOKEN_PROGRAM_ID:
-            raise ValueError("Raydium CPMM native builder currently accepts legacy SPL Token mints only")
-    if current["token_program_base"] != TOKEN_PROGRAM_ID or current["token_program_quote"] != TOKEN_PROGRAM_ID:
-        raise ValueError("Pool token program does not match the supported legacy SPL Token program")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM_ID or vault_quote_acc.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError("Raydium CPMM vaults must be owned by the legacy SPL Token program")
-    chain._token_amount(vault_base_acc, current["base_mint"])
-    chain._token_amount(vault_quote_acc, current["quote_mint"])
-    if (chain._key(vault_base_acc["data"], 32) != authority
-            or chain._key(vault_quote_acc["data"], 32) != authority):
-        raise ValueError("Raydium CPMM vault token authority does not match the canonical pool authority PDA")
-    if vault_base_acc["data"][108] != 1 or vault_quote_acc["data"][108] != 1:
-        raise ValueError("Raydium CPMM vault token account is not initialized or is frozen")
+    token_program_base = current["token_program_base"]
+    token_program_quote = current["token_program_quote"]
+    supported_programs = (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("Raydium CPMM pool uses an unsupported token program")
+    if (mint_base_acc.get("owner") != token_program_base
+            or mint_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("Raydium CPMM mint owner does not match the pool token program")
+    if token_program_base == chain.TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_base_acc["data"])
+    if token_program_quote == chain.TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_quote_acc["data"])
+    if (vault_base_acc.get("owner") != token_program_base
+            or vault_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("Raydium CPMM vault owner does not match its mint token program")
+    token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, current["base_mint"], authority,
+        "Raydium CPMM base vault",
+    )
+    token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, current["quote_mint"], authority,
+        "Raydium CPMM quote vault",
+    )
 
-    input_balance = _decode_user_token_account(user_input_acc, wallet, input_mint, "Input token account")
-    _decode_user_token_account(user_output_acc, wallet, output_mint, "Output token account")
+    token_program_input = token_program_base if input_mint == current["base_mint"] else token_program_quote
+    token_program_output = token_program_quote if input_mint == current["base_mint"] else token_program_base
+    input_balance = token2022.validate_token_account_for_program(
+        user_input_acc, token_program_input, input_mint, wallet,
+        "Raydium CPMM input token account", amount_in,
+    )
+    token2022.validate_token_account_for_program(
+        user_output_acc, token_program_output, output_mint, wallet,
+        "Raydium CPMM output token account",
+    )
+    for account, mint, token_program in (
+        (user_input_token_account, input_mint, token_program_input),
+        (user_output_token_account, output_mint, token_program_output),
+    ):
+        expected_ata, _ = chain._find_program_address(
+            [_pubkey(wallet, "wallet"), _pubkey(token_program, "token program"),
+             _pubkey(mint, "mint")],
+            ASSOCIATED_TOKEN_PROGRAM_ID,
+        )
+        if account != expected_ata:
+            raise ValueError("Raydium CPMM wallet token account is not the canonical associated token account")
     if input_balance < amount_in:
         raise ValueError("Wallet input token account has insufficient balance")
     if observation_acc.get("owner") != CPMM_PROGRAM_ID:
@@ -326,8 +355,8 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         {"pubkey": user_output_token_account, "is_signer": False, "is_writable": True},
         {"pubkey": input_vault, "is_signer": False, "is_writable": True},
         {"pubkey": output_vault, "is_signer": False, "is_writable": True},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_input, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_output, "is_signer": False, "is_writable": False},
         {"pubkey": input_mint, "is_signer": False, "is_writable": False},
         {"pubkey": output_mint, "is_signer": False, "is_writable": False},
         {"pubkey": observation, "is_signer": False, "is_writable": True},
@@ -353,6 +382,9 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         "output_mint": output_mint,
         "input_amount": amount_in,
         "minimum_output_amount": minimum_out,
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_zero_fee_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
         "instruction": "SwapBaseInput",
         "instruction_data_base64": base64.b64encode(instruction_data).decode("ascii"),
         "account_keys": account_keys,
