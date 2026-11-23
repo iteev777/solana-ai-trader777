@@ -5,6 +5,10 @@ import time
 
 
 def _finite(value):
+    # bool is an int subclass in Python, but True/False are never valid
+    # timestamps, prices, or volumes in a market-data candle.
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
         return number if math.isfinite(number) else None
