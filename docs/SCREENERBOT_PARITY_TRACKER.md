@@ -80,6 +80,8 @@ behavior are unverified by this checkpoint.
 - `a7ab5f6`: add regression coverage for both cases.
 - `3ca780a`: validate the Clock sysvar owner and byte layout before using its timestamp in fee decay.
 - `c552fab`: add malformed Clock sysvar regression cases.
+- `633eeb8`: measure confirmed snapshot freshness using a monotonic clock rather than wall-clock time.
+- `130e363`: add freshness and stale-snapshot regression tests, including a wall-clock independence check.
 - Validation: **not executed** in this continuation; do not count these changes in the previous 605-test checkpoint.
 - Remaining DLMM review: full reference adapter and layouts, fee arithmetic, bin traversal, missing-array behavior, quote output accounting, and integration tests. Preserve read-only live execution lock.
 - Next file remains `meteora_dlmm_quote.py` until the full comparison and tests are completed.
