@@ -76,14 +76,16 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 
 ## 5. Live Trading readiness
 
-**Current state: NOT READY. Native broadcast is hard locked; the overall live-execution lock is not yet proven complete.**
+**Current state: NOT READY. Native broadcast and Jupiter V2 `/execute` are now hard-locked in code; the complete repository-wide live-path audit is still in progress.**
 - Native broadcast hard lock is enabled in code. Environment configuration alone cannot unlock the native path.
-- A separate Jupiter V2 `/execute` adapter (`dex_execution.py`) still has an environment-controlled execution flag. It currently has no repository caller, but it must receive the same reviewed-release hard lock before the project can claim that every live path is locked.
-- Approval storage is currently process-local and single-use. Multi-server durable storage remains a blocker; a shared transactional store and deployment-level concurrency tests are required.
+- Jupiter V2 `/execute` in `dex_execution.py` is now also unconditionally hard-locked; `TROJAN_JUPITER_EXECUTE_ENABLED` and per-request confirmation cannot unlock it. The order path remains unsigned/read-only and requires a minimum-output threshold.
+- The Jupiter adapter enforces Solana's 1,232-byte serialized transaction packet limit. Its old environment-controlled execution path was removed.
+- Approval storage for the dormant Jupiter path is process-local and single-use. Multi-server durable storage remains a blocker if that path is ever reconsidered; it is not an unlock option in the current phase.
 - External-wallet-only signing design is retained; no server private-key custody or signing.
 - Native builders support a restricted subset of Raydium CPMM, PumpSwap V2, Orca Whirlpool and Meteora DLMM. This is not proof that all pools/tokens are executable.
 - Token-2022 execution support and full Meteora DLMM bin-array traversal remain incomplete.
-- Devnet E2E harness is implemented: ephemeral in-memory signer, devnet faucet, 1-lamport SystemProgram transfer, unsigned simulation, single-use message approval, client-side signing, signature-verified simulation, submission, finality wait and recipient balance check. Manual workflow: `.github/workflows/devnet-e2e.yml`. The actual network run still must be triggered and pass; this code is not itself proof of a completed devnet transaction.
+- Devnet E2E harness is implemented: ephemeral in-memory signer, official Devnet faucet, dynamically sized rent-exempt zero-data SystemProgram transfer, unsigned simulation, single-use message approval, client-side signing, signature-verified simulation, submission, finality wait and recipient balance check. Manual workflow: `.github/workflows/devnet-e2e.yml`. The actual network run still must be triggered and pass; this code is not itself proof of a completed devnet transaction.
+- A separate signed Token-2022 Devnet ATA E2E uses a one-run ephemeral payer and verifies the finalized ATA's supported extension layout and rent-exempt balance. It has not been run during the current audit.
 - No mainnet transaction, live profitability, or ScreenerBot outperformance is claimed.
 
 **Required before any future unlock**
