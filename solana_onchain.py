@@ -1318,12 +1318,6 @@ def quote_direct_pool(pool_address, input_mint, amount_in, slippage_bps=100, out
         return quote_pumpfun_legacy_pool(
             pool_address, input_mint, output_mint, amount_in, slippage_bps
         )
-    if protocol == "pumpfun_legacy":
-        if not output_mint:
-            raise ValueError("Pump.fun direct quotes require the requested output mint")
-        return quote_pumpfun_legacy_pool(
-            pool_address, input_mint, output_mint, amount_in, slippage_bps
-        )
     if protocol == "pumpswap":
         return quote_pumpswap_pool(pool_address, input_mint, amount_in, slippage_bps)
     if protocol == "raydium_cpmm":
