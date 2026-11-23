@@ -8,6 +8,8 @@ import time
 import json
 import copy
 import hashlib
+import ipaddress
+import math
 import threading
 import requests
 from requests.adapters import HTTPAdapter
@@ -83,6 +85,41 @@ def get_http_session():
         session.mount("https://", adapter)
         _http_session_local.session = session
     return session
+
+
+# ==========================================
+# ENDPOINT VALIDATION
+# ==========================================
+
+def validate_api_request(url, params, headers, timeout, cache_ttl, max_retries):
+    if not isinstance(url, str) or not url:
+        raise ValueError("API URL must be a non-empty string")
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if (parsed.scheme != "https" or not host or parsed.username or parsed.password
+            or parsed.fragment or parsed.port not in (None, 443)
+            or host in {"localhost"} or host.endswith((".localhost", ".local", ".internal", ".lan"))):
+        raise ValueError("API requests require a public HTTPS endpoint without URL credentials")
+    try:
+        address = ipaddress.ip_address(host)
+        if not address.is_global:
+            raise ValueError("API requests cannot target private or reserved IP addresses")
+    except ValueError as error:
+        if "cannot target" in str(error):
+            raise
+        # A non-IP hostname is expected for public API providers.
+    if params is not None and not isinstance(params, (dict, list, tuple)):
+        raise ValueError("API params must be a mapping or sequence")
+    if headers is not None and not isinstance(headers, dict):
+        raise ValueError("API headers must be a mapping")
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(float(timeout)) or not 1 <= float(timeout) <= 60):
+        raise ValueError("API timeout must be between 1 and 60 seconds")
+    if (isinstance(cache_ttl, bool) or not isinstance(cache_ttl, (int, float))
+            or not math.isfinite(float(cache_ttl)) or not 0 <= float(cache_ttl) <= 86400):
+        raise ValueError("API cache TTL must be between 0 and 86400 seconds")
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 0 <= max_retries <= 5:
+        raise ValueError("API max_retries must be an integer between 0 and 5")
 
 
 # ==========================================
@@ -226,10 +263,10 @@ def get_retry_delay(response, attempt):
 
             try:
 
-                retry_date = parsedate_to_datetime(
-                    retry_after
-                )
-
+                retry_date = parsedate_to_datetime(retry_after)
+                if retry_date.tzinfo is None:
+                    from datetime import timezone
+                    retry_date = retry_date.replace(tzinfo=timezone.utc)
                 delay = (
                     retry_date.timestamp()
                     - time.time()
@@ -253,8 +290,10 @@ def get_retry_delay(response, attempt):
             * (2 ** attempt)
         )
 
+    if not math.isfinite(float(delay)):
+        delay = DEFAULT_429_COOLDOWN
     return min(
-        max(delay, 1),
+        max(float(delay), 1.0),
         MAX_429_COOLDOWN
     )
 
@@ -273,7 +312,7 @@ def wait_for_request_slot(
 
         with state_lock:
 
-            now = time.time()
+            now = time.monotonic()
 
             blocked_until = host_blocked_until.get(
                 host,
@@ -403,8 +442,8 @@ def _get_json_impl(
                     "| TIME:",
                     round(elapsed, 2),
                     "s",
-                    "| ERROR:",
-                    repr(error),
+                    "| ERROR TYPE:",
+                    type(error).__name__,
                     flush=True
                 )
 
@@ -451,7 +490,7 @@ def _get_json_impl(
 
                     host_blocked_until[host] = max(
                         host_blocked_until.get(host, 0),
-                        time.time() + cooldown
+                        time.monotonic() + cooldown
                     )
 
                 print(
@@ -612,6 +651,7 @@ def get_json(
     max_retries=1
 ):
     """Fetch JSON with cache single-flight and thread-safe request statistics."""
+    validate_api_request(url, params, headers, timeout, cache_ttl, max_retries)
     host, endpoint, _interval = get_rate_bucket(url)
     if not host:
         raise ValueError("Invalid API URL")
@@ -663,7 +703,7 @@ def get_json(
         _record_api_stat(
             host, endpoint, success=False,
             elapsed_ms=(time.perf_counter() - started) * 1000,
-            error=error,
+            error=type(error).__name__,
             cache_miss=cache_ttl > 0,
         )
         raise
@@ -703,7 +743,7 @@ def clear_cache():
 
 def get_api_status():
 
-    now = time.time()
+    now = time.monotonic()
 
     with state_lock:
 
