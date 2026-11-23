@@ -78,6 +78,43 @@ def _decode_transaction(value, name):
     return raw
 
 
+def _inspect_order_mints(input_mint, output_mint):
+    """Validate both mint owners and supported Token-2022 extensions in one RPC snapshot.
+
+    Jupiter computes route-level transfer fees. Trojan independently checks
+    that each mint is a supported standard SPL/Token-2022 mint before allowing
+    an unsigned order to become eligible for simulation.
+    """
+    import solana_onchain
+    if not solana_onchain.RPC_URL:
+        return {"status": "NOT_CHECKED", "reason": "SOLANA_RPC_NOT_CONFIGURED"}
+    accounts, slot = solana_onchain._multiple_accounts_with_context(
+        [input_mint, output_mint]
+    )
+    if len(accounts) != 2 or any(account is None for account in accounts):
+        raise ValueError("Jupiter order mint account is missing from the confirmed RPC snapshot")
+    inspected = []
+    for mint, account in zip((input_mint, output_mint), accounts):
+        owner = account.get("owner")
+        raw = account.get("data", b"")
+        if owner == solana_onchain.TOKEN_PROGRAM:
+            if not isinstance(raw, (bytes, bytearray)) or len(raw) != 82 or raw[45] != 1:
+                raise ValueError("Jupiter order contains an invalid legacy SPL Token mint")
+            inspected.append({"mint": mint, "token_program": owner, "extensions": []})
+        elif owner == solana_onchain.TOKEN_2022_PROGRAM:
+            import token2022_inspector
+            parsed = token2022_inspector.validate_swap_compatible_mint_data(raw)
+            inspected.append({
+                "mint": mint,
+                "token_program": owner,
+                "extensions": [item["name"] for item in parsed["extensions"]],
+                "transfer_fee_configured": parsed["transfer_fee_config"] is not None,
+            })
+        else:
+            raise ValueError("Jupiter order mint is not owned by a supported SPL Token program")
+    return {"status": "PASS", "context_slot": slot, "mints": inspected}
+
+
 def _simulate_transaction(transaction):
     """Simulate the unsigned order through Solana RPC; never broadcasts it."""
     try:
@@ -176,9 +213,17 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simu
     if minimum_out is not None and minimum_out > out_amount:
         raise ValueError("Jupiter minimum output exceeds quoted output")
 
+    mint_validation = _inspect_order_mints(input_mint, output_mint)
     simulation = _simulate_transaction(payload["transaction"]) if simulate is True else {
         "status": "NOT_REQUESTED", "signed": False, "broadcast": False
     }
+    if simulation.get("status") == "PASS" and mint_validation.get("status") != "PASS":
+        simulation = {
+            "status": "FAIL",
+            "reason": "MINT_VALIDATION_NOT_CONFIRMED",
+            "signed": False,
+            "broadcast": False,
+        }
     if simulation.get("status") == "PASS":
         _remember_simulated_order(request_id, {
             "taker": taker,
@@ -204,6 +249,7 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simu
         "input_amount": in_amount,
         "output_amount": out_amount,
         "minimum_output_amount": minimum_out,
+        "mint_validation": mint_validation,
         "price_impact_pct": payload.get("priceImpact"),
         "route_plan": payload.get("routePlan") or [],
         "fee_bps": payload.get("feeBps"),
