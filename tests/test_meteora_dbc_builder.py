@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import meteora_dbc_builder as builder
+import meteora_dbc_quote as dbc
 import solana_onchain as chain
 
 
