@@ -47,7 +47,9 @@ class MainServiceLifecycleTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True), \
              patch("copy_trade.get_copy_monitor_status", return_value={
                  "configured": False, "running": False, "wallet_count": 0
-             }):
+             }), \
+             patch.object(main.sniper, "start_listener", return_value=object()), \
+             patch.object(main.sniper, "stop_listener", return_value=True):
             manager = main._service_manager_health()
             report = manager.start_all()
         self.assertEqual(report["disabled"], ["dashboard", "copy_wallet_monitor"])
