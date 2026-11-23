@@ -21,12 +21,15 @@ class AtaManagerTests(unittest.TestCase):
         )[0]
         mint_data = bytearray(82)
         mint_data[45] = 1
+        self.wallet_account = {
+            "owner": ata_manager.SYSTEM_PROGRAM_ID, "data": b"", "lamports": 100_000_000
+        }
         self.mint_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint_data)}
 
     @patch("ata_manager.chain._rpc")
     @patch("ata_manager._rpc_account")
     def test_builds_simulates_and_returns_unsigned_idempotent_transaction(self, account, rpc):
-        account.side_effect = [self.mint_account, None]
+        account.side_effect = [self.wallet_account, self.mint_account, None]
         rpc.side_effect = [
             {"value": 100_000_000},
             2_039_280,
@@ -62,7 +65,7 @@ class AtaManagerTests(unittest.TestCase):
 
     @patch("ata_manager._rpc_account")
     def test_rejects_token_2022_mint(self, account):
-        account.return_value = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(82)}
+        account.side_effect = [self.wallet_account, {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(82)}]
         with self.assertRaisesRegex(ValueError, "Token-2022"):
             ata_manager.create_ata_order(self.wallet, self.mint)
 
@@ -73,6 +76,7 @@ class AtaManagerTests(unittest.TestCase):
         raw[32:64] = chain._b58decode(self.wallet)
         raw[108] = 1
         account.side_effect = [
+            self.wallet_account,
             self.mint_account,
             {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)},
         ]
@@ -84,7 +88,7 @@ class AtaManagerTests(unittest.TestCase):
     @patch("ata_manager.chain._rpc")
     @patch("ata_manager._rpc_account")
     def test_insufficient_wallet_sol_fails_before_simulation(self, account, rpc):
-        account.side_effect = [self.mint_account, None]
+        account.side_effect = [self.wallet_account, self.mint_account, None]
         rpc.side_effect = [
             {"value": 1_000},
             2_039_280,
@@ -94,6 +98,61 @@ class AtaManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "insufficient"):
             ata_manager.create_ata_order(self.wallet, self.mint, 1_000_000)
         self.assertEqual(rpc.call_count, 4)
+
+    @patch("ata_manager._rpc_account")
+    def test_rejects_non_system_owned_wallet_before_mint_or_transaction_calls(self, account):
+        account.return_value = {
+            "owner": chain.TOKEN_PROGRAM, "data": bytes(165), "lamports": 100_000_000
+        }
+        with self.assertRaisesRegex(ValueError, "system-owned wallet"):
+            ata_manager.create_ata_order(self.wallet, self.mint)
+        account.assert_called_once_with(self.wallet)
+
+    @patch("ata_manager._rpc_account")
+    def test_rejects_system_wallet_with_account_data(self, account):
+        account.return_value = {
+            "owner": ata_manager.SYSTEM_PROGRAM_ID, "data": b"not-empty",
+            "lamports": 100_000_000,
+        }
+        with self.assertRaisesRegex(ValueError, "no account data"):
+            ata_manager.create_ata_order(self.wallet, self.mint)
+        account.assert_called_once_with(self.wallet)
+
+    @patch("ata_manager._rpc_account")
+    def test_rejects_wallet_that_does_not_exist(self, account):
+        account.return_value = None
+        with self.assertRaisesRegex(ValueError, "Wallet account does not exist"):
+            ata_manager.create_ata_order(self.wallet, self.mint)
+        account.assert_called_once_with(self.wallet)
+
+    @patch("ata_manager.chain._rpc")
+    @patch("ata_manager._rpc_account")
+    def test_simulation_failure_never_returns_unsigned_order(self, account, rpc):
+        account.side_effect = [self.wallet_account, self.mint_account, None]
+        rpc.side_effect = [
+            {"value": 100_000_000},
+            2_039_280,
+            {"value": {"blockhash": key(3), "lastValidBlockHeight": 999}},
+            {"value": 5_000},
+            {"value": {"err": {"InstructionError": [0, "InsufficientFunds"]}, "logs": []}},
+        ]
+        with self.assertRaisesRegex(ValueError, "simulation failed"):
+            ata_manager.create_ata_order(self.wallet, self.mint, 1_000_000)
+        self.assertEqual(rpc.call_count, 5)
+
+    @patch("ata_manager.chain._rpc")
+    @patch("ata_manager._rpc_account")
+    def test_malformed_simulation_is_rejected(self, account, rpc):
+        account.side_effect = [self.wallet_account, self.mint_account, None]
+        rpc.side_effect = [
+            {"value": 100_000_000},
+            2_039_280,
+            {"value": {"blockhash": key(3), "lastValidBlockHeight": 999}},
+            {"value": 5_000},
+            {"value": None},
+        ]
+        with self.assertRaisesRegex(ValueError, "malformed ATA transaction simulation"):
+            ata_manager.create_ata_order(self.wallet, self.mint, 1_000_000)
 
 
 if __name__ == "__main__":
