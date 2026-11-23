@@ -395,3 +395,8 @@ Trojan maintains a local SQLite denylist for Solana token mints, pool accounts a
 - `DELETE /api/blacklist/{entry_type}/{address}`
 
 Every address is validated as a 32-byte base58 Solana public key. Entries are soft-deactivated rather than erased; re-adding an existing entry reactivates it and updates its reason/source. Candidate mints and selected pool addresses are checked before strategy evaluation. When confirmed RPC security data is available, the largest token-account addresses and their parsed authorities are checked as well. The account list is limited to the provider's largest-account response and is not a complete holder census. Blacklist lookup errors fail closed for candidate approval.
+
+## Paper fill slippage model
+
+Paper entries, DCA adds, partial exits and full exits apply a conservative price slippage estimate in addition to the existing paper fee accounting. Configure `TROJAN_PAPER_SLIPPAGE_BPS` (default 25 bps, bounded to 0–300 bps). For the initial entry, the applied buy slippage is the larger of this setting and the approved Jupiter route's reported price impact. Sell fills use the configured or persisted exit allowance. Fill results expose the market mark, effective fill price, slippage basis points and model name. This is a deterministic paper estimate, not a quote-settled execution simulator; no live transaction is sent.
+
