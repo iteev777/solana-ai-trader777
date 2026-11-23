@@ -102,6 +102,9 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
         if quote.get(field) != fresh.get(field):
             raise ValueError("Meteora DAMM token program state changed since the supplied quote")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
+    fresh_out = _u64(fresh.get("out_amount"), "fresh quoted output")
+    if minimum_out > fresh_out:
+        raise ValueError("Fresh Meteora DAMM minimum output exceeds its quoted output")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh Meteora DAMM quote is older than the supplied quote")
@@ -267,9 +270,11 @@ def simulate_meteora_damm_v2_transaction(transaction_base64):
         {"encoding": "base64", "sigVerify": False,
          "replaceRecentBlockhash": True, "commitment": "confirmed"},
     ])
-    value = (result or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
         raise ValueError("Solana RPC returned a malformed simulation result")
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Solana RPC simulation response is missing the error field")
     logs = value.get("logs") or []
     if not isinstance(logs, list):
         raise ValueError("Solana RPC returned malformed simulation logs")
