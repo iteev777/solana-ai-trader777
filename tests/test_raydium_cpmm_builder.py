@@ -240,6 +240,38 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
                 self.wallet, "not-a-blockhash", builder.CPMM_PROGRAM_ID, [], b"x"
             )
 
+    def test_legacy_compiler_prepends_compute_budget_and_priority_fee(self):
+        program = builder.CPMM_PROGRAM_ID
+        metas = [{"pubkey": self.pool, "is_signer": False, "is_writable": True}]
+        tx, keys = builder._compile_legacy_message(
+            self.wallet, key(88), program, metas, b"swap",
+            compute_unit_limit=180_000, compute_unit_price=12_345,
+        )
+        self.assertIn(builder.COMPUTE_BUDGET_PROGRAM_ID, keys)
+        offset = 65
+        offset += 3  # message header
+        key_count = tx[offset]
+        offset += 1 + key_count * 32 + 32
+        instruction_count = tx[offset]
+        offset += 1
+        self.assertEqual(instruction_count, 3)
+        decoded = []
+        for _ in range(instruction_count):
+            program_index = tx[offset]
+            account_count = tx[offset + 1]
+            offset += 2 + account_count
+            data_length = tx[offset]
+            offset += 1
+            data = tx[offset:offset + data_length]
+            offset += data_length
+            decoded.append((keys[program_index], data))
+        self.assertEqual(decoded[0][0], builder.COMPUTE_BUDGET_PROGRAM_ID)
+        self.assertEqual(decoded[0][1], bytes([2]) + struct.pack("<I", 180_000))
+        self.assertEqual(decoded[1][0], builder.COMPUTE_BUDGET_PROGRAM_ID)
+        self.assertEqual(decoded[1][1], bytes([3]) + struct.pack("<Q", 12_345))
+        self.assertEqual(decoded[2][0], program)
+        self.assertEqual(decoded[2][1], b"swap")
+
     def test_compact_shortvec_encoding(self):
         self.assertEqual(builder._shortvec(0), b"\x00")
         self.assertEqual(builder._shortvec(127), b"\x7f")
