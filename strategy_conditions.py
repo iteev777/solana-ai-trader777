@@ -4,6 +4,7 @@ All evaluations are deterministic and read-only. Missing inputs fail closed with
 an explicit reason; no candle, position, or market values are synthesized.
 """
 import math
+import os
 import time
 from datetime import datetime, timezone
 
@@ -148,7 +149,7 @@ def _indicator_freshness(name, context, indicators):
         timestamp /= 1000.0
 
     try:
-        maximum_age = float(__import__("os").getenv(
+        maximum_age = float(os.getenv(
             "TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS", "180"
         ))
     except (TypeError, ValueError, OverflowError):
@@ -273,7 +274,8 @@ def evaluate_condition(node, context):
             created = _metric(context, "pairCreatedAt", "token.pairCreatedAt")
             if created is not None:
                 created = created / 1000 if created > 10_000_000_000 else created
-                age = max(0, (time.time() - created) / 60)
+                evaluated_at = _num(context.get("evaluated_at")) or time.time()
+                age = max(0, (evaluated_at - created) / 60)
         result = _compare(age, params.get("comparison", "ABOVE"), _num(params.get("minutes", 60)))
         detail = "token age minutes"
     elif name == "TransactionVelocity":
