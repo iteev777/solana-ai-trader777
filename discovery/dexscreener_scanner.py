@@ -10,11 +10,13 @@ ENDPOINTS = [
 
 def scan_dexscreener():
     found = {}
+    available = False
     for source, url in ENDPOINTS:
         try:
             payload = get_json(url, timeout=10, cache_ttl=20, max_retries=1)
             if not isinstance(payload, list):
-                continue
+                raise ValueError("Invalid DexScreener response shape")
+            available = True
             for item in payload[:100]:
                 if not isinstance(item, dict) or str(item.get("chainId", "")).lower() != "solana":
                     continue
@@ -37,6 +39,8 @@ def scan_dexscreener():
                     found[address]["discovery_sources"].append(source)
         except Exception as error:
             print("DEXSCREENER DISCOVERY SOURCE ERROR:", source, repr(error), flush=True)
+    if not available:
+        raise RuntimeError("DexScreener: all discovery feeds unavailable")
     result = list(found.values())
     print("TROJAN V2 DEXSCREENER TOKENS:", len(result), flush=True)
     return result

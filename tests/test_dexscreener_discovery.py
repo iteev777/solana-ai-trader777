@@ -35,5 +35,14 @@ class DexScreenerDiscoveryTests(unittest.TestCase):
         self.assertEqual([item["tokenAddress"] for item in result], ["MintC"])
 
 
+    @patch("discovery.dexscreener_scanner.get_json")
+    def test_total_failure_is_distinct_from_healthy_empty_response(self, get_json):
+        get_json.side_effect = [RuntimeError("unavailable"), {}, None]
+        with self.assertRaisesRegex(RuntimeError, "all discovery feeds unavailable"):
+            scan_dexscreener()
+        get_json.side_effect = [RuntimeError("unavailable"), [], None]
+        self.assertEqual(scan_dexscreener(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
