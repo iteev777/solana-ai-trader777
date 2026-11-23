@@ -27,6 +27,9 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
 
     def test_aggregation_preserves_ohlcv_semantics(self):
         rows = self._candles(6)
+        aligned_start = (int(time.time()) // 180) * 180 - 360
+        for index, row in enumerate(rows):
+            row[0] = aligned_start + index * 60
         aggregated = indicators.aggregate_candles(rows, 180)
         self.assertEqual(len(aggregated), 2)
         self.assertEqual(aggregated[0][1], rows[0][1])
