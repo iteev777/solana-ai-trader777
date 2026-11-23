@@ -10,8 +10,10 @@ from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
-from discovery.screenerbot_sources import (\n    scan_rugcheck_new, scan_rugcheck_recent, scan_rugcheck_trending,\n    scan_rugcheck_verified, scan_jupiter, scan_coingecko, scan_defillama,\n)
-import database
+from discovery.screenerbot_sources import (
+    scan_rugcheck_new, scan_rugcheck_recent, scan_rugcheck_trending,
+    scan_rugcheck_verified, scan_jupiter, scan_coingecko, scan_defillama,
+)import database
 
 def _env_enabled(name, default=True):
     raw = os.getenv(name)
