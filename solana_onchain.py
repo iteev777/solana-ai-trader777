@@ -882,8 +882,8 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium AMM v4 pool address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
-    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
-        raise ValueError("Input amount must be a positive integer")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
     if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
@@ -906,10 +906,27 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     for field in ("vault_base", "vault_quote", "base_mint", "quote_mint"):
         if decoded.get(field) != first.get(field):
             raise ValueError("Raydium AMM v4 pool relationships changed during snapshot")
-    if decoded["pool_open_time"] > int(time.time()) and decoded["status"] == "active":
+    if decoded["status"] != "active":
+        raise ValueError("Raydium AMM v4 pool is paused or disabled")
+    if decoded["pool_open_time"] > int(time.time()):
         raise ValueError("Raydium AMM v4 pool is not open for swaps yet")
     if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
         raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
+    for mint_account, label in ((mint_base_acc, "base"), (mint_quote_acc, "quote")):
+        mint_data = mint_account.get("data", b"")
+        if not isinstance(mint_data, (bytes, bytearray)) or len(mint_data) != 82 or mint_data[45] != 1:
+            raise ValueError("Raydium AMM v4 " + label + " mint must use an initialized 82-byte legacy layout")
+
+    authority, _ = _find_program_address([b"amm authority"], PROGRAMS["raydium_amm_v4"])
+    for vault, expected_mint, label in (
+        (vault_base_acc, decoded["base_mint"], "base"),
+        (vault_quote_acc, decoded["quote_mint"], "quote"),
+    ):
+        raw_vault = vault.get("data", b"")
+        if vault.get("owner") != TOKEN_PROGRAM or not isinstance(raw_vault, (bytes, bytearray)) or len(raw_vault) != 165:
+            raise ValueError("Raydium AMM v4 " + label + " vault must be an exact legacy SPL token account")
+        if raw_vault[108] != 1 or _key(raw_vault, 32) != authority:
+            raise ValueError("Raydium AMM v4 " + label + " vault authority/state is invalid")
 
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
@@ -929,7 +946,11 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     else:
         raise ValueError("Input mint does not belong to this Raydium AMM v4 pool")
 
-    fee = (amount_in * decoded["swap_fee_numerator"] + decoded["swap_fee_denominator"] - 1) // decoded["swap_fee_denominator"]
+    fee_denominator = decoded["swap_fee_denominator"]
+    fee = (
+        (amount_in * decoded["swap_fee_numerator"] + fee_denominator - 1) // fee_denominator
+        if fee_denominator > 0 else 0
+    )
     net_input = amount_in - fee
     if net_input <= 0:
         raise ValueError("Input is fully consumed by Raydium AMM v4 fees")
@@ -937,12 +958,19 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     if output_amount <= 0 or output_amount >= reserve_out:
         raise ValueError("Raydium AMM v4 quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    if minimum_out <= 0:
+        raise ValueError("Raydium AMM v4 minimum output rounds to zero")
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Raydium AMM v4 confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Raydium AMM v4 snapshot is stale")
+        raise ValueError("Raydium AMM v4 confirmed snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Raydium AMM v4 price impact is invalid")
 
