@@ -29,8 +29,7 @@ def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
         data = get_json(url, headers={"Accept": "application/json"}, timeout=REQUEST_TIMEOUT,
                         cache_ttl=cache_ttl, max_retries=MAX_RETRIES)
         if not isinstance(data, dict) or not isinstance(data.get("data"), list):
-            print("GECKO INVALID RESPONSE:", source_name, flush=True)
-            return found_tokens
+            raise ValueError(f"GeckoTerminal {source_name} returned an invalid response shape")
         for pool in data["data"]:
             if not isinstance(pool, dict):
                 continue
@@ -53,10 +52,13 @@ def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
         print("GECKOTERMINAL", source_name, "TOKENS:", len(found_tokens), flush=True)
     except requests.RequestException as error:
         print("GECKO REQUEST ERROR:", source_name, repr(error), flush=True)
+        raise
     except (ValueError, TypeError, AttributeError) as error:
         print("GECKO DATA ERROR:", source_name, repr(error), flush=True)
+        raise
     except Exception as error:
         print("GECKO SCANNER ERROR:", source_name, repr(error), flush=True)
+        raise
     return found_tokens
 
 
