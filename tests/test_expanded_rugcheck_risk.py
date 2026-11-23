@@ -119,6 +119,37 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertFalse(result["safe"])
 
+    def test_negative_or_overflowing_normalized_score_fails_unknown(self):
+        for score in (-1, 101):
+            result = analyze_rugcheck_report(safe_report(score_normalised=score))
+            self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_boolean_numeric_fields_are_not_treated_as_valid_risk_values(self):
+        result = analyze_rugcheck_report(safe_report(
+            score_normalised=True,
+            totalHolders=True,
+            graphInsidersDetected=True,
+        ))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_malformed_holder_entry_fails_unknown_instead_of_being_ignored(self):
+        result = analyze_rugcheck_report(safe_report(topHolders=[
+            {"address": "holder-a", "pct": 10.0},
+            {"address": "holder-b", "pct": "NaN"},
+            {"address": "holder-c", "pct": 6.0},
+        ]))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_malformed_insider_count_fails_unknown(self):
+        result = analyze_rugcheck_report(safe_report(graphInsidersDetected=1.5))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_default_warning_thresholds_have_a_real_medium_range(self):
+        result = analyze_rugcheck_report(safe_report(topHolders=[
+            {"pct": 25.0}, {"pct": 5.0}, {"pct": 4.0}
+        ], creatorBalance=7, tokenSupply=100))
+        self.assertGreaterEqual(result["medium_risks"], 2)
+
     def test_thresholds_can_be_tuned_without_code_changes(self):
         with patch.dict("os.environ", {"TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT": "5"}):
             result = analyze_rugcheck_report(safe_report(transferFeePct=6))
