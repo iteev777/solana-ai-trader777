@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -65,6 +66,14 @@ class TokenDecimalsCacheTests(unittest.TestCase):
             first.start()
             self.assertTrue(entered.wait(2))
             second.start()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with token_decimals._LOCK:
+                    waiting = token_decimals._STATS["waits"] == 1
+                if waiting:
+                    break
+                time.sleep(0.005)
+            self.assertTrue(waiting, "second caller did not join the in-flight request")
             release.set()
             first.join(2)
             second.join(2)
