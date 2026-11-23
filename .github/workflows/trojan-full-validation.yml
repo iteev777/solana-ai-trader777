@@ -1,0 +1,117 @@
+name: Trojan V2 full validation
+
+on:
+  push:
+    branches:
+      - feature/dex-jupiter-noncustodial-execution-current
+    paths:
+      - ".github/workflows/trojan-full-validation.yml"
+      - "**.py"
+      - "tests/**"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trojan-v2-full-validation
+  cancel-in-progress: false
+
+jobs:
+  full-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile every Python module
+        run: python -m compileall -q .
+
+      - name: Run complete unit test suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Verify live execution safety locks
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          def assigned_value(path, name):
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+              for node in tree.body:
+                  if isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name) and target.id == name:
+                              return ast.literal_eval(node.value)
+                  if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
+                      return ast.literal_eval(node.value)
+              raise AssertionError(f"{name} not found in {path}")
+
+          assert assigned_value("live_trading.py", "LIVE_TRADING_ENABLED") is False
+          assert assigned_value("live_execution.py", "LIVE_EXECUTION_LOCKED") is True
+          execution_source = Path("live_execution.py").read_text(encoding="utf-8")
+          assert "sendTransaction" not in execution_source
+          assert "signTransaction" not in execution_source
+          print("PASS: live trading disabled; execution locked; no signing/broadcast RPC in Jupiter adapter")
+          PY
+
+      - name: Dashboard authentication and route smoke test
+        env:
+          TROJAN_DASHBOARD_TOKEN: ci-dashboard-test-token
+        run: |
+          python - <<'PY'
+          import dashboard
+
+          client = dashboard.app.test_client()
+          unauthenticated = client.get("/api/readiness")
+          assert unauthenticated.status_code == 401, unauthenticated.status_code
+
+          paths = {rule.rule for rule in dashboard.app.url_map.iter_rules()}
+          required = {
+              "/",
+              "/api/overview",
+              "/api/trades",
+              "/api/events",
+              "/api/strategies",
+              "/api/readiness",
+              "/api/discovery",
+              "/api/filtering",
+              "/api/route-status",
+              "/api/route-comparison",
+              "/api/dex-status",
+              "/api/performance",
+              "/api/database",
+          }
+          missing = sorted(required - paths)
+          assert not missing, f"Dashboard routes missing: {missing}"
+
+          print(f"PASS: dashboard registers {len(paths)} routes")
+          print("PASS: protected API rejects requests without authentication")
+          PY
+
+      - name: Report safety mode
+        run: |
+          {
+            echo "## Trojan V2 full validation"
+            echo ""
+            echo "- Python syntax compilation: PASS"
+            echo "- Complete unit test suite: PASS"
+            echo "- Live execution safety locks: PASS"
+            echo "- Dashboard route registration: PASS"
+            echo "- Dashboard authentication gate: PASS"
+            echo "- Mainnet/live trading: remains LOCKED"
+            echo "- No wallet signing or transaction broadcast performed"
+          } >> "$GITHUB_STEP_SUMMARY"
