@@ -26,6 +26,51 @@ const SYSTEM_PROGRAM = new PublicKey("11111111111111111111111111111111");
 const EXPECTED_MINT_SIZE = 278;
 const EXPECTED_ATA_SIZE = 182;
 
+function verifyToken2022Ata(data: Uint8Array, mint: PublicKey, owner: PublicKey) {
+  const raw = Buffer.from(data);
+  if (raw.length !== EXPECTED_ATA_SIZE) {
+    throw new Error("ATA data size changed; expected the audited 182-byte layout.");
+  }
+  if (!raw.subarray(0, 32).equals(mint.toBuffer())) {
+    throw new Error("ATA mint verification failed.");
+  }
+  if (!raw.subarray(32, 64).equals(owner.toBuffer())) {
+    throw new Error("ATA wallet authority verification failed.");
+  }
+  if (raw[108] !== 1) {
+    throw new Error("ATA initialized-state verification failed.");
+  }
+  if (raw[165] !== 2) {
+    throw new Error("ATA Token-2022 account-type marker is invalid.");
+  }
+
+  const extensions = new Map<number, Buffer>();
+  let offset = 166;
+  while (offset < raw.length) {
+    if (offset + 4 > raw.length) {
+      throw new Error("ATA extension header is truncated.");
+    }
+    const extensionType = raw.readUInt16LE(offset);
+    const extensionLength = raw.readUInt16LE(offset + 2);
+    offset += 4;
+    if (offset + extensionLength > raw.length || extensions.has(extensionType)) {
+      throw new Error("ATA extension length or duplicate type is invalid.");
+    }
+    if (extensionType !== 2 && extensionType !== 7) {
+      throw new Error("ATA contains an unsupported Token-2022 extension.");
+    }
+    if ((extensionType === 2 && extensionLength !== 8) ||
+        (extensionType === 7 && extensionLength !== 0)) {
+      throw new Error("ATA extension length does not match the audited layout.");
+    }
+    extensions.set(extensionType, raw.subarray(offset, offset + extensionLength));
+    offset += extensionLength;
+  }
+  if (!extensions.has(2) || !extensions.has(7)) {
+    throw new Error("ATA is missing TransferFeeAmount or ImmutableOwner extension.");
+  }
+}
+
 async function main() {
   const connection = pg.connection;
   const payer = pg.wallet.publicKey;
@@ -65,9 +110,7 @@ async function main() {
     if (!existingAta.owner.equals(TOKEN_2022_PROGRAM)) {
       throw new Error("The derived ATA exists but has the wrong owner program.");
     }
-    if (existingAta.data.length !== EXPECTED_ATA_SIZE) {
-      throw new Error("Existing ATA has an unexpected data size.");
-    }
+    verifyToken2022Ata(existingAta.data, MINT, payer);
     console.log({
       result: "PASS_ALREADY_EXISTS",
       cluster: "devnet",
@@ -114,10 +157,27 @@ async function main() {
   const signature = await pg.wallet.signAndSendTransaction(tx);
   console.log("Submitted transaction:", signature);
 
-  const confirmation = await connection.confirmTransaction(
-    { signature, ...latest },
-    "confirmed",
-  );
+  let confirmation;
+  try {
+    confirmation = await connection.confirmTransaction(
+      { signature, ...latest },
+      "finalized",
+    );
+  } catch (error) {
+    const status = await connection.getSignatureStatus(signature, {
+      searchTransactionHistory: true,
+    });
+    if (status.value?.err) {
+      throw new Error("ATA transaction failed: " + JSON.stringify(status.value.err));
+    }
+    throw new Error(
+      "Finalized confirmation is not yet known. Do not resubmit this transaction; " +
+      "check signature " + signature + ". RPC detail: " + String(error),
+    );
+  }
+  if (!confirmation || !confirmation.value || !("err" in confirmation.value)) {
+    throw new Error("Finalized confirmation response is malformed; check signature " + signature);
+  }
   if (confirmation.value.err) {
     throw new Error("ATA transaction failed: " + JSON.stringify(confirmation.value.err));
   }
@@ -127,18 +187,7 @@ async function main() {
   if (!created.owner.equals(TOKEN_2022_PROGRAM)) {
     throw new Error("ATA owner program verification failed.");
   }
-  if (created.data.length !== EXPECTED_ATA_SIZE) {
-    throw new Error("ATA data size verification failed.");
-  }
-  if (!created.data.subarray(0, 32).equals(MINT.toBuffer())) {
-    throw new Error("ATA mint verification failed.");
-  }
-  if (!created.data.subarray(32, 64).equals(payer.toBuffer())) {
-    throw new Error("ATA wallet owner verification failed.");
-  }
-  if (created.data[108] !== 1) {
-    throw new Error("ATA initialized-state verification failed.");
-  }
+  verifyToken2022Ata(created.data, MINT, payer);
 
   const finalBalance = await connection.getBalance(payer, "finalized");
   console.log({
@@ -155,7 +204,7 @@ async function main() {
     ataInitialized: true,
     rentLamports,
     transactionSignature: signature,
-    confirmation: "confirmed",
+    confirmation: "finalized",
     startingBalanceLamports: balance,
     finalBalanceLamports: finalBalance,
     liveTrading: "LOCKED",
