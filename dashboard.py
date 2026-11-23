@@ -887,6 +887,17 @@ def api_native_execute():
         return jsonify({"error": str(error)[:240]}), status
 
 
+@app.get("/api/native-transaction-status")
+def api_native_transaction_status():
+    from native_execution import get_native_transaction_status
+    try:
+        return jsonify(get_native_transaction_status(request.args.get("signature", "")))
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Native transaction status lookup failed", "detail": str(error)[:180]}), 502
+
+
 @app.get("/api/strategy-catalog")
 def api_strategy_catalog():
     from strategy_catalog import get_strategy_catalog
