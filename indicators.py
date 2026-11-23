@@ -21,62 +21,100 @@ def _finite(value):
         return None
 
 
+def ema_series(values, period):
+    """SMA-seeded EMA series; oldest input first."""
+    if period <= 0 or len(values) < period:
+        return []
+    alpha = 2.0 / (period + 1.0)
+    average = sum(values[:period]) / period
+    output = [average]
+    for value in values[period:]:
+        average = alpha * value + (1.0 - alpha) * average
+        output.append(average)
+    return output
+
+
+def wilder_average(values, period):
+    """Wilder smoothing seeded by the first-period simple average."""
+    if period <= 0 or len(values) < period:
+        return None
+    average = sum(values[:period]) / period
+    for value in values[period:]:
+        average = (average * (period - 1) + value) / period
+    return average
+
+
+def calculate_rsi(closes, period=14):
+    """Wilder RSI with an SMA seed, matching the conventional RSI definition."""
+    if period <= 0 or len(closes) < period + 1:
+        return None
+    changes = [closes[index] - closes[index - 1] for index in range(1, len(closes))]
+    gains = [max(change, 0.0) for change in changes]
+    losses = [max(-change, 0.0) for change in changes]
+    average_gain = wilder_average(gains, period)
+    average_loss = wilder_average(losses, period)
+    if average_gain is None or average_loss is None:
+        return None
+    if average_loss == 0:
+        return 100.0 if average_gain > 0 else 50.0
+    if average_gain == 0:
+        return 0.0
+    return 100.0 - (100.0 / (1.0 + average_gain / average_loss))
+
+
 def calculate_indicators(candles):
-    rows = []
+    # Drop malformed OHLCV rows instead of letting inconsistent candles distort
+    # technical confirmation. Input order is normalized before any calculations.
+    by_timestamp = {}
     for item in candles or []:
         if not isinstance(item, (list, tuple)) or len(item) < 6:
             continue
         ts = _finite(item[0])
         o, h, low, close, volume = (_finite(x) for x in item[1:6])
-        if None in (ts, o, h, low, close, volume) or min(o, h, low, close) <= 0 or volume < 0:
+        if None in (ts, o, h, low, close, volume):
             continue
-        rows.append({"timestamp": int(ts), "open": o, "high": h, "low": low, "close": close, "volume": volume})
-    rows.sort(key=lambda x: x["timestamp"])
+        if min(o, h, low, close) <= 0 or volume < 0:
+            continue
+        if h < max(o, close, low) or low > min(o, close, h):
+            continue
+        by_timestamp[int(ts)] = {
+            "timestamp": int(ts), "open": o, "high": h,
+            "low": low, "close": close, "volume": volume
+        }
+    rows = [by_timestamp[key] for key in sorted(by_timestamp)]
     if len(rows) < 22:
         return {"ready": False, "candle_count": len(rows), "reason": "Need at least 22 valid candles"}
     closes = [row["close"] for row in rows]
     volumes = [row["volume"] for row in rows]
 
-    def ema(values, period):
-        alpha = 2 / (period + 1)
-        result = values[0]
-        for value in values[1:]:
-            result = alpha * value + (1 - alpha) * result
-        return result
+    ema9_series = ema_series(closes, 9)
+    ema21_series = ema_series(closes, 21)
+    ema9 = ema9_series[-1]
+    ema21 = ema21_series[-1]
+    rsi = calculate_rsi(closes, 14)
 
-    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    gains = [max(value, 0) for value in changes[-14:]]
-    losses = [max(-value, 0) for value in changes[-14:]]
-    avg_gain = sum(gains) / 14
-    avg_loss = sum(losses) / 14
-    if avg_loss == 0:
-        rsi = 100.0 if avg_gain > 0 else 50.0
-    else:
-        rsi = 100 - (100 / (1 + avg_gain / avg_loss))
-
-    ema9 = ema(closes[-60:], 9)
-    ema21 = ema(closes[-100:], 21)
     previous_high = max(row["high"] for row in rows[-21:-1])
     previous_low = min(row["low"] for row in rows[-21:-1])
     volume_base = sum(volumes[-21:-1]) / 20
     volume_spike = volumes[-1] / volume_base if volume_base > 0 else None
     current_close = closes[-1]
 
-    # Momentum and volatility measurements used by the configurable rule engine.
-    def ema_series(values, period):
-        alpha = 2 / (period + 1)
-        output = []
-        value = values[0]
-        for item in values:
-            value = alpha * item + (1 - alpha) * value
-            output.append(value)
-        return output
-
+    # Standard MACD(12,26,9): SMA-seeded EMA series are aligned at the
+    # 26-period start before the signal EMA is calculated.
     ema12 = ema_series(closes, 12)
     ema26 = ema_series(closes, 26)
-    macd_line = [a - b for a, b in zip(ema12, ema26)]
-    macd_signal = ema_series(macd_line, 9)
-    macd_histogram = macd_line[-1] - macd_signal[-1]
+    macd_histogram = macd_value = macd_signal_value = None
+    macd_bullish = None
+    if ema26:
+        aligned_ema12 = ema12[-len(ema26):]
+        macd_line = [fast - slow for fast, slow in zip(aligned_ema12, ema26)]
+        signal_line = ema_series(macd_line, 9)
+        if signal_line:
+            macd_value = macd_line[-1]
+            macd_signal_value = signal_line[-1]
+            macd_histogram = macd_value - macd_signal_value
+            macd_bullish = macd_histogram > 0
+
     window = closes[-20:]
     mean20 = sum(window) / len(window)
     variance20 = sum((value - mean20) ** 2 for value in window) / len(window)
@@ -89,7 +127,7 @@ def calculate_indicators(candles):
             abs(rows[index]["high"] - previous_close),
             abs(rows[index]["low"] - previous_close)
         ))
-    atr14 = sum(true_ranges[-14:]) / min(14, len(true_ranges))
+    atr14 = wilder_average(true_ranges, 14)
     stochastic_low = min(row["low"] for row in rows[-14:])
     stochastic_high = max(row["high"] for row in rows[-14:])
     stochastic_k = (
@@ -129,7 +167,7 @@ def calculate_indicators(candles):
         "candle_count": len(rows),
         "timestamp": rows[-1]["timestamp"],
         "close": current_close,
-        "rsi_14": round(rsi, 3),
+        "rsi_14": round(rsi, 3) if rsi is not None else None,
         "ema_9": ema9,
         "ema_21": ema21,
         "ema_cross_bullish": ema9 > ema21,
@@ -143,10 +181,10 @@ def calculate_indicators(candles):
         "candle_range_pct": round(candle_range_pct, 5),
         "consecutive_green_candles": consecutive_green,
         "consecutive_red_candles": consecutive_red,
-        "macd": round(macd_line[-1], 12),
-        "macd_signal": round(macd_signal[-1], 12),
-        "macd_histogram": round(macd_histogram, 12),
-        "macd_bullish": macd_histogram > 0,
+        "macd": round(macd_value, 12) if macd_value is not None else None,
+        "macd_signal": round(macd_signal_value, 12) if macd_signal_value is not None else None,
+        "macd_histogram": round(macd_histogram, 12) if macd_histogram is not None else None,
+        "macd_bullish": macd_bullish,
         "bollinger_middle": mean20,
         "bollinger_upper": mean20 + 2 * std20,
         "bollinger_lower": mean20 - 2 * std20,
@@ -155,12 +193,18 @@ def calculate_indicators(candles):
             if std20 > 0 else 0.5
         ),
         "atr_14": atr14,
-        "atr_percent": atr14 / current_close * 100,
+        "atr_percent": atr14 / current_close * 100 if atr14 is not None else None,
         "stochastic_k": round(stochastic_k, 3),
         "vwap": vwap,
         "above_vwap": current_close > vwap if vwap is not None else None,
         "obv": obv,
         "trend": "bullish" if ema9 > ema21 else "bearish",
+        "indicator_methods": {
+            "ema": "SMA_SEEDED_EXPONENTIAL",
+            "rsi": "WILDER",
+            "atr": "WILDER",
+            "macd": "SMA_SEEDED_EMA_12_26_9",
+        },
         "source": "geckoterminal_ohlcv"
     }
 
