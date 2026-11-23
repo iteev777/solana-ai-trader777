@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 232
+- Trojanin seurattavat tiedostot: 237
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -27,7 +27,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `ai_analyzer.py` | Ei vielä kartoitettu | PENDING |  |
 | `api_client.py` | `src/apis/` request clients | TESTED | Added per-host/per-endpoint request, cache, latency and error telemetry; cache-miss accounting is limited to cache-enabled requests. Tests `test_api_client_stats.py`; full validation run `45254436959` (998 tests).  |
 | `ata_manager.py` | `src/chains/solana/assets/ata/helpers.rs`, `close.rs`, `balance.rs` | PARTIAL | Koko tiedosto ja testit luettu. Rakentaa ja simuloi unsigned CreateIdempotent-ATA-tilauksen, laskee extension-aware Token-2022 rentin, tarkistaa nykyisen ATA:n, walletin SOL-reserven, fee-estimaatin ja packet size -rajan. Ei allekirjoita eikä lähetä. Referenssin ATA-close/cleanup ja automaattinen WSOL sweep puuttuvat; niiden toteutus on suunniteltava non-custodial unsigned-order -malliin, ei kopioida palvelinpuolen allekirjoitusta. |
-| `benchmarks/pool_rpc_parity.py` | Ei vielä kartoitettu | PENDING |  |
+| `ata_close_manager.py` | `src/chains/solana/assets/ata/close.rs`, `helpers.rs`, `wsol_sweep.rs` | PARTIAL | New non-custodial close implementation: validates canonical empty legacy/Token-2022 ATA, close authority, withheld transfer fees and rent refund; compiles/simulates unsigned CloseAccount order. Manual WSOL ATA wrapper only; no automatic idle scheduler or batch cleanup. Commits `d805391`, `15faa91`; tests `8979ab3`, `5908254`; dashboard route `9319a62`; API tests `6956c68`. |\n| `benchmarks/pool_rpc_parity.py` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/rust_rpc/Cargo.toml` | `Cargo.toml` | PENDING |  |
 | `benchmarks/rust_rpc/README.md` | `README.md`<br>`electron/README.md`<br>`electron/assets/README.md`<br>`src/apis/README.md`<br>`src/apis/llm/deepseek/README.md`<br>`src/ohlcvs/README.md`<br>`src/tokens/README.md` | PENDING |  |
 | `benchmarks/rust_rpc/sidecar_smoke.py` | Ei vielä kartoitettu | PENDING |  |
@@ -41,7 +41,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `copy_freshness.py` | `src/trader/copy/guards.rs`, `src/trader/copy/analytics.rs`, `src/wallets/watch/poller.rs` | TESTED | Measures chain-to-observation arrival age from captured receipt time, rejects future/invalid timestamps and stale recovered events. Tests `f9b9445`, `17c003f`; full validation `45254436959` (998 tests). |
 | `copy_risk.py` | `src/trader/copy/risk.rs`, `src/trader/copy/sizing.rs` | PARTIAL | Full file and focused tests read. Trojan enforces wallet-isolated USD exposure/daily loss/position limits; reference enforces per-task target min/max, filter/self-copy, slippage, buy-once and SOL budget/sizing caps. These are complementary, not equivalent; task-level controls remain open. |
 | `copy_trade.py` | `src/wallets/watch/service.rs`, `src/wallets/watch/poller.rs`, `src/wallets/watch/dedupe.rs`, `src/trader/copy/service.rs`, `src/trader/copy/guards.rs` | TESTED | Full monitor read. Added bounded paged catch-up, durable per-wallet cursor, oldest-first replay, safe null-index retry, replay dedupe, bounded skip-to-head, stale-event suppression and cursor retry when the in-memory paper queue is full. Tests cover cursor persistence, queue backpressure, null-index retry, page order and skip cap; full validation `45256464329`. A crash after queue acceptance but before processing still needs a durable outbox. |
-| `dashboard.py` | Ei vielä kartoitettu | PENDING |  |
+| `dashboard.py` | `src/chains/solana/assets/ata/close.rs`, `helpers.rs` (route only) | PARTIAL | Added authenticated `/api/ata-close-order` route with required action header; dashboard file as a whole remains unaudited. Commit `9319a62`; API tests `6956c68`. |
 | `database.py` | `src/database/`, `src/positions/db.rs`, `src/transactions/deltas.rs` | PARTIAL | Atomic paper DCA/partial-close paths inspected; schema v11 atomically persists all subject asset deltas with wallet events, validates subject/signature identity and preserves large raw integers. Tests cover rollback, idempotency and querying; full database parity audit remains open. |
 | `devnet_e2e.py` | Ei vielä kartoitettu | PENDING |  |
 | `devnet_token2022_e2e.py` | Ei vielä kartoitettu | PENDING |  |
@@ -123,7 +123,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_advanced_security_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_api_client_stats.py` | `src/apis/` client tests | TESTED | Covers per-host/per-endpoint request, cache, latency and failure telemetry; full validation `45254436959`. |
 | `tests/test_ata_manager.py` | `src/chains/solana/assets/ata/helpers.rs`, `close.rs`, `wsol_sweep.rs` | PARTIAL | Testit kattavat legacy SPL + Token-2022 ATA:n luonnin, immutable owner -tilin, transfer-fee-koon/rentin, transfer hook -eston, olemassa olevan ATA:n, riittämättömät varat ja virhetilanteita. Referenssin sulkemisen kilpailutilanteet, zero-balance retry ja WSOL sweep -idle-guard puuttuvat. |
-| `tests/test_ata_manager_api.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_ata_close_manager.py` | `src/chains/solana/assets/ata/close.rs`, `helpers.rs`, `wsol_sweep.rs` | TESTED | Legacy + Token-2022 empty account, noncanonical ATA, nonzero balance, foreign close authority, withheld transfer fees, simulation validation and external-signing-only behavior. Full validation passed; unit suite 1045 tests. |\n| `tests/test_ata_manager_api.py` | `src/chains/solana/assets/ata/close.rs`, `helpers.rs` | TESTED | API tests cover action-header enforcement, unsigned close-order response and invalid close rejection; full validation passed at 1045 tests. |
 | `tests/test_blacklist.py` | `src/tokens/database/blacklist_tests.rs`, pool blacklist tests | TESTED | Full test file read; add/list/match/soft-remove/reactivation, invalid key/type, account report matching and schema initialization covered. Broader reference semantics remain uncovered. |
 | `tests/test_candidate_metadata_merge.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_observer.py` | Trojan-specific PumpPortal observer tests; no direct reference tests | TESTED | Full test file read; validation/dedupe, concentration, opt-in/API-key gate and shared WebSocket lifecycle covered. Full validation on `bbff47a` included 998 tests. |
