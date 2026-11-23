@@ -240,7 +240,11 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
 
     def test_token2022_fee_bearing_swap_uses_swap_v2_and_correct_program_accounts(self):
         from token2022_inspector import MINT_ACCOUNT_TYPE
-        quote = self.quote()
+        quote = dict(
+            self.quote(),
+            token_program_input=chain.TOKEN_2022_PROGRAM,
+            token_program_output=chain.TOKEN_PROGRAM,
+        )
         wallet = chain._b58encode(bytes([41]) * 32)
         user_a = self.token_account(self.mint_a, 0)
         user_a["data"] = bytearray(user_a["data"])
