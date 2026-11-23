@@ -1,4 +1,5 @@
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +72,22 @@ class StrategyRulesTests(unittest.TestCase):
             passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
         self.assertFalse(passed)
         self.assertIn("unavailable", reason)
+
+    def test_concurrency_saturation_fails_closed_within_evaluation_deadline(self):
+        config = '{"main":{"all":[{"field":"liquidity_usd","op":"gte","value":10000}]}}'
+        semaphore = threading.BoundedSemaphore(1)
+        semaphore.acquire()
+        try:
+            with patch.object(strategy_rules, "_EVALUATION_SEMAPHORE", semaphore), \
+                 patch.dict(os.environ, {
+                     "TROJAN_STRATEGY_RULES": config,
+                     "TROJAN_STRATEGY_EVALUATION_TIMEOUT_MS": "1",
+                 }, clear=False):
+                passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
+            self.assertFalse(passed)
+            self.assertIn("concurrency capacity unavailable", reason)
+        finally:
+            semaphore.release()
 
     def test_invalid_config_fails_closed(self):
         with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": "{broken"}, clear=False):
