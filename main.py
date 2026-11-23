@@ -544,6 +544,14 @@ def evaluate_pre_strategy_security(token_address):
 
 def analyze_token_task(address, strategy_name, token):
 
+    import trading_control
+    if trading_control.is_force_stopped():
+        return {
+            "status": "paused",
+            "reason": "FORCE STOP ACTIVE",
+            "address": address,
+        }
+
     token = token if isinstance(token, dict) else {}
     pair = token.get("market_data")
     if isinstance(pair, dict):
