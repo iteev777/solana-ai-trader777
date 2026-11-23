@@ -94,10 +94,10 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         overrides = overrides or {}
         values = [
             self.pool_account,
-            self.reserve_x_account,
-            self.reserve_y_account,
-            self.mint_x_account,
-            self.mint_y_account,
+            overrides.get("reserve_x", self.reserve_x_account),
+            overrides.get("reserve_y", self.reserve_y_account),
+            overrides.get("mint_x", self.mint_x_account),
+            overrides.get("mint_y", self.mint_y_account),
             self.clock_account,
             overrides.get("bitmap"),
         ]
