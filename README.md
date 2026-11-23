@@ -339,3 +339,14 @@ The current adapter deliberately uses the highest total fee found across the on-
 ## RugCheck request resilience
 
 RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used cache, and measures cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 60 seconds, accepted range 0–3,600; set 0 to disable caching). Failed, rate-limited and invalid responses are never cached, and stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
+
+
+## OHLCV integrity, freshness and retention
+
+GeckoTerminal candle rows are normalized, sorted and deduplicated before indicators or storage use them. Rows with non-finite values, invalid OHLC geometry, negative volume, fractional/future timestamps are discarded. The indicator pipeline records invalid/duplicate rows, missing-minute gaps, largest gap and latest-candle age. A stale series (default maximum age 180 seconds) or a discontinuity larger than five minutes is marked not-ready across timeframes; no synthetic candles are inserted and strategy conditions fail closed when the indicator snapshot is unavailable.
+
+- `TROJAN_OHLCV_MAX_AGE_SECONDS` (default 180; bounded to 30–3600)
+- `TROJAN_OHLCV_MAX_GAP_SECONDS` (default 300; bounded to 60–3600)
+- `TROJAN_OHLCV_RETENTION_DAYS` (default 30; bounded to 1–3650)
+
+SQLite candle writes validate and deduplicate the same way, and the fetch worker prunes expired rows at most once per hour. Historical candles may still be stored even when the latest series is too stale to trade; storage does not make stale data strategy-ready.
