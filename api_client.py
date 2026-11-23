@@ -32,6 +32,10 @@ HOST_INTERVALS = {
 
 ENDPOINT_INTERVALS = {
     ("api.dexscreener.com", "tokens_batch"): 0.25,
+    # Match ScreenerBot's separate 60/min discovery budgets for profiles
+    # and boosts, while retaining a shared boost bucket for both boost feeds.
+    ("api.dexscreener.com", "dexscreener_profiles"): 1.1,
+    ("api.dexscreener.com", "dexscreener_boosts"): 1.1,
 }
 
 DEFAULT_429_COOLDOWN = 30
@@ -68,12 +72,12 @@ def get_rate_bucket(url):
     host = (parsed.hostname or "").lower()
     path = parsed.path.lower()
 
-    if (
-        host == "api.dexscreener.com"
-        and path.startswith("/tokens/v1/")
-    ):
+    if host == "api.dexscreener.com" and path.startswith("/tokens/v1/"):
         endpoint = "tokens_batch"
-
+    elif host == "api.dexscreener.com" and path.startswith("/token-profiles/latest/"):
+        endpoint = "dexscreener_profiles"
+    elif host == "api.dexscreener.com" and path.startswith("/token-boosts/"):
+        endpoint = "dexscreener_boosts"
     else:
         endpoint = "default"
 
@@ -89,14 +93,18 @@ def get_rate_bucket(url):
 # HOST LOCK
 # ==========================================
 
-def get_host_lock(host):
+def get_host_lock(host, endpoint="default"):
+
+    # Separate locks allow independent provider budgets to run concurrently.
+    # Calls sharing the same endpoint bucket remain serialized and rate-limited.
+    key = (host, endpoint)
 
     with state_lock:
 
-        if host not in host_locks:
-            host_locks[host] = threading.Lock()
+        if key not in host_locks:
+            host_locks[key] = threading.Lock()
 
-        return host_locks[host]
+        return host_locks[key]
 
 
 # ==========================================
@@ -323,7 +331,7 @@ def get_json(
     # One request at a time per host.
     # This also makes host cooldown reliable
     # across different endpoint buckets.
-    lock = get_host_lock(host)
+    lock = get_host_lock(host, endpoint)
 
     with lock:
 
@@ -561,7 +569,7 @@ def get_api_status():
 
     with state_lock:
 
-        hosts = list(host_locks.keys())
+        hosts = sorted({host for host, _endpoint in host_locks})
 
         bucket_data = dict(
             bucket_next_request
