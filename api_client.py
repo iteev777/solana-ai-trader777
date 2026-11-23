@@ -5,6 +5,7 @@
 # ==========================================
 
 import time
+import math
 import json
 import copy
 import hashlib
@@ -52,6 +53,8 @@ bucket_next_request = {}
 host_blocked_until = {}
 
 cache = {}
+_CACHE_MISS = object()
+_request_stats = {}
 
 cache_lock = threading.Lock()
 state_lock = threading.Lock()
@@ -126,20 +129,20 @@ def cache_key(url, params, headers):
     )
 
 
-def get_cached(key):
+def get_cached(key, default=None):
 
     with cache_lock:
 
         cached = cache.get(key)
 
         if cached is None:
-            return None
+            return default
 
-        if time.time() >= cached["expires"]:
+        if time.monotonic() >= cached["expires"]:
 
             cache.pop(key, None)
 
-            return None
+            return default
 
         return copy.deepcopy(cached["data"])
 
@@ -151,7 +154,7 @@ def save_cache(key, data, cache_ttl):
 
     with cache_lock:
 
-        now = time.time()
+        now = time.monotonic()
 
         expired = [
             item_key
@@ -221,6 +224,9 @@ def get_retry_delay(response, attempt):
             * (2 ** attempt)
         )
 
+    if not math.isfinite(delay):
+        delay = DEFAULT_429_COOLDOWN * (2 ** attempt)
+
     return min(
         max(delay, 1),
         MAX_429_COOLDOWN
@@ -241,7 +247,7 @@ def wait_for_request_slot(
 
         with state_lock:
 
-            now = time.time()
+            now = time.monotonic()
 
             blocked_until = host_blocked_until.get(
                 host,
@@ -285,6 +291,24 @@ def wait_for_request_slot(
 # API REQUEST
 # ==========================================
 
+def _record_attempt(host, started, error=None):
+    elapsed_ms = (time.monotonic() - started) * 1000
+    with state_lock:
+        stats = _request_stats.setdefault(host, {
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "average_response_time_ms": 0.0,
+            "last_error": None,
+        })
+        if error is None:
+            stats["successful_requests"] += 1
+        else:
+            stats["failed_requests"] += 1
+            stats["last_error"] = error
+        count = stats["successful_requests"] + stats["failed_requests"]
+        stats["average_response_time_ms"] += (elapsed_ms - stats["average_response_time_ms"]) / count
+
+
 def get_json(
     url,
     params=None,
@@ -315,9 +339,9 @@ def get_json(
     # First cache check
     if cache_ttl > 0:
 
-        cached_data = get_cached(key)
+        cached_data = get_cached(key, _CACHE_MISS)
 
-        if cached_data is not None:
+        if cached_data is not _CACHE_MISS:
             return cached_data
 
     # One request at a time per host.
@@ -330,9 +354,9 @@ def get_json(
         # Second cache check
         if cache_ttl > 0:
 
-            cached_data = get_cached(key)
+            cached_data = get_cached(key, _CACHE_MISS)
 
-            if cached_data is not None:
+            if cached_data is not _CACHE_MISS:
                 return cached_data
 
         attempt = 0
@@ -359,6 +383,7 @@ def get_json(
                 )
 
             except requests.RequestException as error:
+                _record_attempt(host, request_started, type(error).__name__)
 
                 elapsed = (
                     time.monotonic()
@@ -372,7 +397,7 @@ def get_json(
                     round(elapsed, 2),
                     "s",
                     "| ERROR:",
-                    repr(error),
+                    type(error).__name__,
                     flush=True
                 )
 
@@ -404,6 +429,9 @@ def get_json(
                 - request_started
             )
 
+            if not 200 <= response.status_code < 300:
+                _record_attempt(host, request_started, f"HTTP {response.status_code}")
+
             # ----------------------------------
             # RATE LIMIT
             # ----------------------------------
@@ -419,7 +447,7 @@ def get_json(
 
                     host_blocked_until[host] = max(
                         host_blocked_until.get(host, 0),
-                        time.time() + cooldown
+                        time.monotonic() + cooldown
                     )
 
                 print(
@@ -515,6 +543,8 @@ def get_json(
                 data = response.json()
 
             except ValueError:
+                if 200 <= response.status_code < 300:
+                    _record_attempt(host, request_started, "INVALID_JSON")
 
                 print(
                     "API JSON ERROR:",
@@ -527,6 +557,8 @@ def get_json(
 
                 raise
 
+            if 200 <= response.status_code < 300:
+                _record_attempt(host, request_started)
             save_cache(
                 key,
                 data,
@@ -557,7 +589,7 @@ def clear_cache():
 
 def get_api_status():
 
-    now = time.time()
+    now = time.monotonic()
 
     with state_lock:
 
@@ -567,6 +599,7 @@ def get_api_status():
             bucket_next_request
         )
 
+        request_stats = {host: dict(stats) for host, stats in _request_stats.items()}
         blocked_data = dict(
             host_blocked_until
         )
@@ -606,7 +639,8 @@ def get_api_status():
                 ),
                 1
             ),
-            "buckets": host_buckets
+            "buckets": host_buckets,
+            "requests": request_stats.get(host),
         }
 
     with cache_lock:
