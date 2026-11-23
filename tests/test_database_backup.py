@@ -114,6 +114,27 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertEqual(health["backup_count"], 1)
         self.assertGreater(health["database_size_bytes"], 0)
 
+    def test_initialize_refuses_future_schema_without_modifying_database(self):
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                ("999",),
+            )
+            connection.execute(
+                "CREATE TABLE future_only (value TEXT NOT NULL)"
+            )
+        with self.assertRaisesRegex(RuntimeError, "newer than this Trojan build"):
+            database.initialize_database()
+        with database.connect() as connection:
+            version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()["value"]
+            future_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='future_only'"
+            ).fetchone()
+        self.assertEqual(version, "999")
+        self.assertIsNotNone(future_table)
+
 
 if __name__ == "__main__":
     unittest.main()
