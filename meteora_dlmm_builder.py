@@ -312,10 +312,16 @@ def simulate_meteora_dlmm_transaction(transaction_base64):
         {"encoding": "base64", "commitment": "confirmed",
          "sigVerify": False, "replaceRecentBlockhash": True},
     ])
-    value = (result or {}).get("value") or {}
-    if value.get("err") is not None:
-        logs = value.get("logs") or []
-        raise ValueError("Meteora DLMM unsigned simulation failed: " + " | ".join(logs[-4:])[:500])
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
+        raise ValueError("Solana RPC returned a malformed DLMM simulation result")
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Solana RPC DLMM simulation response is missing the error field")
+    logs = value.get("logs") or []
+    if not isinstance(logs, list):
+        raise ValueError("Solana RPC returned malformed DLMM simulation logs")
+    if value["err"] is not None:
+        raise ValueError("Meteora DLMM unsigned simulation failed: " + " | ".join(str(line) for line in logs[-4:])[:500])
     return {
         "status": "PASS", "success": True,
         "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
