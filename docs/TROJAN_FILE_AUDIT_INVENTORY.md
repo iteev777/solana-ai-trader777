@@ -7,6 +7,10 @@
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
+## Testauskäytäntö (käyttäjän päätös 2026-11-23)
+
+Tiedostoja ja osa-alueita ei testata yksittäin työn aikana. Kaikki testit, koeajot ja täysi validointi jätetään siihen vaiheeseen, kun koko Trojan-botti ja tämän inventaarion kaikki soveltuvat tiedostot/toiminnallisuudet on käsitelty. Työn aikana kirjataan muutokset ja testattavat rajatapaukset, mutta testejä ei käynnistetä. Aiempiin committeihin merkityt TESTED-tulokset ovat historiallisia tuloksia, eivät tämän auditointivaiheen uusia testiajoja.
+
 Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; COMPARED = verrattu vastineeseen; UPDATED = Trojan-tiedosto muutettu ja commit kirjattu; TESTED = testit läpäisseet; NO-CHANGE = tarkastettu, ei muutosta perustellusti tarvita; NEW-IMPLEMENTATION = ScreenerBot-ominaisuudelle luotu Trojan-toteutus. Jokaiselle riville kirjataan perustelu ja commit/testiviite ennen valmistumista.
 
 | Trojanin tiedosto | ScreenerBot-vastine-ehdokkaat (ei vahvistettu) | Tila | Havainnot / commit / testit |
