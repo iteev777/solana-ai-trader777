@@ -459,9 +459,10 @@ from confirmed pool state, checks the pool/config/vault/mint/user-account and
 observation relationships, compiles a legacy transaction for external wallet
 signing, and requires a successful unsigned RPC simulation before returning
 the transaction through the authenticated dashboard API. Legacy SPL Token
-only; Token-2022 and automatic ATA creation remain refused. Native signing,
-broadcast and live execution remain disabled. See
-`docs/RAYDIUM_CPMM_BUILDER.md`.
+only; Token-2022 and automatic ATA creation remain refused. The server never
+signs; any broadcast requires the separate default-off native execution gate
+and explicit confirmation. See `docs/RAYDIUM_CPMM_BUILDER.md` and
+`docs/NATIVE_EXECUTION.md`.
 
 ## Native PumpSwap V2 transaction preparation
 
