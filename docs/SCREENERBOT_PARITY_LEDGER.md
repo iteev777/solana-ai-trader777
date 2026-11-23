@@ -7,7 +7,7 @@
 - Trojan: https://github.com/iteev777/solana-ai-trader777
 - Trojan baseline revision before this ledger: `e52fc52ed598dcbbaab89bc267822c2c8ada9ef0`
 - Trojan working branch: `feature/dex-jupiter-noncustodial-execution-current`
-- Latest ledger commit: `1815784d3d623737b9a490f6f35986e0669ecdad`
+- Latest ledger commit before discovery feed implementation: `1557c2de5d27dace659cc97ca39cba4ce8d94615`
 
 ### Repository-wide tree inventory
 
@@ -41,7 +41,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 
 | Functional area | Reference surface inspected | Trojan surface inspected | Status |
 |---|---|---|---|
-| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, GeckoTerminal and DexScreener scanners | Partial inspection only; no acceptance sign-off |
+| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, focused tests | Partial inspection; recently-updated GeckoTerminal feed added; no acceptance sign-off |
 | Filtering pipeline | `src/filtering/engine.rs`, RugCheck filter source | `filter_pipeline.py`, `rugcheck.py` | Partial inspection only; no acceptance sign-off |
 | API clients and rate limiting | API manager and provider clients | `api_client.py`, provider scanners | Not audited end-to-end |
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
@@ -63,7 +63,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 ## Initial discovery findings (not final)
 
 - Trojan has separate feed functions for DexScreener profiles/latest boosts/top boosts; RugCheck new/recent/trending/verified; Jupiter recent/organic/traded/trending; CoinGecko; and DeFiLlama, in addition to GeckoTerminal, Pump.fun and Birdeye scanners.
-- The inspected ScreenerBot discovery implementation also has a GeckoTerminal recently-updated-token feed. A corresponding independently implemented Trojan feed and its per-source configuration/health/test coverage have not yet been verified.
+- ScreenerBot's GeckoTerminal recently-updated-token feed is implemented in Trojan as `scan_recently_updated_tokens()` using `tokens/info_recently_updated?network=solana`; the aggregator registers it as `geckoterminal_recently_updated`. The scanner validates the response shape, Solana network identity, deduplicates addresses, preserves useful metadata, and raises failures for source-health accounting. Focused tests cover request scoping, duplicate/malformed entries, invalid response shapes and transport failures. GitHub Actions validation is pending at the time of this ledger update.
 - ScreenerBot's discovery runner demonstrates configurable source enablement, chain-adapter feed registration, shutdown-aware scheduling, skip behavior during confirmed network outages/tool contention, and structured run statistics. These behaviors need explicit mapping to Trojan before discovery can be marked complete.
 - This is an initial sample, not a claim that all discovery files or edge cases have been inspected.
 
