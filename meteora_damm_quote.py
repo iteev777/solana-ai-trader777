@@ -58,6 +58,7 @@ def _decode_pool(raw, chain):
         "sqrt_min_price": chain._u128(raw, 424),
         "sqrt_max_price": chain._u128(raw, 440),
         "sqrt_price": chain._u128(raw, 456),
+        "activation_point": chain._u64(raw, 472),
         "activation_type": raw[480],
         "pool_status": raw[481],
         "collect_fee_mode": raw[484],
@@ -152,11 +153,27 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     for field in (
         "mint_a", "mint_b", "vault_a", "vault_b", "liquidity",
         "protocol_fee_a", "protocol_fee_b", "sqrt_min_price",
-        "sqrt_max_price", "sqrt_price", "pool_status", "collect_fee_mode",
-        "fee_version", "fee_numerator",
+        "sqrt_max_price", "sqrt_price", "activation_point", "activation_type",
+        "pool_status", "collect_fee_mode", "fee_version", "fee_numerator",
     ):
         if state[field] != first[field]:
             raise ValueError("Meteora DAMM pool state changed between discovery and confirmed snapshot")
+
+    if state["activation_type"] not in (0, 1):
+        raise ValueError("Meteora DAMM activation type is unsupported")
+    if state["activation_point"] > 0:
+        if state["activation_type"] == 0:
+            if slot < state["activation_point"]:
+                raise ValueError("Meteora DAMM pool is not active at the confirmed slot")
+        else:
+            try:
+                block_time = chain._rpc("getBlockTime", [slot])
+            except Exception as error:
+                raise ValueError("Meteora DAMM activation timestamp could not be verified") from error
+            if isinstance(block_time, bool) or not isinstance(block_time, int):
+                raise ValueError("Meteora DAMM activation timestamp is unavailable")
+            if block_time < state["activation_point"]:
+                raise ValueError("Meteora DAMM pool is not active at the confirmed block time")
 
     if mint_a_acc.get("owner") != chain.TOKEN_PROGRAM or mint_b_acc.get("owner") != chain.TOKEN_PROGRAM:
         raise ValueError("Meteora DAMM Token-2022 mints are refused until transfer fees and hooks are modelled")
@@ -169,7 +186,7 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
 
     # OnlyB (mode 1) charges token B when it is the input; other modes charge
     # the output token. Fees are rounded upward in the token they are collected.
-    fee_on_input = state["collect_fee_mode"] == 1 and not input_is_a
+    fee_on_input = state["collect_fee_mode"] in (1, 2) and not input_is_a
     if fee_on_input:
         fee_amount = _ceil_div(amount_in * state["fee_numerator"], FEE_DENOMINATOR)
         if fee_amount >= amount_in:
