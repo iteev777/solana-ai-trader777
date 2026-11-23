@@ -27,6 +27,28 @@ def _env_enabled(name, default=True):
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+
+def _geckoterminal_scanners_from_env():
+    """Expose provider-level and per-feed switches for GeckoTerminal."""
+    if not _env_enabled("TROJAN_GECKOTERMINAL_ENABLED", True):
+        return []
+    configured = [
+        ("TROJAN_GECKOTERMINAL_NEW_POOLS_ENABLED", "geckoterminal_new_pools", scan_new_pools),
+        ("TROJAN_GECKOTERMINAL_TRENDING_ENABLED", "geckoterminal_trending_pools", scan_trending_pools),
+        ("TROJAN_GECKOTERMINAL_RECENTLY_UPDATED_ENABLED", "geckoterminal_recently_updated", scan_recently_updated_tokens),
+    ]
+    return [(label, scanner) for env_name, label, scanner in configured
+            if _env_enabled(env_name, True)]
+
+
+def _pumpfun_scanners_from_env():
+    return [("pumpfun", scan_pumpfun)] if _env_enabled("TROJAN_PUMPFUN_ENABLED", True) else []
+
+
+def _birdeye_scanners_from_env():
+    return [("birdeye", scan_birdeye)] if _env_enabled("TROJAN_BIRDEYE_ENABLED", True) else []
+
+
 def _dexscreener_scanners_from_env():
     """Mirror ScreenerBot's provider and per-feed discovery switches."""
     if not _env_enabled("TROJAN_DEXSCREENER_ENABLED", True):
@@ -83,12 +105,11 @@ def _defillama_scanners_from_env():
         return []
     return [("defillama_protocols", scan_defillama)]
 
+# Source enablement is read at process startup, matching the other provider switches.
 SCANNERS = [
-    ("geckoterminal_new_pools", scan_new_pools),
-    ("geckoterminal_trending_pools", scan_trending_pools),
-    ("geckoterminal_recently_updated", scan_recently_updated_tokens),
-    ("pumpfun", scan_pumpfun),
-    ("birdeye", scan_birdeye),
+    *_geckoterminal_scanners_from_env(),
+    *_pumpfun_scanners_from_env(),
+    *_birdeye_scanners_from_env(),
     *_dexscreener_scanners_from_env(),
     *_rugcheck_scanners_from_env(),
     *_jupiter_scanners_from_env(),
@@ -430,6 +451,9 @@ def get_discovery_status():
 
 def collect_tokens():
     global _last_source_stats, _last_scan_at
+    if not _env_enabled("TROJAN_DISCOVERY_ENABLED", True):
+        print("TROJAN V2 DISCOVERY DISABLED BY CONFIGURATION", flush=True)
+        return []
     if not _aggregator_lock.acquire(blocking=False):
         print("TROJAN V2 AGGREGATOR ALREADY RUNNING", flush=True)
         return []
