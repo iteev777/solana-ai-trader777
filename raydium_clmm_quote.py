@@ -213,7 +213,9 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     ] + [address for _, address in arrays]
     snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
-    if len(accounts) != len(addresses) or any(item is None for item in accounts):
+    if (len(accounts) != len(addresses)
+            or any(item is None for item in accounts[:6])
+            or any(item is None for item in accounts[7:])):
         raise ValueError("Raydium CLMM confirmed snapshot is missing a required account")
     pool_acc, config_acc, vault0_acc, vault1_acc, mint0_acc, mint1_acc, bitmap_acc = accounts[:7]
     snapshot_extension = _decode_bitmap_extension(bitmap_acc, pool_address, chain)
