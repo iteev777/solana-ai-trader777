@@ -146,5 +146,128 @@ class RouteComparisonTests(unittest.TestCase):
             route_comparison.compare_quotes("in", "out", 500, 301)
 
 
+    def test_requested_output_mint_is_forwarded_to_direct_adapter(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "pumpfun_legacy_direct", "protocol": "pumpfun_legacy",
+            "output_mint": "out", "out_amount": 1200,
+            "minimum_out_amount": 1180, "price_impact_percent": 0.2,
+            "slot": 777, "pool_id": "curve",
+        }
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct) as direct_quote,
+        ):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "curve")
+        self.assertEqual(result["best_provider"], "pumpfun_legacy_direct")
+        direct_quote.assert_called_once_with(
+            "curve", "in", 500, 100, output_mint="out"
+        )
+
+    def test_router_status_lists_pumpfun_bonding_curve_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("Pump.fun bonding curve", status["direct_pool"]["quote_adapters"])
+
+
+
+
+    def test_router_status_lists_pumpfun_bonding_curve_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("Pump.fun bonding curve", status["direct_pool"]["quote_adapters"])
+
+
+
+
+    def test_router_status_lists_pumpfun_bonding_curve_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("Pump.fun bonding curve", status["direct_pool"]["quote_adapters"])
+
+
+
+
+    def test_router_status_lists_pumpfun_bonding_curve_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("Pump.fun bonding curve", status["direct_pool"]["quote_adapters"])
+
+
+    def test_direct_quote_with_wrong_output_mint_is_not_compared(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "fluxbeam_direct", "protocol": "fluxbeam_amm",
+            "output_mint": "wrong-output",
+            "out_amount": 9000, "minimum_out_amount": 8900,
+            "price_impact_percent": 0.2, "slot": 777, "pool_id": "pool",
+        }
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
+        self.assertEqual(result["best_provider"], "jupiter")
+        self.assertEqual(result["quotes"]["direct_pool"]["status"], "UNAVAILABLE")
+
+    def test_invalid_slippage_rejected(self):
+        with self.assertRaises(ValueError):
+            route_comparison.compare_quotes("in", "out", 500, 301)
+
+
+
+    def test_moonit_fee_amount_and_mint_are_normalized(self):
+        jupiter = {
+            "provider": "jupiter", "out_amount": 1000,
+            "minimum_out_amount": 990, "price_impact_percent": 0.1,
+            "quote_latency_ms": 10, "route_diagnostics": {},
+            "quoted_at": 1, "route_quality": {"status": "PASS"}
+        }
+        raptor = {
+            "provider": "raptor", "status": "QUOTED",
+            "out_amount": 900, "minimum_out_amount": 890,
+            "price_impact_percent": 0.1, "latency_ms": 20,
+            "route": {}, "quoted_at": 1, "quality": None
+        }
+        direct = {
+            "provider": "moonit_direct", "protocol": "moonit_amm",
+            "output_mint": "out", "fee_mint": "So11111111111111111111111111111111111111112",
+            "out_amount": 1200, "minimum_out_amount": 1180,
+            "price_impact_percent": 0.2, "slot": 777, "pool_id": "curve",
+            "fee_amount": 100,
+        }
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
+            result = route_comparison.compare_quotes("in", "out", 500, 100, "curve")
+        quote = result["quotes"]["direct_pool"]
+        self.assertEqual(quote["fee_mint"], direct["fee_mint"])
+        self.assertEqual(quote["fee_amounts"]["fee"], 100)
+        self.assertEqual(quote["fee_amounts"]["total"], 100)
+
+
+
 if __name__ == "__main__":
     unittest.main()
