@@ -462,3 +462,13 @@ the transaction through the authenticated dashboard API. Legacy SPL Token
 only; Token-2022 and automatic ATA creation remain refused. Native signing,
 broadcast and live execution remain disabled. See
 `docs/RAYDIUM_CPMM_BUILDER.md`.
+
+## Native PumpSwap V2 transaction preparation
+
+Trojan can also prepare native PumpSwap V2 exact-quote-in buys and exact-base-in
+sells using the current official 17-account IDL. It re-quotes from confirmed
+state, verifies canonical pool/config PDAs, token accounts and the live
+buyback-recipient ATA, then simulates an unsigned transaction before returning
+it. This path currently refuses Token-2022, mayhem, cashback and holder-reward
+pools; it requires existing user token accounts and a pre-existing buyback ATA.
+Signing and broadcast remain disabled. See `docs/PUMPSWAP_V2_BUILDER.md`.
