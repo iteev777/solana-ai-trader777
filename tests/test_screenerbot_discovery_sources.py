@@ -52,7 +52,10 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
                 "links": {"website": "https://example.test"},
             },
         ]
-        with patch.object(sources, "_safe_fetch", side_effect=payload):
+        # scan_rugcheck makes four feed requests; the last feed can return
+        # multiple rows for the same mint, but it contributes one source label.
+        responses = [[payload[0]], [payload[1]], [payload[2]], [payload[3], payload[4]]]
+        with patch.object(sources, "_safe_fetch", side_effect=responses):
             result = sources.scan_rugcheck()
         self.assertEqual(len(result), 1)
         token = result[0]
@@ -64,7 +67,7 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
         self.assertEqual(token["rugcheck_vote_count"], 7)
         self.assertTrue(token["jup_verified"])
         self.assertEqual(token["rugcheck_payer"], "verified-payer")
-        self.assertEqual(len(token["discovery_sources"]), 5)
+        self.assertEqual(len(token["discovery_sources"]), 4)
 
     def test_rugcheck_merge_preserves_explicit_false_and_zero_values(self):
         responses = [
