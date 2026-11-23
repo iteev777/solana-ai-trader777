@@ -9,7 +9,7 @@ import threading
 from solders.pubkey import Pubkey
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
+from discovery.gecko_scanner import scan_new_pools, scan_trending_pools, scan_recently_updated_tokens
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
@@ -86,6 +86,7 @@ def _defillama_scanners_from_env():
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
+    ("geckoterminal_recently_updated", scan_recently_updated_tokens),
     ("pumpfun", scan_pumpfun),
     ("birdeye", scan_birdeye),
     *_dexscreener_scanners_from_env(),
