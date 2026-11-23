@@ -978,8 +978,6 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     if discovered.get("owner") != PROGRAMS["pumpfun_legacy"]:
         raise ValueError("Bonding curve account is not owned by the Pump.fun program")
     first = _decode_pool("pumpfun_legacy", discovered["data"])
-    if first.get("is_mayhem_mode"):
-        raise ValueError("Pump.fun mayhem curves are not supported by this fee model")
     if first.get("is_cashback_coin"):
         raise ValueError("Pump.fun cashback curves are not supported")
     if first.get("is_holder_reward"):
@@ -1072,13 +1070,15 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         gross_output = output_amount
     else:
         gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
-        if real_quote <= 0 or gross_quote > real_quote:
-            raise ValueError("Pump.fun curve has insufficient real SOL reserves for this sell")
+        if real_quote <= 0:
+            raise ValueError("Pump.fun curve has no real SOL reserve for this sell")
         fee_amounts = [_fee_amount_ceil(gross_quote, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
         output_amount = gross_quote - total_fee
         if output_amount <= 0:
             raise ValueError("Pump.fun sell output is consumed by fees")
+        if output_amount > real_quote:
+            raise ValueError("Pump.fun curve has insufficient real SOL reserves for this sell")
         impact_input = amount_in
         impact_output = gross_quote
         spot_price = virtual_quote / virtual_token
@@ -1120,6 +1120,7 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         "virtual_quote_reserves": virtual_quote,
         "real_token_reserves": real_token,
         "real_quote_reserves": real_quote,
+        "is_mayhem_mode": curve.get("is_mayhem_mode", False),
         "token_decimals": token_decimals,
         "price_impact_percent": round(impact, 6),
         "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
