@@ -1,8 +1,7 @@
 name: Pool RPC parity benchmark
 
 on:
-  push:
-    branches:
+  branches:
       - feature/dex-jupiter-noncustodial-execution-current
     paths:
       - "benchmarks/**"
