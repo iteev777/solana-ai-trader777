@@ -43,6 +43,75 @@ class TokenSecurityTests(unittest.TestCase):
         self.assertEqual(report["top_owner_account_authorities"], ["11111111111111111111111111111111"])
         self.assertTrue(token_security.evaluate_token_security(report)["allowed"])
 
+    @patch("solana_onchain._rpc")
+    def test_boolean_or_fractional_mint_decimals_are_rejected(self, rpc):
+        rpc.return_value = {"value": {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "data": {"parsed": {"info": {
+                "isInitialized": True, "decimals": True,
+                "mintAuthority": None, "freezeAuthority": None,
+            }}},
+        }}
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            with self.assertRaisesRegex(ValueError, "decimals"):
+                token_security.get_token_security_report("MintAddress")
+
+    @patch("solana_onchain._rpc")
+    def test_supply_decimals_must_match_mint_account(self, rpc):
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": "100000000", "decimals": 9}},
+        ]
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                token_security.get_token_security_report("MintAddress")
+
+    @patch("solana_onchain._rpc")
+    def test_largest_account_raw_amount_must_be_integer_u64(self, rpc):
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": "100000000", "decimals": 6}},
+            {"value": [{"address": "11111111111111111111111111111111", "amount": True}]},
+        ]
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            with self.assertRaisesRegex(ValueError, "raw u64"):
+                token_security.get_token_security_report("MintAddress")
+
+    @patch("solana_onchain._rpc")
+    def test_incomplete_owner_lookup_does_not_report_partial_owner_concentration(self, rpc):
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": None, "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": "100000000", "decimals": 6}},
+            {"value": [
+                {"address": "11111111111111111111111111111111", "amount": "30000000"},
+                {"address": "11111111111111111111111111111112", "amount": "20000000"},
+            ]},
+            {"value": [{"data": {"parsed": {"info": {"owner": "owner-a"}}}}]},
+        ]
+        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+            report = token_security.get_token_security_report("MintAddress")
+        self.assertIsNone(report["top_owner_account_authority_pct"])
+        self.assertEqual(report["top_owner_account_authorities"], [])
+
+    def test_empty_authority_string_is_unknown_not_disabled(self):
+        report = {
+            "source": "solana_rpc", "mint_authority": "UNKNOWN",
+            "freeze_authority": "DISABLED", "warnings": [],
+        }
+        self.assertFalse(token_security.evaluate_token_security(report)["allowed"])
+
     def test_missing_report_fails_closed(self):
         self.assertFalse(token_security.evaluate_token_security(None)["allowed"])
 
