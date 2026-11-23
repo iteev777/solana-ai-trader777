@@ -14,6 +14,12 @@ class DiscoveryMintNormalizationTests(unittest.TestCase):
             "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
         )
 
+    def test_rejects_base58_shape_with_invalid_pubkey_byte_length(self):
+        self.assertIsNone(normalize_token({
+            "tokenAddress": "z" * 44,
+            "chainId": "solana",
+        }))
+
     def test_rejects_wrong_chain(self):
         self.assertIsNone(normalize_token({
             "tokenAddress": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
