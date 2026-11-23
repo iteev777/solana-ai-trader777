@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -6,6 +8,14 @@ from discovery import token_aggregator as aggregator
 
 class TokenAggregatorMergeTests(unittest.TestCase):
     def setUp(self):
+        self.temp_db = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_db.cleanup)
+        self.db_patch = patch.object(
+            aggregator.database, "DATABASE",
+            os.path.join(self.temp_db.name, "discovery-health.sqlite3"),
+        )
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
         self.old_scanners = aggregator.SCANNERS
         self.old_stats = aggregator._last_source_stats
         self.old_history = aggregator._source_history
@@ -19,6 +29,22 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         aggregator._last_source_stats = self.old_stats
         aggregator._source_history = self.old_history
         aggregator._last_scan_at = self.old_last_scan
+
+    def test_source_health_survives_process_local_state_reset(self):
+        aggregator.SCANNERS = [
+            ("geckoterminal_new_pools", lambda: []),
+            ("pumpfun", lambda: []),
+        ]
+        aggregator.collect_tokens()
+        aggregator._last_source_stats = {}
+        aggregator._last_scan_at = None
+        status = aggregator.get_discovery_status()
+        self.assertEqual(status["health_model"], "persistent-sqlite-per-feed-success-failure-latency")
+        self.assertIsNotNone(status["last_scan_at"])
+        self.assertEqual({item["name"] for item in status["sources"]}, {
+            "geckoterminal_new_pools", "pumpfun"
+        })
+        self.assertTrue(all("count" in item and "ok" in item for item in status["sources"]))
 
     def test_pumpfun_is_counted_as_its_own_provider_family(self):
         self.assertEqual(aggregator._provider_family("pumpfun"), "pumpfun")
