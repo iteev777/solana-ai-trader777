@@ -271,10 +271,15 @@ def simulate_orca_whirlpool_transaction(transaction_base64):
         {"encoding": "base64", "commitment": "confirmed",
          "sigVerify": False, "replaceRecentBlockhash": True},
     ])
-    value = (result or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
         raise ValueError("Orca transaction simulation response is malformed")
-    if value.get("err") is not None:
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Orca transaction simulation response is missing the error field")
+    logs = value.get("logs")
+    if logs is not None and not isinstance(logs, list):
+        raise ValueError("Orca transaction simulation logs are malformed")
+    if value["err"] is not None:
         raise ValueError("Orca transaction simulation failed: " + str(value["err"])[:200])
     return {"status": "PASS", "success": True, "err": None,
             "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
