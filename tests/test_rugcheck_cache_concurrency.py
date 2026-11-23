@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import rugcheck
+from requests import HTTPError
 
 
 class FakeResponse:
@@ -41,9 +42,9 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         with rugcheck._cache_lock:
             rugcheck._inflight.clear()
 
-    @patch("rugcheck.requests.get")
+    @patch("rugcheck.get_json")
     def test_successful_report_is_cached(self, get):
-        get.return_value = FakeResponse()
+        get.return_value = FakeResponse().json()
         first = rugcheck.get_rugcheck_report("MintCache1")
         second = rugcheck.get_rugcheck_report("MintCache1")
         self.assertIs(first, second)
@@ -57,7 +58,7 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         def delayed_get(*args, **kwargs):
             entered.set()
             release.wait(timeout=2)
-            return FakeResponse()
+            return FakeResponse().json()
 
         get.side_effect = delayed_get
         results = []
@@ -86,7 +87,7 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
 
     @patch("rugcheck.requests.get")
     def test_rate_limit_is_not_cached_and_next_call_can_retry(self, get):
-        get.side_effect = [FakeRateLimitedResponse(), FakeResponse()]
+        get.side_effect = [HTTPError("429 Too Many Requests"), FakeResponse().json()]
         self.assertIsNone(rugcheck.get_rugcheck_report("Mint429"))
         result = rugcheck.get_rugcheck_report("Mint429")
         self.assertIsInstance(result, dict)
