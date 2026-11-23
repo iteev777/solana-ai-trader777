@@ -63,9 +63,9 @@ jobs:
             if (genesis !== EXPECTED_GENESIS) throw new Error("RPC did not identify as Solana Devnet.");
 
             const balance = await connection.getBalance(WALLET, "confirmed");
-            result.walletBalanceSOL = balance / 1e9;
-            result.walletFunded = balance > 0;
-            if (balance <= 0) throw new Error("Expected Playground wallet has no Devnet SOL.");
+            result.walletBalanceSOL = Number(balance) / 1e9;
+            result.walletFunded = balance > 0n;
+            if (balance <= 0n) throw new Error("Expected Playground wallet has no Devnet SOL.");
 
             const mintInfo = await connection.getAccountInfo(MINT, "confirmed");
             if (!mintInfo) throw new Error("Configured mint account was not found on Devnet.");
