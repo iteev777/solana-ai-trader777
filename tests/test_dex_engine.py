@@ -379,7 +379,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
 
         report = dex_capabilities.get_dex_capabilities([])
         self.assertNotIn("unknown_dex", report["protocols"])
-        self.assertEqual(report["native_builder_count"], 10)
+        self.assertEqual(report["native_builder_count"], 11)
         self.assertEqual(report["execution_policy"],
                          "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED")
 
