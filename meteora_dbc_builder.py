@@ -52,7 +52,7 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
                            max_quote_slot_lag=MAX_QUOTE_SLOT_LAG):
     if not isinstance(quote, dict) or quote.get("protocol") != "meteora_dbc":
         raise ValueError("A Meteora DBC quote is required")
-    if quote.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT":
+    if quote.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_CURVE_SNAPSHOT":
         raise ValueError("Quote is not a confirmed Meteora DBC snapshot")
     pool = quote.get("pool_id")
     input_mint, output_mint = quote.get("input_mint"), quote.get("output_mint")
