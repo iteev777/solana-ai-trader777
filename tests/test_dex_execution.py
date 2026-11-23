@@ -133,7 +133,7 @@ class DexExecutionTests(unittest.TestCase):
         self.assertFalse(status["wallet_secret_required_on_server"])
         self.assertTrue(status["simulation_required_for_execution"])
 
-    def test_order_simulation_pass_marks_order_execution_eligible(self):
+    def test_order_simulation_pass_does_not_unlock_live_execution(self):
         with patch.object(
             dex_execution.requests, "get",
             return_value=FakeResponse(self._order_payload()),
@@ -147,7 +147,10 @@ class DexExecutionTests(unittest.TestCase):
             result = self._create_order(simulate=True)
 
         self.assertEqual(result["simulation"]["status"], "PASS")
-        self.assertTrue(result["execution_eligible"])
+        self.assertFalse(result["execution_eligible"])
+        self.assertEqual(
+            result["execution_lock_reason"], "PHASE_5_LIVE_EXECUTION_HARD_LOCK"
+        )
         self.assertIn("req-123", dex_execution._simulated_orders)
 
     def test_token2022_mints_are_checked_in_one_confirmed_snapshot(self):
