@@ -11,6 +11,7 @@ import struct
 
 import solana_onchain as chain
 import raydium_clmm_quote as clmm
+import token2022_inspector as token2022
 from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["raydium_clmm"]
@@ -34,20 +35,10 @@ def _key(value, label):
     return raw
 
 
-def _token_account(account, owner, mint, label, minimum=0):
-    if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " has an invalid token account layout")
-    if chain._key(raw, 0) != mint or (owner is not None and chain._key(raw, 32) != owner):
-        raise ValueError(label + " mint or owner does not match")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    amount = int.from_bytes(raw[64:72], "little")
-    if amount < minimum:
-        raise ValueError(label + " has insufficient balance")
-    return amount
+def _token_account(account, token_program, owner, mint, label, minimum=0):
+    return token2022.validate_token_account_for_program(
+        account, token_program, mint, owner, label, minimum
+    )
 
 
 def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
@@ -151,26 +142,30 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM fee rate changed since fresh quote")
     if config_spacing != current["tick_spacing"]:
         raise ValueError("CLMM AmmConfig tick spacing changed during transaction preparation")
-    if any(item.get("owner") != TOKEN_PROGRAM_ID for item in (mint0_acc, mint1_acc)):
-        raise ValueError("Native CLMM builder currently requires legacy SPL Token mints")
-    if any(item.get("owner") != TOKEN_PROGRAM_ID for item in (vault0_acc, vault1_acc)):
-        raise ValueError("CLMM vaults must use legacy SPL Token")
-    for mint_account in (mint0_acc, mint1_acc):
+    token_program_0 = mint0_acc.get("owner")
+    token_program_1 = mint1_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID)
+    if token_program_0 not in supported_programs or token_program_1 not in supported_programs:
+        raise ValueError("CLMM mint uses an unsupported token program")
+    if vault0_acc.get("owner") != token_program_0 or vault1_acc.get("owner") != token_program_1:
+        raise ValueError("CLMM vault token program does not match its mint")
+    for mint_account, token_program in ((mint0_acc, token_program_0), (mint1_acc, token_program_1)):
         mint_raw = mint_account.get("data", b"")
-        if not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
+        if token_program == TOKEN_2022_PROGRAM_ID:
+            token2022.validate_swap_compatible_mint_data(mint_raw)
+        elif not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
             raise ValueError("CLMM mint is not an initialized legacy SPL Token mint")
     if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
         raise ValueError("CLMM mint account layout is invalid")
+    token_program_input = token_program_0 if input_mint == current["mint_0"] else token_program_1
+    token_program_output = token_program_1 if input_mint == current["mint_0"] else token_program_0
     # Raydium CLMM vault authority is the pool address itself.
     authority = pool
-    _token_account(vault0_acc, authority, current["mint_0"], "CLMM vault 0", 1)
-    _token_account(vault1_acc, authority, current["mint_1"], "CLMM vault 1", 1)
-    if (chain._key(vault0_acc["data"], 32) != authority
-            or chain._key(vault1_acc["data"], 32) != authority):
-        raise ValueError("CLMM vault authority does not match canonical PDA")
-    _token_account(user_in_acc, wallet, input_mint,
+    _token_account(vault0_acc, token_program_0, authority, current["mint_0"], "CLMM vault 0", 1)
+    _token_account(vault1_acc, token_program_1, authority, current["mint_1"], "CLMM vault 1", 1)
+    _token_account(user_in_acc, token_program_input, wallet, input_mint,
                    "User input token account", amount)
-    _token_account(user_out_acc, wallet, output_mint,
+    _token_account(user_out_acc, token_program_output, wallet, output_mint,
                    "User output token account")
     if observation_acc.get("owner") != PROGRAM_ID:
         raise ValueError("CLMM observation account owner is invalid")
@@ -226,6 +221,9 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         "output_mint": output_mint,
         "input_amount": amount,
         "minimum_output_amount": minimum_out,
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_fee_aware_supported": TOKEN_2022_PROGRAM_ID in (token_program_input, token_program_output),
         "instruction": "swap_v2_exact_input",
         "instruction_data_base64": base64.b64encode(data).decode("ascii"),
         "instruction_accounts": [item["pubkey"] for item in metas],
