@@ -262,7 +262,7 @@ Named conditions can be nested in the existing `all`, `any`, and `not` groups. P
 
 ## Native direct quote adapters
 
-The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, Orca Whirlpool, Meteora DAMM v2, Meteora DBC, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
+The direct-pool quote comparison dispatches from the pool account's verified program owner. Confirmed-snapshot exact-input math is implemented for Raydium CPMM, Raydium AMM v4, Raydium CLMM, Orca Whirlpool, Meteora DAMM v2, Meteora DBC, Meteora DLMM, PumpSwap, Pump.fun legacy, FluxBeam and Moonit. Raydium CLMM walks initialized ticks with integer Q64.64 arithmetic, applies the on-chain input fee per step, and refuses dynamic-fee/fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and input sizes beyond fetched tick-array coverage. Remaining decoded DEX protocols stay explicitly unavailable for native direct quotes rather than receiving guessed fee/curve math. Jupiter and Raptor comparisons remain independent quote-only routes. Signing and broadcast remain disabled.
 
 
 ## Configurable paper exit policy
@@ -441,3 +441,8 @@ Orca Whirlpool direct quotes now require a full pool account snapshot, a classic
 ## Meteora DBC direct quote adapter
 
 The read-only Dynamic Bonding Curve adapter decodes the VirtualPool and PoolConfig, validates the quote mint and the full ascending piecewise-liquidity curve, and walks each segment with integer Q128-scaled liquidity math. It applies the flat cliff fee once per swap using the configured QuoteToken or OutputToken collection mode. Migrated pools, transfer-hook pools, active base-fee schedulers, dynamic-volatility fees, malformed curve points and Token-2022 mints are refused. Quotes cannot walk beyond the configured curve endpoints and are capped by the output vault balance. No instruction is constructed or signed.
+
+
+## Meteora DLMM direct quote adapter
+
+The read-only DLMM adapter decodes the LbPair, confirmed Clock timestamp, reserve vaults and up to three consecutive directional BinArrays. It walks each bin using the on-chain Q64.64 bin price and market-making reserves, updates the volatility reference/accumulator between bins, applies the base plus variable fee with the pool's InputOnly or OnlyY collection mode, and subtracts accrued protocol fees from the spendable output reserve. Quotes fail closed if the active array is unavailable, the amount exceeds loaded-array coverage, the pair is disabled, fee parameters are invalid or the mint uses Token-2022. Limit-order liquidity and Token-2022 transfer extensions are not included in this direct quote adapter. No instruction is built or signed.
