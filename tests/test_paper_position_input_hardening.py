@@ -85,7 +85,7 @@ class PaperPositionInputHardeningTests(unittest.TestCase):
         }
         try:
             with patch.object(paper_trading, "refresh_account"), \
-                 patch.object(paper_trading, "get_dca_steps", side_effect=ValueError("bad JSON")), \
+                 patch.object(paper_trading, "get_dca_policy", side_effect=ValueError("bad JSON")), \
                  patch.object(paper_trading.database, "update_position_metadata") as update_meta:
                 result = paper_trading.update_position("MintPolicy", 1.1)
             self.assertEqual(result, "Invalid position policy configuration")
