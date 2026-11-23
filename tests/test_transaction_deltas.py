@@ -1,6 +1,6 @@
 import unittest
 
-from copy_event_parser import PROGRAMS, SOL_MINT
+from copy_event_parser import PROGRAMS
 from transaction_deltas import (
     DeltaKind, NATIVE_SOL_SENTINEL, SubjectAssetDelta, extract_subject_deltas
 )
@@ -87,7 +87,7 @@ class TransactionDeltaTests(unittest.TestCase):
 
     def test_invalid_raw_balance_account_index_fails_closed(self):
         tx = transaction()
-        tx["meta"]["postTokenBalances"][0]["accountIndex"] = 1
+        tx["meta"]["postTokenBalances"][0]["accountIndex"] = 0
         self.assertEqual(extract_subject_deltas(WALLET, tx), [])
 
     def test_asset_delta_serialization_uses_string_kind(self):
