@@ -235,6 +235,14 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "canonical associated token account"):
             self.build(user_output_override=_pump_key(51))
 
+    def test_rejects_uninitialized_legacy_mint(self):
+        accounts = dict(self.account_map)
+        mint = bytearray(accounts[self.mint]["data"])
+        mint[45] = 0
+        accounts[self.mint] = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint)}
+        with self.assertRaisesRegex(ValueError, "not an initialized legacy SPL Token mint"):
+            self.build(account_map=accounts)
+
     def test_rejects_token2022_mint_and_curve_balance_mismatch(self):
         accounts = dict(self.account_map)
         accounts[self.mint] = dict(accounts[self.mint], owner=chain.TOKEN_2022_PROGRAM)
