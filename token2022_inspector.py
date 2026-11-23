@@ -1,8 +1,9 @@
-"""Token-2022 extension inspection and narrow zero-fee swap compatibility checks.
+"""Token-2022 extension inspection and audited swap-compatibility checks.
 
 General inspection never authorizes a swap. The explicit compatibility helper
-only approves mints with no transfer fee, no transfer hook and no unsupported
-mint/account extensions; protocol builders must still validate their own layouts.
+allows the supported transfer-fee extension and selected metadata extensions,
+while rejecting transfer hooks and unmodelled transfer/account behavior.
+Protocol builders must still validate their own pool and token-account layouts.
 """
 import base64
 
@@ -337,7 +338,7 @@ def validate_token2022_account_data(account, mint, authority, label="Token-2022 
 
 def validate_token_account_for_program(account, token_program, mint, authority,
                                        label="token account", min_balance=0):
-    """Validate either legacy SPL Token or the narrow zero-fee Token-2022 path."""
+    """Validate legacy SPL Token or the audited Token-2022 account extension subset."""
     if token_program == chain.TOKEN_2022_PROGRAM:
         return validate_token2022_account_data(
             account, mint, authority, label, min_balance
