@@ -204,6 +204,38 @@ class MultiPoolDexEngineTests(unittest.TestCase):
                 network_fee_output_amounts={"direct:pool-b": 1}
             )
 
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_unpriced_network_fees_mark_route_ranking_as_provisional(self, direct, aggregate):
+        aggregate.return_value = self.aggregator_quotes()
+        direct.return_value = self.direct_quote("pool-a", 1100)
+        result = dex_engine.build_routes(
+            self.input_mint, self.output_mint, 100,
+            pool_addresses=["pool-a"]
+        )
+        self.assertEqual(
+            result["ranking_confidence"], "PROVISIONAL_UNPRICED_NETWORK_COSTS"
+        )
+        self.assertTrue(result["ranking_is_provisional"])
+        self.assertEqual(result["unpriced_eligible_route_count"], 3)
+        self.assertIn("missing network fees", result["ranking_note"])
+
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_fully_priced_eligible_routes_have_cost_adjusted_ranking(self, direct, aggregate):
+        aggregate.return_value = self.aggregator_quotes()
+        direct.return_value = self.direct_quote("pool-a", 1100)
+        result = dex_engine.build_routes(
+            self.input_mint, self.output_mint, 100,
+            pool_addresses=["pool-a"],
+            network_fee_output_amounts={
+                "jupiter": 1, "raptor": 1, "direct:pool-a": 1
+            }
+        )
+        self.assertEqual(result["ranking_confidence"], "COST_ADJUSTED")
+        self.assertFalse(result["ranking_is_provisional"])
+        self.assertEqual(result["unpriced_eligible_route_count"], 0)
+
     def test_status_keeps_live_execution_locked(self):
         with patch("solana_onchain.get_onchain_status", return_value={
             "supported_protocols": ["raydium_cpmm"]
