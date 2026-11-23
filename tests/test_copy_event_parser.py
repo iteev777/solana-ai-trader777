@@ -16,6 +16,8 @@ def balance(mint, owner, raw, decimals):
 
 
 def transaction(pre, post, program=None, pre_sol=10_000_000_000, post_sol=10_000_000_000, fee=5000):
+    pre = [dict(item, accountIndex=index) for index, item in enumerate(pre)]
+    post = [dict(item, accountIndex=index) for index, item in enumerate(post)]
     instructions = []
     if program:
         instructions.append({"programId": program, "accounts": []})
@@ -97,11 +99,12 @@ class CopyEventParserTests(unittest.TestCase):
         self.assertIsNone(parse_wallet_transaction(tx, "OtherWallet"))
 
 
-    def test_non_fee_payer_wallet_is_not_misclassified_as_copy_trade(self):
+    def test_non_fee_payer_wallet_can_be_classified_from_its_own_swap_deltas(self):
         tx = transaction(
-            [], [balance(MINT, WALLET, 1_000_000, 6)],
+            [balance(USDC, WALLET, 10_000_000, 6)],
+            [balance(USDC, WALLET, 9_000_000, 6), balance(MINT, WALLET, 1_000_000, 6)],
             PROGRAMS["raydium_cpmm"], pre_sol=10_000_000_000,
-            post_sol=9_000_000_000, fee=5000
+            post_sol=10_000_000_000, fee=5000
         )
         tx["transaction"]["message"]["accountKeys"].insert(
             0, {"pubkey": "OtherFeePayer1111111111111111111111111111", "signer": True}
@@ -109,8 +112,8 @@ class CopyEventParserTests(unittest.TestCase):
         tx["meta"]["preBalances"].insert(0, 5_000_000_000)
         tx["meta"]["postBalances"].insert(0, 5_000_000_000)
         event = parse_wallet_transaction(tx, WALLET)
-        self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
-        self.assertEqual(event["classification_reason"], "WATCHED_WALLET_NOT_FEE_PAYER")
+        self.assertEqual(event["action"], "BUY")
+        self.assertEqual(event["classification_reason"], "TOKEN_IN_QUOTE_OUT")
 
 
     def test_mixed_quote_asset_directions_remain_unknown(self):
@@ -131,6 +134,63 @@ class CopyEventParserTests(unittest.TestCase):
         event = parse_wallet_transaction(tx, WALLET)
         self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
         self.assertEqual(event["classification_reason"], "SWAP_PROGRAM_WITH_AMBIGUOUS_BALANCE_FLOW")
+
+
+    def test_mixed_stable_and_material_native_quote_remains_unknown(self):
+        tx = transaction(
+            [balance(USDC, WALLET, 10_000_000, 6)],
+            [balance(USDC, WALLET, 9_000_000, 6), balance(MINT, WALLET, 1_000_000, 6)],
+            PROGRAMS["raydium_cpmm"], pre_sol=10_000_000_000,
+            post_sol=9_000_000_000
+        )
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
+        self.assertEqual(event["classification_reason"], "MIXED_NATIVE_AND_STABLE_QUOTE")
+
+    def test_multiple_non_quote_token_legs_remain_unknown(self):
+        second_mint = "SecondMint111111111111111111111111111111"
+        tx = transaction(
+            [balance(USDC, WALLET, 10_000_000, 6)],
+            [balance(USDC, WALLET, 9_000_000, 6),
+             balance(MINT, WALLET, 1_000_000, 6),
+             balance(second_mint, WALLET, 2_000_000, 6)],
+            PROGRAMS["raydium_cpmm"]
+        )
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
+        self.assertEqual(event["classification_reason"], "MULTIPLE_TOKEN_LEGS")
+
+    def test_multiple_stable_quote_legs_remain_unknown(self):
+        usdt = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+        tx = transaction(
+            [balance(USDC, WALLET, 10_000_000, 6), balance(usdt, WALLET, 10_000_000, 6)],
+            [balance(USDC, WALLET, 9_000_000, 6), balance(usdt, WALLET, 9_000_000, 6),
+             balance(MINT, WALLET, 1_000_000, 6)],
+            PROGRAMS["raydium_cpmm"]
+        )
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "TOKEN TRANSFER / UNKNOWN")
+        self.assertEqual(event["classification_reason"], "MULTIPLE_QUOTE_LEGS")
+
+    def test_missing_token_balance_metadata_fails_closed(self):
+        tx = transaction([], [balance(MINT, WALLET, 1_000_000, 6)], PROGRAMS["raydium_cpmm"])
+        tx["meta"]["preTokenBalances"] = None
+        self.assertIsNone(parse_wallet_transaction(tx, WALLET))
+
+    def test_duplicate_subject_account_key_fails_closed(self):
+        tx = transaction([], [balance(MINT, WALLET, 1_000_000, 6)], PROGRAMS["raydium_cpmm"])
+        tx["transaction"]["message"]["accountKeys"].append({"pubkey": WALLET})
+        self.assertIsNone(parse_wallet_transaction(tx, WALLET))
+
+    def test_loaded_address_program_index_is_resolved(self):
+        tx = transaction(
+            [balance(USDC, WALLET, 10_000_000, 6)],
+            [balance(USDC, WALLET, 9_000_000, 6), balance(MINT, WALLET, 1_000_000, 6)]
+        )
+        tx["transaction"]["message"]["instructions"] = [{"programIdIndex": 1}]
+        tx["meta"]["loadedAddresses"] = {"writable": [], "readonly": [PROGRAMS["raydium_cpmm"]]}
+        event = parse_wallet_transaction(tx, WALLET)
+        self.assertEqual(event["action"], "BUY")
 
 
 if __name__ == "__main__":
