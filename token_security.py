@@ -3,7 +3,6 @@
 Concentration is explicitly account-authority concentration, not beneficial-owner
 concentration: pool vaults and custody accounts can dominate the largest accounts.
 """
-import math
 import time
 
 TOKEN_PROGRAMS = {
@@ -12,14 +11,16 @@ TOKEN_PROGRAMS = {
 }
 
 
-def _number(value):
-    if isinstance(value, bool):
-        return None
+def _pubkey(value, label, chain):
+    if not isinstance(value, str) or not value:
+        raise ValueError(label + " must be a valid Solana public key")
     try:
-        result = float(value)
-        return result if math.isfinite(result) and result >= 0 else None
-    except (TypeError, ValueError, OverflowError):
-        return None
+        decoded = chain._b58decode(value)
+    except Exception:
+        raise ValueError(label + " must be a valid Solana public key")
+    if len(decoded) != 32 or chain._b58encode(decoded) != value:
+        raise ValueError(label + " must be a valid Solana public key")
+    return value
 
 
 def _raw_u64(value, label):
@@ -48,8 +49,7 @@ def get_token_security_report(mint, largest_limit=20):
     if not isinstance(mint, str) or not mint.strip():
         raise ValueError("Mint address is required")
     import solana_onchain as chain
-    if len(chain._b58decode(mint)) != 32:
-        raise ValueError("Mint address is not a valid Solana public key")
+    _pubkey(mint, "Mint address", chain)
 
     mint_result = chain._rpc(
         "getAccountInfo",
@@ -106,8 +106,7 @@ def get_token_security_report(mint, largest_limit=20):
         if not isinstance(item, dict):
             raise ValueError("Largest token account entry is malformed")
         address = item.get("address")
-        if not isinstance(address, str) or len(chain._b58decode(address)) != 32:
-            raise ValueError("Largest token account address is invalid")
+        _pubkey(address, "Largest token account address", chain)
         amount = _raw_u64(item.get("amount"), "Largest token account amount")
         amounts.append({"address": address, "amount": amount})
     if not amounts:
@@ -146,10 +145,12 @@ def get_token_security_report(mint, largest_limit=20):
                     .get("info") or {}
                 ) if isinstance(account, dict) else {}
                 owner = info.get("owner") if isinstance(info, dict) else None
-                if not isinstance(owner, str) or not owner:
+                try:
+                    _pubkey(owner, "Largest token account authority", chain)
+                except ValueError:
                     owners_complete = False
                     continue
-                owner_amounts[owner] = owner_amounts.get(owner, 0.0) + item["amount"]
+                owner_amounts[owner] = owner_amounts.get(owner, 0) + item["amount"]
                 account_details[index]["authority"] = owner
             if owners_complete and owner_amounts:
                 owner_concentration = min(
@@ -160,9 +161,9 @@ def get_token_security_report(mint, largest_limit=20):
         owner_concentration = None
 
     warnings = []
-    if mint_authority is not None:
+    if _authority_state(mint_authority) == "ACTIVE":
         warnings.append("MINT_AUTHORITY_ACTIVE")
-    if freeze_authority is not None:
+    if _authority_state(freeze_authority) == "ACTIVE":
         warnings.append("FREEZE_AUTHORITY_ACTIVE")
     if top10_pct >= 80:
         warnings.append("TOP10_TOKEN_ACCOUNTS_HIGH_CONCENTRATION")
