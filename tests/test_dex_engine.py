@@ -329,7 +329,9 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(raydium["live_execution"])
         self.assertTrue(orca["pool_decoder_available"])
         self.assertTrue(orca["quote"]["available"])
-        self.assertFalse(orca["transaction_builder"]["available"])
+        self.assertTrue(orca["transaction_builder"]["available"])
+        self.assertTrue(orca["simulation"]["available"])
+        self.assertFalse(orca["broadcast"])
         self.assertFalse(orca["live_execution"])
         self.assertEqual(
             report["execution_policy"],
@@ -366,7 +368,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
 
         report = dex_capabilities.get_dex_capabilities([])
         self.assertNotIn("unknown_dex", report["protocols"])
-        self.assertEqual(report["native_builder_count"], 2)
+        self.assertEqual(report["native_builder_count"], 3)
         self.assertEqual(report["execution_policy"],
                          "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED")
 
