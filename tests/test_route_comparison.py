@@ -94,9 +94,11 @@ class RouteComparisonTests(unittest.TestCase):
             "lp_fee_amount": 2, "protocol_fee_amount": 92,
             "creator_fee_amount": 30, "total_fee_amount": 124,
         }
-        with patch("live_execution.get_jupiter_quote", return_value=jupiter), \\
-             patch.object(route_comparison, "_raptor", return_value=raptor), \\
-             patch("solana_onchain.quote_direct_pool", return_value=direct):
+        with (
+            patch("live_execution.get_jupiter_quote", return_value=jupiter),
+            patch.object(route_comparison, "_raptor", return_value=raptor),
+            patch("solana_onchain.quote_direct_pool", return_value=direct),
+        ):
             result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
         quote = result["quotes"]["direct_pool"]
         self.assertEqual(result["best_provider"], "pumpswap_direct")
