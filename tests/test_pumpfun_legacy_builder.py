@@ -156,7 +156,8 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
             "token_decimals": 6,
         }
 
-    def build(self, quote=None, account_map=None, slot=657):
+    def build(self, quote=None, account_map=None, slot=657,
+              user_input_override=None, user_output_override=None):
         account_map = account_map or self.account_map
         def fresh(pool, input_mint, output_mint, amount, slippage):
             result = dict(self.quote)
@@ -166,8 +167,12 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
             })
             return result
         selected = quote or self.quote
-        user_input = _pump_key(50) if selected["input_mint"] == chain.SOL_MINT else self.user_ata
-        user_output = self.user_ata if selected["input_mint"] == chain.SOL_MINT else _pump_key(51)
+        user_input = user_input_override or (
+            _pump_key(50) if selected["input_mint"] == chain.SOL_MINT else self.user_ata
+        )
+        user_output = user_output_override or (
+            self.user_ata if selected["input_mint"] == chain.SOL_MINT else _pump_key(51)
+        )
         with (
             patch.object(chain, "quote_pumpfun_legacy_pool", side_effect=fresh),
             patch.object(chain, "_account", return_value=self.account_map[self.pool]),
@@ -212,11 +217,11 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(len(accounts), 17)
         self.assertEqual(accounts[5], self.user_ata)
         self.assertEqual(accounts[8], accounts[8])
-        self.assertEqual(accounts[13:], [self.curve_v2, self.buyback_one, self.buyback_two])
+        self.assertEqual(accounts[14:], [self.curve_v2, self.buyback_one, self.buyback_two])
 
     def test_rejects_noncanonical_user_ata(self):
         with self.assertRaisesRegex(ValueError, "canonical associated token account"):
-            self.build(account_map={**self.account_map, _pump_key(51): self.account_map[self.user_ata]})
+            self.build(user_output_override=_pump_key(51))
 
     def test_rejects_token2022_mint_and_curve_balance_mismatch(self):
         accounts = dict(self.account_map)
