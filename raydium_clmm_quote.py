@@ -64,19 +64,68 @@ def _decode_state(raw, chain):
     return state
 
 
-def _array_starts(state, pool_address, zero_for_one, chain):
+BITMAP_EXTENSION_SEED = b"pool_tick_array_bitmap_extension"
+BITMAP_EXTENSION_BLOCKS = 14
+BITMAP_EXTENSION_BLOCK_BITS = 512
+BITMAP_EXTENSION_BASE_OFFSET = 40
+
+
+def _decode_bitmap_extension(account, pool_address, chain):
+    """Decode the optional 14-block positive/negative tick-array bitmap extension."""
+    if account is None:
+        return [], []
+    if not isinstance(account, dict) or account.get("owner") != chain.PROGRAMS[PROGRAM]:
+        raise ValueError("Raydium CLMM tick-array bitmap extension owner is invalid")
+    raw = account.get("data", b"")
+    expected_length = BITMAP_EXTENSION_BASE_OFFSET + 2 * BITMAP_EXTENSION_BLOCKS * 64
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < expected_length:
+        raise ValueError("Raydium CLMM tick-array bitmap extension is truncated")
+    if raw[:8] != chain._discriminator("TickArrayBitmapExtension"):
+        raise ValueError("Raydium CLMM tick-array bitmap extension discriminator is invalid")
+    if chain._key(raw, 8) != pool_address:
+        raise ValueError("Raydium CLMM tick-array bitmap extension belongs to a different pool")
+    positive, negative = [], []
+    offset = BITMAP_EXTENSION_BASE_OFFSET
+    for target in (positive, negative):
+        for _ in range(BITMAP_EXTENSION_BLOCKS):
+            target.append([
+                int.from_bytes(raw[offset + word * 8:offset + word * 8 + 8], "little")
+                for word in range(8)
+            ])
+            offset += 64
+    return positive, negative
+
+
+def _array_is_initialized(state, array_index, extension):
+    positive, negative = extension
+    if -POOL_BITMAP_HALF <= array_index < POOL_BITMAP_HALF:
+        bit = array_index + POOL_BITMAP_HALF
+        return bool(state["bitmap"][bit // 64] & (1 << (bit % 64)))
+    if array_index >= POOL_BITMAP_HALF:
+        distance = array_index - POOL_BITMAP_HALF
+        blocks = positive
+    else:
+        distance = -array_index - POOL_BITMAP_HALF - 1
+        blocks = negative
+    block_index = distance // BITMAP_EXTENSION_BLOCK_BITS
+    if block_index < 0 or block_index >= len(blocks):
+        return False
+    bit = distance % BITMAP_EXTENSION_BLOCK_BITS
+    return bool(blocks[block_index][bit // 64] & (1 << (bit % 64)))
+
+
+def _array_starts(state, pool_address, zero_for_one, chain, extension=((), ())):
     spacing = state["tick_spacing"]
     span = TICK_ARRAY_SIZE * spacing
     current_start = (state["tick_current"] // span) * span
     current_index = current_start // span
-    if not -POOL_BITMAP_HALF <= current_index < POOL_BITMAP_HALF:
-        raise ValueError("Raydium CLMM bitmap extension ranges are not yet supported")
     direction = -1 if zero_for_one else 1
+    min_index = -POOL_BITMAP_HALF - BITMAP_EXTENSION_BLOCKS * BITMAP_EXTENSION_BLOCK_BITS
+    max_index = POOL_BITMAP_HALF - 1 + BITMAP_EXTENSION_BLOCKS * BITMAP_EXTENSION_BLOCK_BITS
     starts = []
     index = current_index
-    while len(starts) < 3 and -POOL_BITMAP_HALF <= index < POOL_BITMAP_HALF:
-        bit = index + POOL_BITMAP_HALF
-        if state["bitmap"][bit // 64] & (1 << (bit % 64)):
+    while len(starts) < 3 and min_index <= index <= max_index:
+        if _array_is_initialized(state, index, extension):
             start = index * span
             seed = start.to_bytes(4, "big", signed=True)
             address, _ = chain._find_program_address(
@@ -151,16 +200,25 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if output_mint is not None and output_mint != expected_output:
         raise ValueError("Requested output mint does not match the Raydium CLMM pool")
 
-    arrays = _array_starts(first, pool_address, zero_for_one, chain)
+    bitmap_extension_address, _ = chain._find_program_address(
+        [BITMAP_EXTENSION_SEED, chain._b58decode(pool_address)],
+        chain.PROGRAMS[PROGRAM],
+    )
+    bitmap_extension_account = chain._account(bitmap_extension_address)
+    initial_extension = _decode_bitmap_extension(bitmap_extension_account, pool_address, chain)
+    arrays = _array_starts(first, pool_address, zero_for_one, chain, initial_extension)
     addresses = [
         pool_address, first["amm_config"], first["vault_0"], first["vault_1"],
-        first["mint_0"], first["mint_1"],
+        first["mint_0"], first["mint_1"], bitmap_extension_address,
     ] + [address for _, address in arrays]
     snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses) or any(item is None for item in accounts):
         raise ValueError("Raydium CLMM confirmed snapshot is missing a required account")
-    pool_acc, config_acc, vault0_acc, vault1_acc, mint0_acc, mint1_acc = accounts[:6]
+    pool_acc, config_acc, vault0_acc, vault1_acc, mint0_acc, mint1_acc, bitmap_acc = accounts[:7]
+    snapshot_extension = _decode_bitmap_extension(bitmap_acc, pool_address, chain)
+    if snapshot_extension != initial_extension:
+        raise ValueError("Raydium CLMM bitmap extension changed during confirmed snapshot")
     if pool_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Raydium CLMM pool owner changed during snapshot")
     state = _decode_state(pool_acc.get("data"), chain)
@@ -194,7 +252,7 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     decoded_ticks = []
     for offset, (start, _) in enumerate(arrays):
         decoded_ticks.extend(_decode_tick_array(
-            accounts[6 + offset], pool_address, start, state["tick_spacing"], chain
+            accounts[7 + offset], pool_address, start, state["tick_spacing"], chain
         ))
     decoded_ticks = sorted(set(decoded_ticks), key=lambda item: item[0])
     span = TICK_ARRAY_SIZE * state["tick_spacing"]
