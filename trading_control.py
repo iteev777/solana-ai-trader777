@@ -25,7 +25,7 @@ def set_force_stopped(stopped, reason=None):
     if reason is not None:
         if not isinstance(reason, str):
             raise ValueError("reason must be text")
-        normalized_reason = reason.strip()[:300] or None
+        normalized_reason = reason.strip()[:300].strip() or None
     with _lock:
         _stopped = stopped
         if stopped:
