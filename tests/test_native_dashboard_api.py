@@ -72,6 +72,29 @@ class NativeDashboardExecutionApiTests(unittest.TestCase):
         register.assert_called_once_with("dGVzdA==", "orca_whirlpool", 123, self.simulation)
         self.assertEqual(response.get_json()["request_id"], "orca")
 
+    def test_meteora_dlmm_order_registers_only_meteora_approval_after_simulation(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}), \
+             patch("meteora_dlmm_builder.build_meteora_dlmm_swap", return_value=dict(self.order)), \
+             patch("meteora_dlmm_builder.simulate_meteora_dlmm_transaction", return_value=self.simulation), \
+             patch("native_execution.register_native_approval", return_value={"request_id": "meteora"}) as register:
+            response = self.client.post(
+                "/api/meteora-dlmm-order",
+                json={"quote": {}, "wallet": "wallet",
+                      "user_input_token_account": "input",
+                      "user_output_token_account": "output"},
+                headers=self.headers,
+            )
+        self.assertEqual(response.status_code, 200)
+        register.assert_called_once_with("dGVzdA==", "meteora_dlmm", 123, self.simulation)
+        self.assertEqual(response.get_json()["request_id"], "meteora")
+
+    def test_meteora_dlmm_order_requires_action_header(self):
+        headers = dict(self.headers)
+        headers.pop("X-Trojan-Action")
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}):
+            response = self.client.post("/api/meteora-dlmm-order", json={}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+
     def test_orca_order_requires_action_header(self):
         headers = dict(self.headers)
         headers.pop("X-Trojan-Action")
