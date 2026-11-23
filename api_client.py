@@ -56,6 +56,7 @@ host_blocked_until = {}
 
 cache = {}
 _api_stats = {}
+_inflight_cache_requests = {}
 
 cache_lock = threading.Lock()
 state_lock = threading.Lock()
@@ -587,17 +588,43 @@ def get_json(
     cache_ttl=0,
     max_retries=1
 ):
-    """Fetch JSON and expose thread-safe per-host/endpoint request statistics."""
+    """Fetch JSON with cache single-flight and thread-safe request statistics."""
     host, endpoint, _interval = get_rate_bucket(url)
     if not host:
         raise ValueError("Invalid API URL")
 
     key = cache_key(url, params, headers)
+    inflight_event = None
+
     if cache_ttl > 0:
-        cached_data = get_cached(key)
-        if cached_data is not None:
-            _record_api_stat(host, endpoint, cache_hit=True)
-            return cached_data
+        # Coalesce concurrent identical cacheable requests. A waiter counts as a
+        # cache hit only after the leader has successfully populated the cache.
+        while True:
+            cached_data = get_cached(key)
+            if cached_data is not None:
+                _record_api_stat(host, endpoint, cache_hit=True)
+                return cached_data
+
+            with state_lock:
+                inflight_event = _inflight_cache_requests.get(key)
+                if inflight_event is None:
+                    inflight_event = threading.Event()
+                    _inflight_cache_requests[key] = inflight_event
+                    is_leader = True
+                else:
+                    is_leader = False
+
+            if is_leader:
+                break
+
+            wait_timeout = (
+                max(1.0, float(timeout)) * (max(0, int(max_retries)) + 1)
+                + MAX_429_COOLDOWN * max(0, int(max_retries))
+                + 5.0
+            )
+            if not inflight_event.wait(wait_timeout):
+                raise TimeoutError("Timed out waiting for identical in-flight API request")
+            # Recheck cache. If the leader failed, one waiter becomes the next leader.
 
     started = time.perf_counter()
     try:
@@ -617,13 +644,19 @@ def get_json(
             cache_miss=cache_ttl > 0,
         )
         raise
-
-    _record_api_stat(
-        host, endpoint, success=True,
-        elapsed_ms=(time.perf_counter() - started) * 1000,
-        cache_miss=cache_ttl > 0,
-    )
-    return result
+    else:
+        _record_api_stat(
+            host, endpoint, success=True,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            cache_miss=cache_ttl > 0,
+        )
+        return result
+    finally:
+        if inflight_event is not None:
+            with state_lock:
+                if _inflight_cache_requests.get(key) is inflight_event:
+                    _inflight_cache_requests.pop(key, None)
+                inflight_event.set()
 
 
 # ==========================================
