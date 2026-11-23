@@ -1,6 +1,6 @@
 import unittest
 
-from copy_event_parser import parse_wallet_transaction
+from copy_event_parser import SOL_MINT, parse_wallet_transaction
 from solana_onchain import PROGRAMS
 
 WALLET = "Wallet111111111111111111111111111111111111"
@@ -245,7 +245,7 @@ class CopyEventParserTests(unittest.TestCase):
             [balance(USDC, WALLET, 10_000_000, 6)],
             [balance(USDC, WALLET, 9_000_000, 6), balance(MINT, WALLET, 1_000_000, 6)]
         )
-        tx["transaction"]["message"]["instructions"] = [{"programIdIndex": 1}]
+        tx["transaction"]["message"]["instructions"] = [{"programIdIndex": len(tx["transaction"]["message"]["accountKeys"])}]
         tx["meta"]["loadedAddresses"] = {"writable": [], "readonly": [PROGRAMS["raydium_cpmm"]]}
         event = parse_wallet_transaction(tx, WALLET)
         self.assertEqual(event["action"], "BUY")
