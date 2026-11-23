@@ -144,6 +144,22 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Token-2022"):
             self.quote(accounts=accounts)
 
+    def test_program_owner_dispatches_to_meteora_damm_adapter(self):
+        expected = {"protocol": "meteora_damm_v2", "out_amount": 123}
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
+            }),
+            patch("meteora_damm_quote.quote_meteora_damm_pool", return_value=expected) as quote,
+        ):
+            result = chain.quote_direct_pool(
+                self.pool, self.mint_a, 1000, 75, output_mint=self.mint_b
+            )
+        self.assertEqual(result, expected)
+        quote.assert_called_once_with(
+            self.pool, self.mint_a, 1000, 75, output_mint=self.mint_b
+        )
+
     def test_requested_output_mint_mismatch_is_rejected(self):
         with patch.object(chain, "_account", return_value={
             "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
