@@ -191,6 +191,13 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
         raise ValueError("zero-for-one coverage boundary is on the wrong side of the current tick")
     if not zero_for_one and coverage_tick <= tick_current:
         raise ValueError("one-for-zero coverage boundary is on the wrong side of the current tick")
+    lower_tick_price = sqrt_price_at_tick(tick_current)
+    if tick_current < MAX_TICK:
+        upper_tick_price = sqrt_price_at_tick(tick_current + 1)
+        if not lower_tick_price <= sqrt_price_x64 < upper_tick_price:
+            raise ValueError("current tick and square-root price are inconsistent")
+    elif sqrt_price_x64 < lower_tick_price:
+        raise ValueError("current tick and square-root price are inconsistent")
 
     ordered = sorted(
         _normalize_ticks(initialized_ticks),
