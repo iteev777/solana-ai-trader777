@@ -6,6 +6,16 @@ import risk_manager
 
 
 class RiskManagerTests(unittest.TestCase):
+    def test_position_counts_normalize_without_bypassing_capacity(self):
+        check = risk_manager.check_trade_risk
+        self.assertTrue(check(100, "1.0", 0, 2, main_positions="1e0")[0])
+        self.assertEqual(check(100, 1, 0, 2, main_positions=1, sniper_positions=1),
+                         (False, "INCONSISTENT POSITION COUNTS"))
+
+    def test_overflow_does_not_emit_nonfinite_price_metrics(self):
+        self.assertIsNone(risk_manager.calculate_take_profit(1.79e308))
+        self.assertIsNone(risk_manager.calculate_position_change(1e-300, 1e300))
+
     def test_default_daily_loss_cap_is_50_usd(self):
         self.assertEqual(risk_manager.MAX_DAILY_LOSS, 50.0)
 
