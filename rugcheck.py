@@ -32,16 +32,12 @@ _inflight = {}
 # ==========================================
 
 def get_number(value):
-
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
-
-        if not math.isfinite(number):
-            return None
-
-        return number
-
-    except (ValueError, TypeError):
+        return number if math.isfinite(number) else None
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -166,6 +162,9 @@ def analyze_rugcheck_report(data):
     reasons = []
     high_risks = medium_risks = low_risks = unknown_risks = 0
     raw_score = get_number(data.get("score_normalised"))
+    if raw_score is not None and not 0.0 <= raw_score <= 100.0:
+        reasons.append("Normalized risk score is outside the valid 0-100 range")
+        raw_score = None
     risks = data.get("risks")
     risks_valid = isinstance(risks, list)
     if not risks_valid:
@@ -235,7 +234,18 @@ def analyze_rugcheck_report(data):
         and total_holders_raw > 0
         and total_holders_raw.is_integer()
     )
-    if minimum_holders > 0:
+    total_holders_value_present = "totalHolders" in data
+    total_holders_malformed = (
+        total_holders_value_present and (
+            total_holders_raw is None
+            or total_holders_raw < 0
+            or not total_holders_raw.is_integer()
+        )
+    )
+    if total_holders_malformed:
+        unknown_risks += 1
+        reasons.append("Unique holder count is present but invalid")
+    elif minimum_holders > 0:
         if not total_holders_valid:
             unknown_risks += 1
             reasons.append("Unique holder count required but unavailable or invalid")
@@ -247,27 +257,39 @@ def analyze_rugcheck_report(data):
     holders_valid = isinstance(top_holders, list) and len(top_holders) > 0
     holder_percentages = []
     holder_records = []
+    invalid_holder_entries = 0
     creator_pct = None
     creator = data.get("creator")
     if holders_valid:
         for holder in top_holders:
             if not isinstance(holder, dict):
+                invalid_holder_entries += 1
                 continue
             pct = get_number(holder.get("pct"))
-            if pct is not None and 0 <= pct <= 100:
-                holder_percentages.append(pct)
-                holder_records.append({
-                    "pct": pct,
-                    "insider": holder.get("insider") is True,
-                    "insider_field_present": "insider" in holder,
-                })
-                owner = holder.get("owner")
-                address = holder.get("address")
-                if (isinstance(owner, str) and owner.lower() == "creator") or (
-                    isinstance(creator, str) and isinstance(address, str)
-                    and creator.lower() == address.lower()
-                ):
-                    creator_pct = pct
+            if pct is None or not 0 <= pct <= 100:
+                invalid_holder_entries += 1
+                continue
+            insider_value = holder.get("insider")
+            if "insider" in holder and not isinstance(insider_value, bool):
+                invalid_holder_entries += 1
+                continue
+            holder_percentages.append(pct)
+            holder_records.append({
+                "pct": pct,
+                "insider": insider_value is True,
+                "insider_field_present": isinstance(insider_value, bool),
+            })
+            owner = holder.get("owner")
+            address = holder.get("address")
+            if (isinstance(owner, str) and owner.lower() == "creator") or (
+                isinstance(creator, str) and isinstance(address, str)
+                and creator.lower() == address.lower()
+            ):
+                creator_pct = pct
+        if invalid_holder_entries:
+            holders_valid = False
+            unknown_risks += 1
+            reasons.append("One or more top-holder entries are malformed")
         if not holder_percentages:
             holders_valid = False
             reasons.append("Top holder percentages unavailable")
@@ -281,7 +303,7 @@ def analyze_rugcheck_report(data):
         if top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT", 30.0):
             high_risks += 1
             reasons.append("Extreme largest-holder concentration")
-        elif top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 30.0):
+        elif top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 20.0):
             medium_risks += 1
             reasons.append("Elevated largest-holder concentration")
     if top10_pct is not None:
@@ -323,7 +345,16 @@ def analyze_rugcheck_report(data):
             reasons.append("Insider holder balance exceeds configured maximum")
 
     graph_insider_share_pct = None
-    insiders = get_number(data.get("graphInsidersDetected"))
+    insiders_raw = data.get("graphInsidersDetected")
+    insiders_number = get_number(insiders_raw)
+    insiders_valid = (
+        insiders_number is not None and insiders_number >= 0
+        and insiders_number.is_integer()
+    )
+    if insiders_raw is not None and not insiders_valid:
+        unknown_risks += 1
+        reasons.append("Graph insider count is present but invalid")
+    insiders = int(insiders_number) if insiders_valid else None
     total_holders = get_number(data.get("totalHolders"))
     if insiders is not None and total_holders is not None and total_holders > 0:
         graph_insider_share_pct = min(100.0, max(0.0, insiders / total_holders * 100.0))
@@ -364,13 +395,20 @@ def analyze_rugcheck_report(data):
 
     creator_balance = _first_present(data.get("creatorBalance"), token.get("creatorBalance"))
     token_supply = _first_present(data.get("tokenSupply"), token.get("supply"))
-    if creator_pct is None:
-        creator_pct = _safe_ratio(creator_balance, token_supply)
+    if creator_pct is None and (creator_balance is not None or token_supply is not None):
+        creator_balance_number = get_number(creator_balance)
+        token_supply_number = get_number(token_supply)
+        if (creator_balance_number is None or token_supply_number is None
+                or token_supply_number <= 0 or creator_balance_number > token_supply_number):
+            unknown_risks += 1
+            reasons.append("Creator balance or token supply is invalid")
+        else:
+            creator_pct = creator_balance_number / token_supply_number * 100.0
     if creator_pct is not None:
         if creator_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_CREATOR_PCT", 10.0):
             high_risks += 1
             reasons.append("Creator holds a critical share of supply")
-        elif creator_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_CREATOR_PCT", 10.0):
+        elif creator_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_CREATOR_PCT", 5.0):
             medium_risks += 1
             reasons.append("Creator holds an elevated share of supply")
 
@@ -446,7 +484,10 @@ def analyze_rugcheck_report(data):
     lp_providers_valid = (
         lp_providers is not None and lp_providers >= 0 and lp_providers.is_integer()
     )
-    if minimum_lp_providers > 0:
+    if lp_providers_raw is not None and not lp_providers_valid:
+        unknown_risks += 1
+        reasons.append("LP provider count is present but invalid")
+    if minimum_lp_providers > 0 and not (lp_providers_raw is not None and not lp_providers_valid):
         if not lp_providers_valid:
             unknown_risks += 1
             reasons.append("Minimum LP provider count required but unavailable or invalid")
