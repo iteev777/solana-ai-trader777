@@ -25,18 +25,19 @@ non-custodial preparation path only: it does not sign, send, or confirm swaps.
 
 ## Safety boundaries
 
-- Only the legacy SPL Token program is currently accepted. Token-2022, transfer
-  fee extensions, transfer hooks and other extension behavior are refused until
-  quote and transaction semantics are implemented and tested together.
+- Legacy SPL Token and the audited Token-2022 subset are accepted. TransferFeeConfig
+  is included in the quote's net input/output math; supported metadata extensions
+  and the corresponding TransferFeeAmount/ImmutableOwner account layout are
+  validated. Transfer hooks, confidential transfers, pausable/non-transferable
+  behavior and other unmodelled extensions are rejected.
 - Both user token accounts must already exist and belong to the supplied public
   wallet. This endpoint does not create ATAs or silently spend rent.
 - The quote must be recent relative to the final account snapshot (maximum 32
   slots by default); the quote is independently refreshed before construction.
 - The wallet signs externally. No private key enters the Trojan server.
-- The server never signs. A separate default-off, single-use external-signature
-  broadcast gate is documented in `docs/NATIVE_EXECUTION.md`; it requires
-  `TROJAN_NATIVE_EXECUTE_ENABLED=true` and explicit confirmation. Live execution
-  remains disabled by default.
+- The server never signs. The native broadcast gate is hard locked in code;
+  `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. A separate Jupiter V2
+  execute adapter has its own env gate and remains under the global live-lock audit.
 - The returned legacy transaction is a preparation artifact, not proof that a
   wallet will accept it or that a later network submission will land. The pool
   can change after simulation; the on-chain minimum-output check remains the
