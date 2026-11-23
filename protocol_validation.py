@@ -1,6 +1,4 @@
 """Persistent mainnet decoder validation telemetry for supported Solana pool protocols."""
-import json
-from datetime import datetime, timezone
 
 SUPPORTED = (
     "pumpswap", "pumpfun_legacy", "raydium_amm_v4", "raydium_cpmm",
@@ -20,24 +18,26 @@ def _normalize(value):
 def record_validation(declared_protocol, pool_address, mint, snapshot=None, error=None):
     protocol = _normalize(declared_protocol)
     import pool_analysis
-    if error is not None and pool_address:
+    success = error is None and isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True
+    if error is not None:
         failure_class = pool_analysis.classify_pool_error(error)
         if failure_class == "transient":
-            pool_analysis.record_transient_failure(pool_address, error)
+            if pool_address:
+                pool_analysis.record_transient_failure(pool_address, error)
             return {
                 "protocol": protocol,
                 "success": False,
                 "failure_class": "transient",
                 "recorded": False,
             }
-        pool_analysis.record_structural_failure(pool_address, error)
-    elif isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True and pool_address:
+        if pool_address:
+            pool_analysis.record_structural_failure(pool_address, error)
+    elif success and pool_address:
         pool_analysis.record_success(pool_address)
-    if isinstance(snapshot, dict):
+    if success:
         source = str(snapshot.get("marketSource") or "")
         if source.startswith("solana_rpc_"):
             protocol = source[len("solana_rpc_"):]
-    success = isinstance(snapshot, dict) and snapshot.get("onchainVerified") is True
     if not success and pool_address:
         try:
             from solana_onchain import PROGRAMS, _account
@@ -50,16 +50,18 @@ def record_validation(declared_protocol, pool_address, mint, snapshot=None, erro
             pass
     if protocol not in SUPPORTED:
         protocol = "unknown"
+    recorded = False
     try:
         import database
         database.record_protocol_validation(
             protocol, pool_address, mint, success,
-            None if success else (str(error)[:220] if error else "NO_VERIFIED_SNAPSHOT"),
+            None if success else (type(error).__name__ if error is not None else "NO_VERIFIED_SNAPSHOT"),
             snapshot.get("observedAt") if success else None
         )
+        recorded = True
     except Exception as db_error:
-        print("[TROJAN V2] PROTOCOL VALIDATION TELEMETRY ERROR:", repr(db_error), flush=True)
-    return {"protocol": protocol, "success": success}
+        print("[TROJAN V2] PROTOCOL VALIDATION TELEMETRY ERROR:", type(db_error).__name__, flush=True)
+    return {"protocol": protocol, "success": success, "recorded": recorded}
 
 
 def get_validation_summary():

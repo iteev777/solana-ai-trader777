@@ -105,6 +105,18 @@ class TokenSecurityTests(unittest.TestCase):
 
 
 class ProtocolValidationTests(unittest.TestCase):
+    def test_failed_observation_is_not_counted_as_verified(self):
+        with patch("solana_onchain._account", return_value={}), \
+             patch("pool_analysis.record_structural_failure"), \
+             patch("database.record_protocol_validation") as record:
+            result = protocol_validation.record_validation(
+                "pumpswap", "pool", "mint", snapshot={"onchainVerified": True},
+                error=ValueError("invalid layout with private details"),
+            )
+        self.assertFalse(result["success"])
+        self.assertTrue(result["recorded"])
+        self.assertEqual(record.call_args.args[3:], (False, "ValueError", None))
+
     def test_protocol_list_contains_eleven_families(self):
         self.assertEqual(len(protocol_validation.SUPPORTED), 11)
 
