@@ -119,9 +119,10 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
 
     def call_builder(self, quote=None, account_map=None):
         account_map = account_map or self.account_map
+        active_quote = quote or self.quote
         def multiple(keys):
             return [account_map.get(k) for k in keys], 503
-        with patch.object(chain, "quote_pumpswap_pool", return_value=self.quote), \
+        with patch.object(chain, "quote_pumpswap_pool", return_value=active_quote), \
              patch.object(chain, "_account", side_effect=lambda address: account_map[address]), \
              patch.object(chain, "_find_program_address", side_effect=self.find_pda), \
              patch.object(chain, "_multiple_accounts_with_context", side_effect=multiple), \
@@ -129,13 +130,15 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
                  "blockhash": self.blockhash, "lastValidBlockHeight": 123456
              }}):
             return builder.build_pumpswap_v2_swap(
-                quote or self.quote, self.wallet, self.user_base, self.user_quote
+                active_quote, self.wallet, self.user_base, self.user_quote
             )
 
     def test_builds_unsigned_buy_exact_quote_in_v2_transaction(self):
         result = self.call_builder()
         data = base64.b64decode(result["transaction"])
-        instruction = base64.b64decode(result["instruction_data_base64"]) if "instruction_data_base64" in result else None
+        instruction_data = base64.b64decode(result["instruction_data_base64"])
+        self.assertEqual(instruction_data[:8], builder.BUY_EXACT_QUOTE_IN_V2_DISCRIMINATOR)
+        self.assertEqual(struct.unpack("<QQ", instruction_data[8:]), (100, 80))
         self.assertEqual(result["instruction"], "buy_exact_quote_in_v2")
         self.assertEqual(result["buyback_fee_recipient"], self.recipients[0])
         self.assertEqual(result["buyback_fee_recipient_ata"], self.buyback_atas[0])
@@ -149,6 +152,9 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         quote = dict(self.quote, input_mint=self.base_mint,
                      output_mint=self.quote_mint)
         result = self.call_builder(quote=quote)
+        instruction_data = base64.b64decode(result["instruction_data_base64"])
+        self.assertEqual(instruction_data[:8], builder.SELL_V2_DISCRIMINATOR)
+        self.assertEqual(struct.unpack("<QQ", instruction_data[8:]), (100, 80))
         self.assertEqual(result["instruction"], "sell_v2")
 
     def test_rejects_cashback_pool(self):
