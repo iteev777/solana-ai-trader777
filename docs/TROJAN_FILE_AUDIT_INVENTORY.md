@@ -33,7 +33,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `benchmarks/rust_rpc/sidecar_smoke.py` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/rust_rpc/src/bin/rpc_sidecar.rs` | Ei vielä kartoitettu | PENDING |  |
 | `benchmarks/rust_rpc/src/main.rs` | `src/main.rs` | PENDING |  |
-| `blacklist.py` | Ei vielä kartoitettu | PENDING |  |
+| `blacklist.py` | `src/tokens/database/blacklist.rs`, `src/trader/safety/blacklist.rs`, `src/pools/database/blacklist.rs` | PARTIAL | Full module and tests read. Token/pool/account denylist with base58 validation, soft removal and batch matching. Reference has token source precedence/user-cleared suppression, emergency position exit and TTL/failure-count pool/account quarantine; these behaviors are not equivalent. Dashboard only exposes manual CRUD today. |
 | `candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
 | `candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
 | `clmm_quote_math.py` | Ei vielä kartoitettu | PENDING |  |
@@ -124,7 +124,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_api_client_stats.py` | `src/apis/` client tests | TESTED | Covers per-host/per-endpoint request, cache, latency and failure telemetry; full validation `45254436959`. |
 | `tests/test_ata_manager.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_ata_manager_api.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_blacklist.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_blacklist.py` | `src/tokens/database/blacklist_tests.rs`, pool blacklist tests | TESTED | Full test file read; add/list/match/soft-remove/reactivation, invalid key/type, account report matching and schema initialization covered. Broader reference semantics remain uncovered. |
 | `tests/test_candidate_metadata_merge.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
