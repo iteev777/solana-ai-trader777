@@ -186,18 +186,19 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
 
     loaded_starts = []
     decoded_ticks = []
+    # Orca accepts the derived PDA for an uncreated array as an empty array.
+    # Preserve the full three-array sequence; only existing accounts contribute
+    # initialized ticks, while the program-defined sequence edge bounds the quote.
     for offset, start in enumerate(starts):
         account = accounts[6 + offset]
         if account is None:
-            break
+            continue
         decoded_ticks.extend(_decode_fixed_tick_array(
             account, pool_address, start, state["tick_spacing"], chain
         ))
         loaded_starts.append(start)
-    if not loaded_starts or loaded_starts[0] != starts[0]:
-        raise ValueError("Orca Whirlpool current tick array is not initialized")
     span = TICK_ARRAY_SIZE * state["tick_spacing"]
-    last_start = loaded_starts[-1]
+    last_start = starts[-1]
     if zero_for_one:
         coverage_tick = max(mathx.MIN_TICK, last_start)
     else:
