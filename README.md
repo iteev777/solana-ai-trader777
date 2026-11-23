@@ -359,3 +359,10 @@ OHLCV analysis now uses SMA-seeded exponential moving averages, Wilder-smoothed 
 ## OHLCV history and cache
 
 GeckoTerminal OHLCV retrieval requests up to the provider's documented 1,000-candle maximum, improving the available 1m-derived 5m/15m/30m indicator history. The indicator cache is bounded to 100 pools with a 60-second monotonic TTL and LRU eviction. The configurable request interval is clamped to at least six seconds to stay within the public API's approximately 10 calls/minute budget; cache status exposes the current limits. Higher timeframes remain explicitly not-ready when the available history is insufficient.
+
+
+## RugCheck holder and liquidity-lock controls
+
+The RugCheck analyzer supports an optional unique-holder floor with `TROJAN_RUGCHECK_MIN_HOLDERS`. When enabled, missing, zero, negative or fractional holder counts produce an UNKNOWN security result rather than passing. A reported count below the floor is rejected.
+
+LP-lock requirements can be configured separately: `TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT` for Pump-family tokens and `TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT` for other token types. The older `TROJAN_RUGCHECK_MIN_LP_LOCK_PCT` remains the fallback for Pump-family tokens. If a configured LP-lock floor cannot be verified from the RugCheck report, the security result is UNKNOWN. The report exposes the observed lock, required floor and holder count in its structured signals.
