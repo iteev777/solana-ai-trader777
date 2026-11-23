@@ -7,23 +7,23 @@
 - Trojan: https://github.com/iteev777/solana-ai-trader777
 - Trojan baseline revision before this ledger: `e52fc52ed598dcbbaab89bc267822c2c8ada9ef0`
 - Trojan working branch: `feature/dex-jupiter-noncustodial-execution-current`
-- Latest parity ledger revision before this update: `3c47fc4af2311c9fdf2b1d6b47df7363ba365141`
-- Latest working branch revision before this update: `72495753e928676298230dc5ac7cc49be0d7e776`
+- Latest parity ledger revision before this update: `2b231b1b772f2e109e118c06cb3b6cd0ab0471fa`
+- Latest working branch revision before this update: `e7bfc0311e7979558b142f140319232bfd910893`
 
 ### Repository-wide tree inventory
 
 | Inventory | ScreenerBot | Trojan |
 |---|---:|---:|
-| Tracked files | 3,043 | 216 |
+| Tracked files | 3,043 | 218 |
 | Main source directory | `src/`: 1,660 | Root Python modules + `discovery/` |
-| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 104 `tests/` files |
+| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 106 `tests/` files |
 | Locales | 609 | No equivalent locale tree identified |
 | Desktop shell | `electron/`: 35 | No equivalent desktop shell identified |
 | Tools and fixtures | `tools/`: 444 | No equivalent tools tree identified |
 | Images/icons/assets | `icons/`: 71; `assets/`: 10 | No equivalent large asset tree identified |
 | Build/workflow/docs/config | Present across root and hidden dirs | Present across root and hidden dirs |
 
-Trojan inventory at the latest audited revision includes 189 Python files, 2 Rust files, 1 TypeScript file, 11 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
+Trojan inventory at the latest audited revision includes 191 Python files, 2 Rust files, 1 TypeScript file, 10 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
 
 ScreenerBot is substantially larger because its repository includes a full Rust application, Electron shell, translations, UI assets, fixture corpora, tooling and tests. These must be classified individually as: (a) runtime feature with a Trojan equivalent, (b) runtime feature missing from Trojan, (c) platform-specific feature not applicable to Trojan's deployment model, (d) test/fixture/build support, or (e) non-code asset. Do not silently omit categories.
 
@@ -44,7 +44,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 |---|---|---|---|
 | Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, `tests/test_token_aggregator.py`, `docs/DISCOVERY_QUALITY.md` | Partial inspection; recently-updated feed, both pool sides, and provider/global switches added; dynamic runtime configuration and broader runner parity remain open |
 | Filtering pipeline | `src/filtering/stage.rs`, `src/chains/solana/filtering.rs`, `src/filtering/sources/symbols.rs`, `src/filtering/sources/meta.rs`, `src/filtering/sources/rugcheck.rs`, `src/filtering/sources/market.rs`, `src/filtering/sources/dexscreener.rs`, `src/filtering/sources/geckoterminal.rs`, `src/filtering/sources/llm_analysis.rs` | `filter_pipeline.py`, `main.py`, `rugcheck.py`, `token_security.py`, `ai_analyzer.py`, focused tests | Partial comparison; pre-strategy RugCheck/on-chain gates, metadata preservation and initial Solana on-chain stage added; market/meta parity remains open |
-| API clients and rate limiting | API manager and provider clients | `api_client.py`, provider scanners | Not audited end-to-end |
+| API clients and rate limiting | `src/apis/client.rs`, `src/apis/manager.rs`, `src/apis/stats.rs`, provider clients | `api_client.py`, provider scanners, `tests/test_api_client_stats.py`, `dashboard.py` | Partial comparison; per-host/per-endpoint request/cache statistics added; provider-specific manager semantics and retry telemetry remain open |
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
 | Positions and accounting | Positions lifecycle, DCA, partial exits, P&L | `position_policy.py`, `paper_trading.py`, `database.py` | Not audited |
 | Copy trading and wallet watch | Copy tasks, shared wallet watch, durable cursor/replay handling | `copy_*.py`, `copy_event_parser.py`, `sniper_scanner.py` | Not audited |
@@ -74,6 +74,8 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 - ScreenerBot's Solana filter profile order is `meta -> symbols -> onchain -> market -> RugCheck -> LLM`. Trojan now orders its local checks as `metadata -> onchain -> market -> age -> valuation -> pool metrics -> activity -> momentum -> provenance -> quality`, followed by RugCheck/on-chain token-security before observer/strategy. The empty-symbol rule now rejects by default; numeric-only symbols reject; suspicious non-letter single-character symbols are disabled by default to match ScreenerBot's default (can be enabled with `TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL=true`).
 - A confirmed metadata propagation gap was fixed: `main.py` now fills missing/placeholder market-pair name/symbol/logo/website/authority fields from discovery candidates while preserving real market provider values. It also preserves the verified nested base-token name/symbol over conflicting discovery metadata.
 - Remaining filter gaps: ScreenerBot's `MetaStage` resolves and requires valid decimals and applies a default 180-minute age and cooldown; Trojan's age floor defaults to zero and no equivalent decimals-resolution/cooldown stage has been verified. ScreenerBot's DexScreener filter defaults are source-specific (e.g. $15k minimum liquidity, $50k minimum market cap, transaction and volume floors, logo required), while Trojan's current market filter is provider-agnostic and has looser defaults. GeckoTerminal is disabled by default in ScreenerBot filtering; Trojan currently accepts Gecko market snapshots through its own fallback path. These are open behavior differences, not accepted parity.
+
+- API client comparison: ScreenerBot centralizes provider clients in a singleton API manager and exposes total/success/failure/cache hit/cache miss/average-latency statistics per client. Trojan already had host/endpoint rate buckets, serialized locks, shared 429 cooldown, Retry-After parsing, retries, bounded cache and host status; it lacked equivalent per-endpoint request statistics. `api_client.py` now tracks total/success/failure, cache hits/misses, last request/success/error, last error message, average response time and derived success/cache-hit rates per host and endpoint. `dashboard.py` already returns `get_api_status()` in `/api/overview`, so the new stats are exposed without a separate route. Remaining API differences include no dedicated per-provider client objects/manager and no separate retry/429/status-code counters in the stats payload.
 - This is an initial sample, not a claim that all discovery files or edge cases have been inspected.
 
 ## Work completed in this audit session (filtering and discovery continuation)
@@ -92,7 +94,11 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 - `main.py`: extended pre-market blacklist matching to candidate mint/freeze/update/creator authorities; added `merge_candidate_metadata()` so discovery metadata fills missing market-provider fields without overwriting verified market/base-token metadata; retained RugCheck and RPC token-security checks before observer/strategy.
 - Added/expanded focused tests in `tests/test_filter_pipeline.py`, `tests/test_extended_market_filter_bounds.py`, `tests/test_candidate_metadata_merge.py`, and `tests/test_pre_strategy_security.py`.
 - Filtering commit headlines: `feat(filtering): add early Solana on-chain metadata stage`; `feat(security): check known authority blacklist before market filters`; `test(filtering): cover ScreenerBot-style Solana on-chain gates`; `test(filtering): align symbol defaults with ScreenerBot`; `fix(filtering): retain discovery metadata for candidate screening`; `test(filtering): cover discovery metadata enrichment`; `fix(filtering): preserve existing market website metadata`; `test(filtering): preserve existing website fields during merge`; `fix(filtering): preserve verified base token metadata`; `test(filtering): preserve verified base token metadata`; `fix(filtering): normalize on-chain filter boolean settings`; `test(filtering): cover numeric false on-chain config value`; `fix(filtering): standardize boolean environment parsing`.
-- Latest verified source revision `72495753e928676298230dc5ac7cc49be0d7e776`: 905 unit tests passed and full validation succeeded, including Python module compilation, live-execution safety locks, dashboard smoke checks and paper-only status (run `45245704007`).
+- Latest verified filtering revision `72495753e928676298230dc5ac7cc49be0d7e776`: 905 unit tests passed and full validation succeeded (run `45245704007`).
+- `api_client.py`: added per-host/per-endpoint request statistics and exposed them through the existing dashboard `/api/overview` payload. Stats include successful/failed logical requests, cache hits/misses, average response time, last request/success/error timestamps, last error text and derived rates.
+- Added `tests/test_api_client_stats.py` for success/cache-hit behavior, failures and independent endpoint buckets. Stabilized `tests/test_expanded_rugcheck_risk.py` by pinning the creator-share thresholds in the test so deployment-specific environment overrides cannot change its expected severity.
+- API commit headlines: `feat(api): add per-host request and cache statistics`; `fix(api): correct per-endpoint stats iteration syntax`; `fix(api): count cache misses only for cache-enabled requests`; `test(api): cover per-host request and cache statistics`; `test(rugcheck): isolate creator risk threshold defaults`.
+- Latest verified source revision `e7bfc0311e7979558b142f140319232bfd910893`: 919 unit tests passed and full validation succeeded, including Python module compilation, live-execution safety locks, dashboard smoke checks and paper-only status (run `45246578309`).
 
 ## Completion criteria
 
