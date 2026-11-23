@@ -143,10 +143,19 @@ def _metadata_stage(token, mint):
 
 
 def _authority_is_active(value):
+    """Return whether an authority field represents an active authority.
+
+    Providers may encode a revoked/absent authority as JSON null, a boolean,
+    or a textual sentinel. Treat common false-like strings consistently with
+    the boolean representation; a non-empty public-key string remains active.
+    """
     if value is None or value is False:
         return False
     if isinstance(value, str):
-        return value.strip().lower() not in ("", "none", "null", "disabled", "revoked")
+        normalized = value.strip().lower()
+        return normalized not in {
+            "", "none", "null", "false", "0", "no", "off", "disabled", "revoked"
+        }
     return value is True
 
 
