@@ -384,3 +384,21 @@ that its SwapV2 discriminator/account flow has not been independently
 confirmed against a live mainnet transaction; Trojan's implementation is
 therefore test/simulation-only until a signed, non-broadcast devnet or
 controlled mainnet verification is performed.
+
+
+## Token-2022 transfer-fee handling: Meteora DLMM
+
+The native Meteora DLMM quote and Swap2 builder now support function_type=0
+pools using the audited Token-2022 transfer-fee subset. The quote nets the input
+transfer fee before the bin walk and nets the output transfer fee after the
+bin walk; the wallet-facing minimum output is based on the net amount. Both
+mint-specific token programs are checked against the reserve and wallet token
+accounts and placed in the Swap2 account list. Transfer-hook and other
+unsupported mint extensions remain rejected because RemainingAccountsInfo is
+sent empty. The existing optional bitmap-extension and bin-array fingerprint
+checks remain in place.
+
+This does not enable every Meteora DLMM pool mode or arbitrary Token-2022
+extensions. Only the explicitly validated function_type=0 path is included;
+other modes and transfer-hook mints remain blocked. Signing and broadcasting
+remain disabled.
