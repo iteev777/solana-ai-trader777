@@ -57,6 +57,7 @@ def get_strategy_catalog():
         "logic": ["all", "any", "not"],
         "evaluation_policy": {
             "timeout_ms": _evaluation_timeout_ms(),
+            "max_concurrent_evaluations": strategy_rules.MAX_CONCURRENT_EVALUATIONS,
             "maximum_rule_depth": 4,
             "maximum_group_children": 30,
             "missing_data": "unknown_fail_closed",
