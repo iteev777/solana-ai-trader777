@@ -1,6 +1,6 @@
 import unittest
 
-from copy_event_parser import PROGRAMS
+from solana_onchain import PROGRAMS
 from transaction_deltas import (
     DeltaKind, NATIVE_SOL_SENTINEL, SubjectAssetDelta, extract_subject_deltas
 )
