@@ -190,6 +190,30 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["decisions"][0]["metrics"]["name"], "Base Name")
 
+    def test_whitespace_symbol_falls_back_to_base_token_symbol(self):
+        token = dict(self.token, symbol=" ", baseToken={"symbol": "BASE", "address": "Mint111"})
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["decisions"][0]["metrics"]["symbol"], "BASE")
+
+    def test_invalid_primary_logo_falls_back_to_nested_image(self):
+        token = dict(self.token, logoURI="not-a-url", info={"imageUrl": "https://example.test/logo.png"})
+        with patch.dict(os.environ, {"TROJAN_FILTER_REQUIRE_LOGO_URL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["decisions"][0]["metrics"]["logo_available"])
+
+    def test_invalid_primary_website_falls_back_to_nested_website(self):
+        token = dict(
+            self.token,
+            websites=[{"url": "javascript:alert(1)"}],
+            info={"websites": [{"url": "https://example.test"}]},
+        )
+        with patch.dict(os.environ, {"TROJAN_FILTER_REQUIRE_WEBSITE_URL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["decisions"][0]["metrics"]["website_available"])
+
     def test_token_mint_mismatch_is_rejected(self):
         token = dict(self.token, address="DifferentMint")
         result = filter_pipeline.evaluate_token(token, "Mint111")
