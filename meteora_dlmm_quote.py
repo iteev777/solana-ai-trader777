@@ -131,6 +131,8 @@ def _bin_price(bin_id, bin_step):
     if abs(bin_id) >= 0x80000 or not 0 < bin_step <= 65535:
         raise ValueError("Meteora DLMM bin price exponent is unsupported")
     one = 1 << 64
+    if bin_id == 0:
+        return one
     max_u128 = (1 << 128) - 1
     base = one + ((bin_step << 64) // BASIS_POINT_MAX)
     invert = bin_id < 0
