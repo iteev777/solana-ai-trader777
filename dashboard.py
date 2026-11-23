@@ -881,6 +881,23 @@ def api_wallet_preflight():
         return jsonify({"error": "Wallet preflight failed", "detail": str(error)[:180]}), 502
 
 
+@app.post("/api/token2022-account-inspect")
+def api_token2022_account_inspect():
+    """Read-only Token-2022 token-account inspection."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from token2022_inspector import inspect_token2022_account
+        return jsonify(inspect_token2022_account(payload.get("account")))
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Token-2022 account inspection failed", "detail": str(error)[:180]}), 502
+
+
 @app.post("/api/token2022-inspect")
 def api_token2022_inspect():
     """Read-only inspection of Token-2022 mint extensions; never authorizes a swap."""
