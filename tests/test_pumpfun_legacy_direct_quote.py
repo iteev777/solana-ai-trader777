@@ -142,6 +142,13 @@ class PumpFunLegacyDirectQuoteTests(unittest.TestCase):
         self.assertFalse(decoded["is_cashback_coin"])
         self.assertFalse(decoded["is_holder_reward"])
 
+    def test_completed_curve_is_decoded_but_not_marked_active(self):
+        curve = bytearray(self.curve_data)
+        curve[48] = 1
+        decoded = chain._decode_pool("pumpfun_legacy", bytes(curve))
+        self.assertTrue(decoded["complete"])
+        self.assertEqual(decoded["status"], "complete")
+
     def test_rejects_non_sol_quote_mint(self):
         curve = bytearray(self.curve_data)
         curve[83:115] = bytes([9]) * 32
