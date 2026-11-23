@@ -22,7 +22,7 @@ def _ceil_div(n, d):
 
 
 def _decode_virtual_pool(raw, chain):
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 306:
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 368:
         raise ValueError("Meteora DBC VirtualPool is truncated")
     if raw[:8] == TRANSFER_HOOK_POOL_DISCRIMINATOR:
         raise ValueError("Meteora DBC transfer-hook pools are not supported")
@@ -43,9 +43,13 @@ def _decode_virtual_pool(raw, chain):
         "activation_point": chain._u64(raw, 296),
         "pool_type": raw[304],
         "is_migrated": raw[305] != 0,
+        "creator_base_fee": chain._u64(raw, 352),
+        "creator_quote_fee": chain._u64(raw, 360),
     }
     if state["is_migrated"]:
         raise ValueError("Meteora DBC curve has migrated; use its post-migration AMM")
+    if state["pool_type"] not in (0, 1):
+        raise ValueError("Meteora DBC pool type is unsupported")
     if state["sqrt_price"] <= 0:
         raise ValueError("Meteora DBC current square-root price is invalid")
     return state
@@ -72,6 +76,10 @@ def _decode_pool_config(raw, chain):
     collect_fee_mode = raw[232]
     if collect_fee_mode not in (0, 1):
         raise ValueError("Meteora DBC fee collection mode is unsupported")
+    if raw[234] not in (0, 1):
+        raise ValueError("Meteora DBC activation type is unsupported")
+    if raw[236] != 0:
+        raise ValueError("Meteora DBC Token-2022 pool type is unsupported")
     sqrt_start_price = chain._u128(raw, 392)
     if sqrt_start_price <= 0:
         raise ValueError("Meteora DBC curve start price is invalid")
@@ -95,6 +103,8 @@ def _decode_pool_config(raw, chain):
         "quote_mint": chain._key(raw, 8),
         "cliff_fee_numerator": cliff_fee,
         "collect_fee_mode": collect_fee_mode,
+        "activation_type": raw[234],
+        "token_type": raw[236],
         "sqrt_start_price": sqrt_start_price,
         "points": points,
     }
@@ -237,13 +247,34 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
         raise ValueError("Meteora DBC pool/config owner changed during snapshot")
     state = _decode_virtual_pool(pool_acc.get("data"), chain)
     config = _decode_pool_config(config_acc.get("data"), chain)
-    for field in ("config", "base_mint", "base_vault", "quote_vault", "sqrt_price", "is_migrated"):
+    for field in (
+        "config", "base_mint", "base_vault", "quote_vault", "base_reserve",
+        "quote_reserve", "protocol_base_fee", "protocol_quote_fee",
+        "partner_base_fee", "partner_quote_fee", "creator_base_fee",
+        "creator_quote_fee", "sqrt_price", "activation_point", "pool_type",
+        "is_migrated",
+    ):
         if state[field] != first[field]:
             raise ValueError("Meteora DBC VirtualPool changed between discovery and confirmed snapshot")
-    for field in ("quote_mint", "cliff_fee_numerator", "collect_fee_mode",
-                  "sqrt_start_price", "points"):
+    for field in (
+        "quote_mint", "cliff_fee_numerator", "collect_fee_mode",
+        "activation_type", "token_type", "sqrt_start_price", "points",
+    ):
         if config[field] != config_first[field]:
             raise ValueError("Meteora DBC PoolConfig changed between discovery and confirmed snapshot")
+
+    if state["activation_point"] > 0:
+        if config["activation_type"] == 0:
+            current_point = slot
+        else:
+            try:
+                current_point = chain._rpc("getBlockTime", [slot])
+            except Exception as error:
+                raise ValueError("Meteora DBC activation block time could not be verified") from error
+            if isinstance(current_point, bool) or not isinstance(current_point, int):
+                raise ValueError("Meteora DBC activation block time is unavailable")
+        if current_point < state["activation_point"]:
+            raise ValueError("Meteora DBC pool is not active at the confirmed snapshot point")
 
     if base_mint_acc.get("owner") != chain.TOKEN_PROGRAM or quote_mint_acc.get("owner") != chain.TOKEN_PROGRAM:
         raise ValueError("Meteora DBC Token-2022 mints are refused until transfer fees and hooks are modelled")
@@ -253,6 +284,21 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
     quote_balance = chain._token_amount(quote_vault_acc, config["quote_mint"])
     if base_balance <= 0 or quote_balance <= 0:
         raise ValueError("Meteora DBC vault reserves are empty")
+
+    accrued_base_fees = (
+        state["protocol_base_fee"] + state["partner_base_fee"] + state["creator_base_fee"]
+    )
+    accrued_quote_fees = (
+        state["protocol_quote_fee"] + state["partner_quote_fee"] + state["creator_quote_fee"]
+    )
+    spendable_base = base_balance - accrued_base_fees
+    spendable_quote = quote_balance - accrued_quote_fees
+    if spendable_base <= 0 or spendable_quote <= 0:
+        raise ValueError("Meteora DBC spendable vault reserves are empty")
+    if state["base_reserve"] <= 0 or state["quote_reserve"] <= 0:
+        raise ValueError("Meteora DBC curve reserves are empty")
+    if state["base_reserve"] > spendable_base or state["quote_reserve"] > spendable_quote:
+        raise ValueError("Meteora DBC curve reserves exceed spendable vault balances")
 
     zero_for_one = input_is_base
     fee_on_input = config["collect_fee_mode"] == 0 and not input_is_base
@@ -272,7 +318,7 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
         output_amount = gross_output - fee_amount
         fee_mint = expected_output
 
-    output_reserve = quote_balance if input_is_base else base_balance
+    output_reserve = state["quote_reserve"] if input_is_base else state["base_reserve"]
     if gross_output >= output_reserve:
         raise ValueError("Meteora DBC quote exceeds the output vault balance")
     if output_amount <= 0:
