@@ -67,10 +67,15 @@ def _metadata_stage(token, mint):
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
     if not symbol:
+        if os.getenv("TROJAN_FILTER_REJECT_EMPTY_SYMBOLS", "true").lower() == "true":
+            return _result("REJECT", "metadata", "EMPTY_SYMBOL")
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
-    if symbol.isascii() and symbol.isdigit():
+    if (
+        os.getenv("TROJAN_FILTER_REJECT_NUMERIC_SYMBOLS", "true").lower() == "true"
+        and symbol.isascii() and symbol.isdigit()
+    ):
         return _result("REJECT", "metadata", "NUMERIC_SYMBOL")
-    reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "true").lower() == "true"
+    reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "false").lower() == "true"
     if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
     if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
@@ -108,6 +113,75 @@ def _metadata_stage(token, mint):
         "logo_available": isinstance(logo, str) and logo.strip().startswith(("https://", "http://")),
         "website_available": has_website,
     })
+
+
+
+def _authority_is_active(value):
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "none", "null", "disabled", "revoked", "unknown")
+    return value is True
+
+
+def _onchain_stage(token):
+    """Apply the cached Solana metadata/authority checks before market filters."""
+    if os.getenv("TROJAN_FILTER_ONCHAIN_ENABLED", "true").lower() != "true":
+        return _result("PASS", "onchain", "ONCHAIN_FILTERS_DISABLED")
+
+    if token.get("known_scam_authority") is True:
+        return _result("REJECT", "onchain", "KNOWN_SCAM_AUTHORITY")
+
+    mint_authority = _first_value(token.get("mintAuthority"), token.get("mint_authority"))
+    freeze_authority = _first_value(token.get("freezeAuthority"), token.get("freeze_authority"))
+    update_authority = _first_value(token.get("updateAuthority"), token.get("update_authority"))
+    creator = _first_value(token.get("creator"), token.get("creatorAddress"), token.get("creator_address"))
+    mutable = _first_value(token.get("mutable"), token.get("isMutable"), token.get("is_mutable"))
+
+    reject_immutable_freeze = os.getenv(
+        "TROJAN_FILTER_REJECT_IMMUTABLE_WITH_FREEZE", "true"
+    ).lower() == "true"
+    if (
+        reject_immutable_freeze
+        and mutable is False
+        and _authority_is_active(freeze_authority)
+    ):
+        return _result("REJECT", "onchain", "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    if os.getenv("TROJAN_FILTER_COMBINED_RISK_ENABLED", "true").lower() == "true":
+        symbol = _clean_metadata_text(
+            token.get("symbol") or _get(token, "baseToken", "symbol")
+        )
+        name = _clean_metadata_text(
+            token.get("name") if "name" in token else _get(token, "baseToken", "name")
+        )
+        score = 0
+        if symbol and symbol.isascii() and symbol.isdigit():
+            score += 30
+        if not symbol:
+            score += 25
+        if _authority_is_active(freeze_authority):
+            score += 10
+        if name and symbol and name.casefold() == symbol.casefold():
+            score += 15
+        if mutable is False and score > 0:
+            score += 10
+        maximum = _env_int(
+            "TROJAN_FILTER_MAX_COMBINED_RISK_SCORE", 60, 0, 100
+        )
+        if score >= maximum:
+            return _result("REJECT", "onchain", "COMBINED_ONCHAIN_RISK_SCORE_HIGH", {
+                "risk_score": min(100, score),
+                "maximum": maximum,
+            })
+
+    return _result("PASS", "onchain", "ONCHAIN_METADATA_WITHIN_BOUNDS", {
+        "mint_authority_present": _authority_is_active(mint_authority),
+        "freeze_authority_present": _authority_is_active(freeze_authority),
+        "update_authority_present": _authority_is_active(update_authority),
+        "creator_available": isinstance(creator, str) and bool(creator.strip()),
+    })
+
 
 
 def _market_stage(token, strategy):
@@ -466,6 +540,7 @@ def evaluate_token(token, mint, strategy="main"):
     token = token if isinstance(token, dict) else {}
     stages = (
         _metadata_stage(token, mint),
+        _onchain_stage(token),
         _market_stage(token, strategy),
         _age_stage(token),
         _valuation_stage(token),
