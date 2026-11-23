@@ -192,8 +192,16 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     if discovered["status"] != "active" or discovered["open_time"] > int(time.time()):
         raise ValueError("Raydium CPMM pool is paused or not open")
 
-    authority, _ = chain._find_program_address([AUTHORITY_SEED], CPMM_PROGRAM_ID)
+    authority, authority_bump = chain._find_program_address([AUTHORITY_SEED], CPMM_PROGRAM_ID)
     observation, _ = chain._find_program_address([OBSERVATION_SEED, _pubkey(pool_id, "pool")], CPMM_PROGRAM_ID)
+    if len(first.get("data", b"")) < 413:
+        raise ValueError("Raydium CPMM pool state is truncated")
+    stored_observation = chain._key(first["data"], 296)
+    stored_authority_bump = first["data"][328]
+    if stored_observation != observation:
+        raise ValueError("PoolState observation PDA does not match the canonical derived address")
+    if stored_authority_bump != authority_bump:
+        raise ValueError("PoolState authority bump does not match the canonical authority PDA")
     keys = [
         pool_id, discovered["amm_config"], discovered["vault_base"],
         discovered["vault_quote"], discovered["base_mint"], discovered["quote_mint"],
@@ -208,6 +216,8 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     if pool_acc.get("owner") != CPMM_PROGRAM_ID:
         raise ValueError("Raydium CPMM pool owner changed during transaction snapshot")
     current = chain._decode_pool("raydium_cpmm", pool_acc["data"])
+    if chain._key(pool_acc["data"], 296) != observation or pool_acc["data"][328] != authority_bump:
+        raise ValueError("Raydium CPMM authority or observation PDA changed during transaction snapshot")
     for field in ("amm_config", "vault_base", "vault_quote", "base_mint",
                   "quote_mint", "open_time", "status"):
         if current.get(field) != discovered.get(field):
