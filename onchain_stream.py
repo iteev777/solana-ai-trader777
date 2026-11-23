@@ -217,20 +217,43 @@ def _refresh(key):
             _refreshing.discard(key)
 
 
-def _refresh_many(keys, prune_unwatched=False):
+def partition_refresh_priority(position_keys, candidate_keys, requested_keys=None):
+    """Keep open-position pools ahead of discovery candidates, preserving stable order."""
+    positions = list(dict.fromkeys(position_keys or []))
+    candidates = list(dict.fromkeys(candidate_keys or []))
+    requested = None if requested_keys is None else set(requested_keys)
+    if requested is not None:
+        positions = [key for key in positions if key in requested]
+        candidates = [key for key in candidates if key in requested]
+    position_set = set(positions)
+    candidates = [key for key in candidates if key not in position_set]
+    return positions, candidates
+
+
+def _refresh_many(position_keys, candidate_keys=None, prune_unwatched=False):
+    """Refresh open positions to completion before spending RPC capacity on candidates."""
     global _batch_refreshing
     started = time.perf_counter()
     try:
         import pool_account_fetcher
-        result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune_unwatched)
+        positions, candidates = partition_refresh_priority(position_keys, candidate_keys or [])
+        passes = []
+        if positions:
+            passes.append((positions, prune_unwatched and not candidates))
+        if candidates:
+            passes.append((candidates, prune_unwatched))
+        totals = {"last_refresh_pools": 0, "last_priced_pools": 0,
+                  "last_failed_pools": 0, "last_skipped_pools": 0,
+                  "last_rpc_batches": 0, "last_accounts_requested": 0}
+        for keys, prune in passes:
+            result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune)
+            for name in totals:
+                totals[name] += int(result.get(name, 0) or 0)
         with _lock:
-            for name in _batch_status:
-                _batch_status[name] = result.get(name, _batch_status[name])
-            _status["last_latency_ms"] = round(
-                (time.perf_counter() - started) * 1000, 1
-            )
-            _status["last_error"] = None if result.get("last_failed_pools", 0) == 0 else (
-                "BATCH POOL REFRESH HAD " + str(result.get("last_failed_pools")) + " FAILURES"
+            _batch_status.update(totals)
+            _status["last_latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            _status["last_error"] = None if totals["last_failed_pools"] == 0 else (
+                "BATCH POOL REFRESH HAD " + str(totals["last_failed_pools"]) + " FAILURES"
             )
     except Exception as error:
         with _lock:
@@ -275,13 +298,19 @@ def _run():
                     batch_keys = None
                     prune_unwatched = False
                     if current and not _batch_refreshing and (_dirty_pools or poll_due):
-                        batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
+                        requested = set(current) if poll_due else (set(_dirty_pools) & current)
+                        position_keys, candidate_keys = partition_refresh_priority(
+                            sorted(_watches), sorted(_candidate_watches), requested
+                        )
+                        batch_keys = position_keys + candidate_keys
                         prune_unwatched = poll_due
                         _dirty_pools.difference_update(batch_keys)
                         _batch_refreshing = True
                         next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
                 if batch_keys:
-                    _batch_refresh_pool.submit(_refresh_many, batch_keys, prune_unwatched)
+                    _batch_refresh_pool.submit(
+                        _refresh_many, position_keys, candidate_keys, prune_unwatched
+                    )
 
                 # Remove every pool's state and reserve subscriptions when it leaves
                 # both the position set and the candidate LRU.
