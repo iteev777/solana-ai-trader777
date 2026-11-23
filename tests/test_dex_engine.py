@@ -54,10 +54,9 @@ class MultiPoolDexEngineTests(unittest.TestCase):
     @patch("solana_onchain.quote_direct_pool")
     def test_compares_all_direct_pools_and_aggregators(self, direct, aggregate):
         aggregate.return_value = self.aggregator_quotes()
-        direct.side_effect = [
-            self.direct_quote("pool-a", 1100),
-            self.direct_quote("pool-b", 1200),
-        ]
+        direct.side_effect = lambda pool, *args, **kwargs: self.direct_quote(
+            pool, 1100 if pool == "pool-a" else 1200
+        )
         result = dex_engine.build_routes(
             self.input_mint, self.output_mint, 100,
             pool_addresses=["pool-a", "pool-b"]
@@ -134,10 +133,9 @@ class MultiPoolDexEngineTests(unittest.TestCase):
                  "quoteToken": {"address": self.input_mint}, "liquidity": {"usd": 10000}},
             ],
         ]
-        direct.side_effect = [
-            self.direct_quote("pool-a", 1100),
-            self.direct_quote("pool-b", 1200),
-        ]
+        direct.side_effect = lambda pool, *args, **kwargs: self.direct_quote(
+            pool, 1100 if pool == "pool-a" else 1200
+        )
         result = dex_engine.build_routes(
             self.input_mint, self.output_mint, 100
         )
