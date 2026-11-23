@@ -114,6 +114,71 @@ def parse_tlv_extensions(raw, expected_account_type):
     return extensions
 
 
+
+def decode_transfer_fee_config(raw):
+    """Decode both epoch schedules from the Token-2022 TransferFeeConfig TLV.
+
+    The active schedule is selected by the current epoch at quote time. This
+    diagnostic decoder intentionally returns both schedules and never grants
+    swap approval.
+    """
+    extensions = parse_tlv_extensions(raw, MINT_ACCOUNT_TYPE)
+    offset = TLV_START
+    for extension in extensions:
+        extension_type = int.from_bytes(raw[offset:offset + 2], "little")
+        value_length = int.from_bytes(raw[offset + 2:offset + 4], "little")
+        value_start = offset + 4
+        value_end = value_start + value_length
+        if extension_type == 1:
+            if value_length != 108:
+                raise Token2022LayoutError(
+                    "TransferFeeConfig extension must contain exactly 108 bytes"
+                )
+            value = raw[value_start:value_end]
+
+            def schedule(start):
+                epoch = int.from_bytes(value[start:start + 8], "little")
+                maximum_fee = int.from_bytes(value[start + 8:start + 16], "little")
+                basis_points = int.from_bytes(value[start + 16:start + 18], "little")
+                if basis_points > 10_000:
+                    raise Token2022LayoutError(
+                        "TransferFeeConfig basis points exceed 10000"
+                    )
+                return {
+                    "epoch": epoch,
+                    "maximum_fee": maximum_fee,
+                    "basis_points": basis_points,
+                }
+
+            return {
+                "older": schedule(72),
+                "newer": schedule(90),
+                "epoch_selection_required": True,
+            }
+        offset = value_end
+    return None
+
+
+def transfer_fee_for_amount(schedule, amount):
+    """Return the Token-2022 transfer fee, rounded up and capped."""
+    if not isinstance(schedule, dict):
+        raise ValueError("A decoded transfer-fee schedule is required")
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 0:
+        raise ValueError("Transfer amount must be a non-negative integer")
+    basis_points = schedule.get("basis_points")
+    maximum_fee = schedule.get("maximum_fee")
+    if (isinstance(basis_points, bool) or not isinstance(basis_points, int)
+            or not 0 <= basis_points <= 10_000):
+        raise ValueError("Transfer-fee basis points are invalid")
+    if (isinstance(maximum_fee, bool) or not isinstance(maximum_fee, int)
+            or maximum_fee < 0):
+        raise ValueError("Transfer-fee maximum is invalid")
+    if amount == 0 or basis_points == 0:
+        return 0
+    calculated = (amount * basis_points + 9_999) // 10_000
+    return min(amount, maximum_fee, calculated)
+
+
 def _read_account(address):
     result = chain._rpc("getAccountInfo", [
         address, {"encoding": "base64", "commitment": "confirmed"}
@@ -163,6 +228,7 @@ def inspect_token2022_account(address):
         "layout": layout,
         "extensions": extensions,
         "extension_count": len(extensions),
+        "transfer_fee_config": decode_transfer_fee_config(raw),
         "swap_eligibility": "BLOCKED_UNTIL_PROTOCOL_SPECIFIC_TOKEN_2022_SUPPORT",
         "execution_enabled": False,
         "signing": "NOT_PERFORMED",
