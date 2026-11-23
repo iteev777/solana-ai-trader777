@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 237
+- Trojanin seurattavat tiedostot: 239
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -95,7 +95,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin ja säilyttää legacy `add_usd`; exit ladder hyväksyy nyt joko legacy `sell_fraction` (remaining basis) tai reference-tyylisen `sell_pct` (original basis), ei sekoita niitä ja torjuu yli 100 % allokaation. Koodimuutos commit `ee9b6f9`; testit `9bbb982`; 1 029 testiä hyväksytty (run `45257483040`) ja full validation onnistui (run `45257482979`). |
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin, säilyttää legacy `add_usd`, estää DCA:n kun policy on pois päältä, soveltaa min-holdin vain ensimmäiseen lisäykseen ja käsittelee täsmälleen DCA-drop-rajan floating-point toleranssilla. Exit ladder hyväksyy legacy `sell_fraction` ja reference-tyylisen `sell_pct` -pohjan. Commitit `ecca597`, `a4704af`, `9980999`; testit `e629bdd`, `0646aa3`; validointi odottaa. |
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -242,8 +242,11 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_transaction_deltas.py` | `src/chains/solana/transactions/deltas.rs` tests | TESTED | Covers raw mint deltas, native SOL, fee payer attribution, ATA-rent correction, failed/ambiguous transactions and serialization; full validation `45256464329` (1,020 tests). |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
 | `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
-| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs`, `tests/trader_dca.rs` | TESTED | DCA gate testit sekä exit ladder -testit kattavat legacy-fractionin, alkuperäisen position osuuden normalisoinnin, 100 % lopputason, ylijakautumisen ja sizing-basis-mixauksen. 1 029 testiä hyväksytty (run `45257483040`), full validation `45257482979`. |
+| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs`, `tests/trader_dca.rs` | PARTIAL | Aiemmat DCA/exit-ladder testit sekä uudet testit DCA disabled -portille, ensimmäisen lisäyksen min-holdille ja tiukalle drop-rajan vertailulle. Uusien rajatapaustestien validointi odottaa. |
 | `quote_errors.py` | `src/swaps/error.rs` | PARTIAL | Compared typed quote-error vocabulary and retry policy. Trojan distinguishes timeout/rate-limit/no-route/not-tradable/router rejection/unavailable, but some classes still depend on provider text and registry/no-router/not-offered/severity/permanent-verdict variants are absent. |
 | `tests/test_quote_errors.py` | `src/swaps/error.rs` tests | TESTED | Covers timeout, rate-limit, no-route vs not-tradable, invalid quote, server failure and route-comparison propagation; included in 998-test validation. |
 | `tests/test_token_decimals.py` | `src/tokens/decimals.rs` tests | TESTED | Tests cover cache hit, invalid decimals, RPC failure cache, invalid input, deterministic single-flight concurrency and cache status. Unit test run `45259186971` passed with 1 056 tests. |
 | `token_decimals.py` | `src/tokens/decimals.rs` | PARTIAL | Bounded TTL cache and per-mint single-flight RPC lookup. Compared with reference: currently no DB preload/persist, data-server/RugCheck fallback, chain-scoped cache or transient-vs-permanent failure classification; no call sites found in inspected main/filter/market/pool/security modules. Added focused tests before integration. |
+
+| `service_manager.py` | `src/services/mod.rs`, `src/services/startup.rs`, `src/services/startup_order_tests.rs`, `src/services/stop_service_tests.rs` | PARTIAL | Dependency-aware startup/stop, essential rollback, dependency blocking, health cache, metrics and global manager reviewed against reference service trait. Fixed `str.join` collision: only thread-like handles with `is_alive()` are timed-joined. Commit `5706fd0`; tests/full validation pending. Reference uses async Tokio tasks/Notify/task monitors; Trojan uses callback/thread handles and intentionally never force-kills threads. |
+| `tests/test_service_manager.py` | `src/services/startup_order_tests.rs`, `src/services/stop_service_tests.rs` | PARTIAL | Tests cover dependency-first deterministic startup, cycles, missing/disabled dependencies, essential rollback, independent stop, worker timeout, health cache and global manager. A rollback test exposed `str.join` being mistaken for thread join; fix commit `5706fd0`; latest test result pending. |
