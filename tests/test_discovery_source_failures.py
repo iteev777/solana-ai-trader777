@@ -1,3 +1,6 @@
+import json
+from collections import OrderedDict
+from queue import Queue
 import unittest
 from unittest.mock import patch
 import requests
@@ -6,6 +9,30 @@ from discovery import birdeye_scanner, gecko_scanner, pumpfun_scanner, token_agg
 
 
 class DiscoverySourceFailureTests(unittest.TestCase):
+    def test_pumpportal_validates_before_queueing_and_retries_full_queue(self):
+        import sniper_scanner
+
+        mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        pending = Queue(maxsize=1)
+        seen = OrderedDict()
+        with (
+            patch.object(sniper_scanner, "new_token_queue", pending),
+            patch.object(sniper_scanner, "seen_tokens", seen),
+        ):
+            for invalid in ("z" * 44, "So11111111111111111111111111111111111111112"):
+                sniper_scanner.on_message(None, json.dumps({"mint": invalid}))
+            self.assertTrue(pending.empty())
+            self.assertFalse(seen)
+            pending.put("occupied")
+            event = json.dumps({"mint": f" {mint} ", "name": "Fixture"})
+            sniper_scanner.on_message(None, event)
+            self.assertNotIn(mint, seen)
+            self.assertEqual(pending.get_nowait(), "occupied")
+            sniper_scanner.on_message(None, event)
+            sniper_scanner.on_message(None, event)
+            self.assertEqual(pending.qsize(), 1)
+            self.assertEqual(pending.get_nowait()["tokenAddress"], mint)
+
     def test_gecko_transport_error_propagates_to_aggregator(self):
         with patch.object(gecko_scanner, "get_json", side_effect=requests.Timeout("timeout")):
             with self.assertRaises(requests.Timeout):

@@ -13,6 +13,8 @@ from urllib.parse import quote
 
 import websocket
 
+from discovery.token_aggregator import normalize_token
+
 
 API_KEY = os.getenv("PUMPPORTAL_API_KEY")
 BASE_URL = "wss://pumpportal.fun/api/data"
@@ -76,7 +78,7 @@ def on_open(ws):
         print("NEW TOKEN LISTENER ACTIVE")
 
     except Exception as error:
-        print("SNIPER SUBSCRIPTION ERROR:", repr(error))
+        print("SNIPER SUBSCRIPTION ERROR:", type(error).__name__)
         ws.close()
 
 
@@ -87,14 +89,8 @@ def on_message(ws, message):
         if not isinstance(data, dict):
             return
 
-        address = data.get("mint")
-
-        if not isinstance(address, str):
-            return
-
-        address = address.strip()
-
-        if not address:
+        address = normalize_token({"chainId": "solana", "tokenAddress": data.get("mint")})
+        if address is None:
             return
 
         token = {
@@ -130,8 +126,6 @@ def on_message(ws, message):
 
         print("================================")
         print("NEW TOKEN DETECTED")
-        print("NAME:", token["name"])
-        print("SYMBOL:", token["symbol"])
         print("ADDRESS:", address)
         print("STATUS: SENT TO MAIN BOT")
         print("================================")
@@ -140,7 +134,7 @@ def on_message(ws, message):
         print("SNIPER INVALID JSON MESSAGE")
 
     except Exception as error:
-        print("SNIPER MESSAGE ERROR:", repr(error))
+        print("SNIPER MESSAGE ERROR:", type(error).__name__)
 
 
 def on_error(ws, error):
@@ -221,7 +215,7 @@ def start_sniper_listener():
         with listener_lock:
             listener_started = False
 
-        print("SNIPER THREAD START ERROR:", repr(error))
+        print("SNIPER THREAD START ERROR:", type(error).__name__)
 
 
 # Compatibility with main.py
