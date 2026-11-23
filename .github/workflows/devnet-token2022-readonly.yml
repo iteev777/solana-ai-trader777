@@ -26,7 +26,7 @@ jobs:
           node-version: 20
 
       - name: Install Solana web3 client
-        run: npm install --no-save @solana/web3.js
+        run: npm install --no-save @solana/web3.js@1.98.4
 
       - name: Check Devnet, wallet, Token-2022 mint and ATA
         id: check
@@ -64,8 +64,8 @@ jobs:
 
             const balance = await connection.getBalance(WALLET, "confirmed");
             result.walletBalanceSOL = Number(balance) / 1e9;
-            result.walletFunded = balance > 0n;
-            if (balance <= 0n) throw new Error("Expected Playground wallet has no Devnet SOL.");
+            result.walletFunded = balance > 0;
+            if (balance <= 0) throw new Error("Expected Playground wallet has no Devnet SOL.");
 
             const mintInfo = await connection.getAccountInfo(MINT, "confirmed");
             if (!mintInfo) throw new Error("Configured mint account was not found on Devnet.");
