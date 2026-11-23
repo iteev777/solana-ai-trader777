@@ -1,8 +1,8 @@
 """Non-custodial Jupiter Swap API V2 order/execute adapter.
 
 The server never receives or stores a wallet secret. /order returns an unsigned
-transaction for the user's wallet to sign. /execute is disabled by default and
-requires both an explicit per-call confirmation and an environment feature flag.
+transaction for the user's wallet to sign. /execute is hard-locked in this phase;
+neither environment variables nor per-call confirmation can enable broadcasting.
 """
 import base64
 import os
