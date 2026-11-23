@@ -3,8 +3,8 @@
 No private key or signing implementation is accepted here. A transaction can
 only be broadcast when its exact message matches a fresh, single-use approval
 created after successful unsigned simulation, the external wallet signature is
-present, the blockhash is still valid, signed simulation passes, and both an
-environment gate and explicit request confirmation are enabled.
+present, the blockhash is still valid, signed simulation passes, and the
+code-level broadcast hard lock has been explicitly removed in a reviewed release.
 """
 import base64
 import hashlib
@@ -18,6 +18,9 @@ import solana_onchain as chain
 
 APPROVAL_TTL_SECONDS = 120
 MAX_APPROVALS = 512
+# Phase 5 is readiness/audit only. No environment variable may enable real
+# broadcasts until a separately reviewed live-trading release removes this lock.
+NATIVE_BROADCAST_HARD_LOCK = True
 MAX_TRANSACTION_BYTES = 1232
 _lock = threading.Lock()
 _approvals = {}
@@ -32,6 +35,8 @@ class NativeExecutionRejected(ValueError):
 
 
 def _enabled():
+    if NATIVE_BROADCAST_HARD_LOCK:
+        return False
     return os.getenv("TROJAN_NATIVE_EXECUTE_ENABLED", "false").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -124,6 +129,8 @@ def get_native_execution_status():
         "enabled": _enabled(),
         "environment_variable": "TROJAN_NATIVE_EXECUTE_ENABLED",
         "default": False,
+        "code_hard_lock": NATIVE_BROADCAST_HARD_LOCK,
+        "unlock_requires_reviewed_code_release": True,
         "requires_external_wallet_signature": True,
         "requires_explicit_confirmation_header": True,
         "requires_exact_simulated_message_match": True,
