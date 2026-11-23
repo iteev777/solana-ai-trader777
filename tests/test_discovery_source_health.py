@@ -52,7 +52,7 @@ class DiscoverySourceHealthTests(unittest.TestCase):
         ]):
             result = aggregator.collect_tokens()
         self.assertEqual(result[0]["tokenAddress"], "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN")
-        self.assertEqual(result[1]["tokenAddress"], "Shared1111111111111111111111111111111")
+        self.assertEqual(result[1]["tokenAddress"], "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
 
 
 if __name__ == "__main__":
