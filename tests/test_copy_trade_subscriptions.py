@@ -68,5 +68,44 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
             copy_trade._subscribe_wallets(ws, ["wallet-A"])
 
 
+
+    def test_fetch_wallet_signatures_uses_bounded_recent_page(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {"result": [
+                    {"signature": "sig-1", "err": None},
+                    {"signature": "", "err": None},
+                    {"bad": "shape"},
+                ]}
+        with patch.dict("os.environ", {"TROJAN_COPY_POLL_SIGNATURE_LIMIT": "10"}), \
+             patch.object(copy_trade, "_rpc_url", return_value="https://rpc.example"), \
+             patch.object(copy_trade.requests, "post", return_value=Response()) as post:
+            rows = copy_trade._fetch_wallet_signatures("wallet-A")
+        self.assertEqual(rows, [{"signature": "sig-1", "err": None}])
+        self.assertEqual(post.call_args.kwargs["json"]["method"], "getSignaturesForAddress")
+        self.assertEqual(post.call_args.kwargs["json"]["params"][1]["limit"], 10)
+
+    def test_poll_wallet_activity_processes_oldest_first_and_skips_failed_signatures(self):
+        rows = [
+            {"signature": "newest", "err": None},
+            {"signature": "failed", "err": {"InstructionError": [0, "Custom"]}},
+            {"signature": "oldest", "err": None},
+        ]
+        processed = []
+        with patch.object(copy_trade, "_fetch_wallet_signatures", return_value=rows), \
+             patch.object(copy_trade, "_process_wallet_signature",
+                          side_effect=lambda wallet, signature: processed.append(signature) or True):
+            result = copy_trade._poll_wallet_activity(["wallet-A"])
+        self.assertEqual(processed, ["oldest", "newest"])
+        self.assertEqual(result, {"processed": 2, "wallets": 1, "errors": 0})
+
+    def test_poll_wallet_activity_isolates_wallet_rpc_failures(self):
+        with patch.object(copy_trade, "_fetch_wallet_signatures", side_effect=[RuntimeError("offline"), []]):
+            result = copy_trade._poll_wallet_activity(["wallet-A", "wallet-B"])
+        self.assertEqual(result, {"processed": 0, "wallets": 2, "errors": 1})
+        self.assertIn("wallet-A", copy_trade._status["last_poll_error"])
+
 if __name__ == "__main__":
     unittest.main()
