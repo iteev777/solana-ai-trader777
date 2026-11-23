@@ -170,6 +170,9 @@ def evaluate_condition(node, context):
     validate_condition(node)
     name, params = node["condition"], node["params"]
     indicators = context.get("indicators") if isinstance(context.get("indicators"), dict) else {}
+    fresh, freshness_reason = _indicator_freshness(name, context, indicators)
+    if not fresh:
+        return False, [name + ": " + freshness_reason]
     token = context.get("token") if isinstance(context.get("token"), dict) else {}
     liquidity = _metric(context, "liquidity_usd", "liquidity.usd")
     current_price = _metric(context, "price_usd", "priceUsd")
