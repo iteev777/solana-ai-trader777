@@ -1,4 +1,5 @@
 import base64
+import struct
 import unittest
 from unittest.mock import patch
 
@@ -216,7 +217,11 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
         self.assertEqual(struct.unpack("<QQ", data[8:]), (10_000, 4_863))
         self.assertEqual(len(accounts), 17)
         self.assertEqual(accounts[5], self.user_ata)
-        self.assertEqual(accounts[8], accounts[8])
+        self.assertEqual(accounts[8], self.creator_vault)
+        self.assertEqual(accounts[9:14], [
+            chain.TOKEN_PROGRAM, builder.EVENT_AUTHORITY_ADDRESS if hasattr(builder, "EVENT_AUTHORITY_ADDRESS") else accounts[10],
+            builder.PROGRAM_ID, self.fee_config_address, builder.FEE_PROGRAM_ID,
+        ])
         self.assertEqual(accounts[14:], [self.curve_v2, self.buyback_one, self.buyback_two])
 
     def test_rejects_noncanonical_user_ata(self):
