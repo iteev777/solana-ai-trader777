@@ -645,12 +645,7 @@ def analyze_token_task(address, strategy_name, token):
             try:
                 from token_security import get_token_security_report, evaluate_token_security
                 token_security_report = get_token_security_report(address)
-                account_entries = []
-                for detail in token_security_report.get("largest_token_account_details", []):
-                    if isinstance(detail, dict):
-                        account_entries.append(("account", detail.get("address")))
-                        account_entries.append(("account", detail.get("authority")))
-                account_matches = blacklist.match_entries(account_entries)
+                account_matches = blacklist.match_token_security_accounts(token_security_report)
                 if account_matches:
                     match = account_matches[0]
                     log_event("BLACKLIST REJECT", address, "BLACKLISTED_ACCOUNT: " + match["reason"])
