@@ -220,20 +220,20 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
     if input_mint == output_mint:
         raise ValueError("Input and output mints must differ")
     amount = _uint(amount, "amount")
+    network_fee_output_amounts = network_fee_output_amounts or {}
+    if not isinstance(network_fee_output_amounts, dict):
+        raise ValueError("network_fee_output_amounts must be an object")
+
+    # Validate every fee estimate before touching the pool registry or APIs.
+    fee_estimates = {
+        str(key): _uint(value, "network fee", allow_zero=True)
+        for key, value in network_fee_output_amounts.items()
+    }
     auto_discovery = pool_addresses is None
     pools = (
         discover_pool_addresses(input_mint, output_mint)
         if auto_discovery else _validate_pool_addresses(pool_addresses)
     )
-    network_fee_output_amounts = network_fee_output_amounts or {}
-    if not isinstance(network_fee_output_amounts, dict):
-        raise ValueError("network_fee_output_amounts must be an object")
-
-    # Validate every fee estimate before making external calls.
-    fee_estimates = {
-        str(key): _uint(value, "network fee", allow_zero=True)
-        for key, value in network_fee_output_amounts.items()
-    }
     started = time.perf_counter()
     raw_quotes = {}
     rejected = {}
