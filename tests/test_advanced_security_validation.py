@@ -3,6 +3,11 @@ from unittest.mock import patch
 
 import token_security
 import protocol_validation
+import solana_onchain
+
+MINT = solana_onchain._b58encode(bytes([2]) * 32)
+ACCOUNT_A = solana_onchain._b58encode(bytes([3]) * 32)
+ACCOUNT_B = solana_onchain._b58encode(bytes([4]) * 32)
 
 
 class TokenSecurityTests(unittest.TestCase):
@@ -29,18 +34,18 @@ class TokenSecurityTests(unittest.TestCase):
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 6}},
             {"value": [
-                {"address": "11111111111111111111111111111111", "amount": "30000000"}
+                {"address": ACCOUNT_A, "amount": "30000000"}
             ]},
-            {"value": [{"data": {"parsed": {"info": {"owner": "11111111111111111111111111111111"}}}}]},
+            {"value": [{"data": {"parsed": {"info": {"owner": ACCOUNT_A}}}}]},
         ]
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("11111111111111111111111111111111")
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
+            report = token_security.get_token_security_report(MINT)
         self.assertEqual(report["mint_authority"], "DISABLED")
         self.assertEqual(report["freeze_authority"], "DISABLED")
         self.assertEqual(report["top10_token_account_pct"], 30.0)
-        self.assertEqual(report["largest_token_account_details"][0]["address"], "11111111111111111111111111111111")
-        self.assertEqual(report["largest_token_account_details"][0]["authority"], "11111111111111111111111111111111")
-        self.assertEqual(report["top_owner_account_authorities"], ["11111111111111111111111111111111"])
+        self.assertEqual(report["largest_token_account_details"][0]["address"], ACCOUNT_A)
+        self.assertEqual(report["largest_token_account_details"][0]["authority"], ACCOUNT_A)
+        self.assertEqual(report["top_owner_account_authorities"], [ACCOUNT_A])
         self.assertTrue(token_security.evaluate_token_security(report)["allowed"])
 
     @patch("solana_onchain._rpc")
@@ -52,9 +57,9 @@ class TokenSecurityTests(unittest.TestCase):
                 "mintAuthority": None, "freezeAuthority": None,
             }}},
         }}
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
             with self.assertRaisesRegex(ValueError, "decimals"):
-                token_security.get_token_security_report("11111111111111111111111111111111")
+                token_security.get_token_security_report(MINT)
 
     @patch("solana_onchain._rpc")
     def test_supply_decimals_must_match_mint_account(self, rpc):
@@ -66,9 +71,9 @@ class TokenSecurityTests(unittest.TestCase):
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 9}},
         ]
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
             with self.assertRaisesRegex(ValueError, "do not match"):
-                token_security.get_token_security_report("11111111111111111111111111111111")
+                token_security.get_token_security_report(MINT)
 
     @patch("solana_onchain._rpc")
     def test_largest_account_raw_amount_must_be_integer_u64(self, rpc):
@@ -79,11 +84,11 @@ class TokenSecurityTests(unittest.TestCase):
                            "mintAuthority": None, "freezeAuthority": None
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 6}},
-            {"value": [{"address": "11111111111111111111111111111111", "amount": True}]},
+            {"value": [{"address": ACCOUNT_A, "amount": True}]},
         ]
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
             with self.assertRaisesRegex(ValueError, "raw u64"):
-                token_security.get_token_security_report("11111111111111111111111111111111")
+                token_security.get_token_security_report(MINT)
 
     @patch("solana_onchain._rpc")
     def test_incomplete_owner_lookup_does_not_report_partial_owner_concentration(self, rpc):
@@ -95,13 +100,13 @@ class TokenSecurityTests(unittest.TestCase):
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 6}},
             {"value": [
-                {"address": "11111111111111111111111111111111", "amount": "30000000"},
-                {"address": "11111111111111111111111111111111", "amount": "20000000"},
+                {"address": ACCOUNT_A, "amount": "30000000"},
+                {"address": ACCOUNT_B, "amount": "20000000"},
             ]},
             {"value": [{"data": {"parsed": {"info": {"owner": "owner-a"}}}}]},
         ]
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("11111111111111111111111111111111")
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
+            report = token_security.get_token_security_report(MINT)
         self.assertIsNone(report["top_owner_account_authority_pct"])
         self.assertEqual(report["top_owner_account_authorities"], [])
 
@@ -126,12 +131,12 @@ class TokenSecurityTests(unittest.TestCase):
                        }}}}},
             {"value": {"amount": "100000000", "decimals": 6}},
             {"value": [
-                {"address": "11111111111111111111111111111111", "amount": "30000000"}
+                {"address": ACCOUNT_A, "amount": "30000000"}
             ]},
             RuntimeError("optional owner RPC unavailable"),
         ]
-        with patch("solana_onchain._b58decode", return_value=bytes(32)):
-            report = token_security.get_token_security_report("11111111111111111111111111111111")
+        with patch("solana_onchain._b58decode", wraps=solana_onchain._b58decode):
+            report = token_security.get_token_security_report(MINT)
         self.assertEqual(len(report["largest_token_account_details"]), 1)
         self.assertIsNone(report["largest_token_account_details"][0]["authority"])
         self.assertEqual(report["top_owner_account_authorities"], [])
