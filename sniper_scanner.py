@@ -68,6 +68,13 @@ def remember_token(address):
 
 
 def on_open(ws):
+    if _listener_stop_event.is_set():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        return
+
     print("================================")
     print("TROJAN V2 - LAUNCH SNIPER CONNECTED")
     print("MODE: PAPER TRADING ONLY")
