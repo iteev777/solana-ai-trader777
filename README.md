@@ -106,6 +106,12 @@ Copy-wallet tracking reads public wallet activity, stores unique signatures in S
 
 Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. Signing, transaction simulation and broadcast remain disabled in code.
 
+## Safety-gated DEX route engine
+
+The dashboard exposes `/api/dex-status` and `/api/dex-route`. The route engine fans out to the existing Jupiter, Solana Tracker Raptor and verified direct-pool quote adapters, then rejects candidates with stale/unknown freshness, unavailable or excessive price impact, excessive hop count, malformed minimum output, wrong output mint or a failed route-quality check. Eligible routes are ranked by minimum output in the same requested output mint's raw units. Network fees denominated in SOL are reported separately and are not incorrectly subtracted from another token's base units.
+
+Optional limits: `TROJAN_DEX_MAX_QUOTE_AGE_SECONDS=8`, `TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT=3`, and `TROJAN_DEX_MAX_HOPS=4`. Unknown quote freshness and unknown price impact fail closed. This is route selection only: transaction signing, broadcast and live trading remain disabled.
+
 ## Health and readiness
 
 The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, and `/api/performance`. The strategy-performance view counts closed SELL trades only and reports realized P/L and win rate separately for MAIN and SNIPER. Paper readiness checks database integrity, the main-loop and position-monitor heartbeats, and the market API client. RPC, Telegram and wallet monitoring are reported as optional integrations. Live readiness is always false and live execution remains locked.
