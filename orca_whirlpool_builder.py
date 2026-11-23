@@ -127,12 +127,18 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
     else:
         raise ValueError("Quote mint pair does not match the Whirlpool")
     starts = _tick_array_starts(first["tick_current"], first["tick_spacing"], a_to_b)
-    if len(starts) != 3:
-        raise ValueError("Orca swap requires exactly three supported tick-array PDAs")
+    if not starts:
+        raise ValueError("Orca swap has no valid tick-array PDA in this direction")
+    # Orca requires three positional tick-array accounts. Near the supported
+    # tick-range edge, ScreenerBot repeats the final valid PDA to fill the
+    # remaining slots; an uncreated PDA is still a valid empty-array account.
+    instruction_starts = list(starts[:3])
+    while len(instruction_starts) < 3:
+        instruction_starts.append(instruction_starts[-1])
     pool_bytes = _pubkey(pool, "pool")
     tick_addresses = [
         _derive_address([b"tick_array", pool_bytes, str(start).encode("ascii")], chain)
-        for start in starts
+        for start in instruction_starts
     ]
     oracle = _derive_address([b"oracle", pool_bytes], chain)
 
@@ -189,7 +195,7 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
     if input_balance < amount:
         raise ValueError("Wallet input token account has insufficient balance")
 
-    for address, start, account in zip(tick_addresses, starts, (tick0, tick1, tick2)):
+    for address, start, account in zip(tick_addresses, instruction_starts, (tick0, tick1, tick2)):
         if account is None:
             continue
         _decode_fixed_tick_array(account, pool, start, state["tick_spacing"], chain)
