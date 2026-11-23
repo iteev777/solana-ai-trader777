@@ -47,6 +47,9 @@ def classify_quote_error(provider, error):
     elif status == 429:
         kind, retryable, http_status = "RATE_LIMITED", True, 429
         retry_after = _retry_after(response) or 2.0
+    elif isinstance(status, int) and status >= 500:
+        kind, retryable, http_status = "UNAVAILABLE", True, 503
+        retry_after = 0.5
     elif any(term in lowered for term in (
         "not tradable", "untradable", "token has no market", "no market exists"
     )):
@@ -61,9 +64,7 @@ def classify_quote_error(provider, error):
     elif isinstance(error, ValueError) or status in (400, 404, 422):
         kind, retryable, http_status = "ROUTER_REJECTED", False, 502
         retry_after = None
-    elif isinstance(error, (requests.ConnectionError, OSError)) or (
-        isinstance(status, int) and status >= 500
-    ):
+    elif isinstance(error, (requests.ConnectionError, OSError)):
         kind, retryable, http_status = "UNAVAILABLE", True, 503
         retry_after = 0.5
     else:
