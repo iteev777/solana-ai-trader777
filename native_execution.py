@@ -82,8 +82,12 @@ def _split_transaction(raw, require_signature):
     return signature, message
 
 
-def register_native_approval(unsigned_transaction, protocol, last_valid_block_height):
-    """Cache exact unsigned message after caller has confirmed simulation PASS."""
+def register_native_approval(unsigned_transaction, protocol, last_valid_block_height, simulation):
+    """Cache exact unsigned message only when the unsigned RPC simulation passed."""
+    if (not isinstance(simulation, dict)
+            or simulation.get("status") != "PASS"
+            or simulation.get("signature_verification") != "DISABLED_UNSIGNED_SIMULATION"):
+        raise NativeExecutionRejected("A successful unsigned RPC simulation report is required")
     if protocol not in ("raydium_cpmm", "pumpswap"):
         raise NativeExecutionRejected("Unsupported native transaction protocol")
     if isinstance(last_valid_block_height, bool) or not isinstance(last_valid_block_height, int) or last_valid_block_height <= 0:
