@@ -1364,8 +1364,8 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/secure_storage/error.rs` | PENDING |  |
 | `src/secure_storage/mod.rs` | PENDING |  |
 | `src/secure_storage/password.rs` | PENDING |  |
-| `src/services/global.rs` | PENDING |  |
-| `src/services/health.rs` | PENDING |  |
+| `src/services/global.rs` | IMPLEMENT | Trojanilla ei ole prosessitason service manager singletonia; `service_health.py` vain lukee readiness-tietoja. Uusi itsenäinen `service_manager.py` tarvitaan managerin rekisteröinti-, status-cache- ja singleton-access -vastuulle, integrointi `main.py`:hin vasta lifecycle-auditin jälkeen. |
+| `src/services/health.rs` | MAPPED | Trojan `service_health.py` | Trojanin aggregate readiness report tarkistaa required/optional dependencies ja heartbeats; reference antaa per-service typed states Healthy/Degraded/Unhealthy/Starting/Stopping/Disabled. Tulevien heartbeatien fail-closed korjaus ja viisi testiä lisätty (`1c67eba`, `tests/test_service_health.py`); per-service health state -malli jää parity gapiksi. |
 | `src/services/implementations/account_service.rs` | PENDING |  |
 | `src/services/implementations/assistant_scheduled_tasks_service.rs` | PENDING |  |
 | `src/services/implementations/ata_cleanup_service.rs` | PENDING |  |
@@ -1391,10 +1391,10 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/services/implementations/wallet_watch_service.rs` | PENDING |  |
 | `src/services/implementations/webserver_service.rs` | PENDING |  |
 | `src/services/label_tests.rs` | PENDING |  |
-| `src/services/logging.rs` | PENDING |  |
-| `src/services/metrics.rs` | PENDING |  |
-| `src/services/mod.rs` | PENDING |  |
-| `src/services/startup.rs` | PENDING |  |
+| `src/services/logging.rs` | IMPLEMENT | Trojanilla ei ole service lifecycle -tapahtumien yhteistä structured logging helperiä. Toteutetaan `service_manager.py`/service events -rajapinnan yhteydessä; nykyisiä domain-logeja ei korvata. |
+| `src/services/metrics.rs` | IMPLEMENT | Trojanilla on API-, pool-, RPC- ja discovery-mittareita, mutta ei reference-tyyppistä per-service task poll/idle/cycle/uptime/resource metrics -keräintä. Tarvitaan kevyt Python-palveluiden metrics collector; toteutus sidotaan service manageriin ja mitataan vain olemassa olevista worker-thread/loop tapahtumista. |
+| `src/services/mod.rs` | IMPLEMENT | Trojanin `main.py` käynnistää loopit ja executorit suoraan, eikä sillä ole yhtenäistä Service-rajapintaa, dependency DAG -järjestystä, essential/non-essential failure -käsittelyä, start/stop/restart-yksikköä tai yksittäisen palvelun turvallista stop/restart -toimintoa. Rakennetaan oma Python service manager nykyisten komponenttien ympärille; ei kopioida reference-toteutusta. |
+| `src/services/startup.rs` | IMPLEMENT | Trojan `service_health.py` heartbeat on ainoa startup-signaali; per-service started_at/ready_at/duration/message -seuranta ja restartin jälkeen uusi start-attempt puuttuvat. Toteutetaan service managerin startup tracker -osana. |
 | `src/services/startup_order_tests.rs` | PENDING |  |
 | `src/services/stop_service_tests.rs` | PENDING |  |
 | `src/storage/engine.rs` | PENDING |  |
