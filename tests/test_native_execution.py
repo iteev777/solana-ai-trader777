@@ -41,6 +41,18 @@ class NativeExecutionTests(unittest.TestCase):
                 {"status": "REJECT", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
             )
 
+    def test_moonit_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "moonit_amm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("moonit_amm", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
     def test_fluxbeam_approval_is_registered_but_stays_gated(self):
         approval = native.register_native_approval(
             self.unsigned, "fluxbeam_amm", 200,
