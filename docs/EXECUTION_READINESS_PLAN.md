@@ -67,11 +67,11 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 - External-wallet-only signing design is retained; no server private-key custody or signing.
 - Native builders support a restricted subset of Raydium CPMM, PumpSwap V2, Orca Whirlpool and Meteora DLMM. This is not proof that all pools/tokens are executable.
 - Token-2022 execution support and full Meteora DLMM bin-array traversal remain incomplete.
-- No end-to-end externally signed devnet transaction has been proven in this project session.
+- Devnet E2E harness is implemented: ephemeral in-memory signer, devnet faucet, 1-lamport SystemProgram transfer, unsigned simulation, single-use message approval, client-side signing, signature-verified simulation, submission, finality wait and recipient balance check. Manual workflow: `.github/workflows/devnet-e2e.yml`. The actual network run still must be triggered and pass; this code is not itself proof of a completed devnet transaction.
 - No mainnet transaction, live profitability, or ScreenerBot outperformance is claimed.
 
 **Required before any future unlock**
-1. Complete devnet end-to-end transaction preparation, external wallet signing, signed simulation, submission and confirmation tracking with test funds only.
+1. Trigger and pass the isolated devnet E2E workflow, then retain the finalized signature and workflow log as evidence.
 3. Complete Meteora DLMM bitmap-extension and full bin-array discovery/traversal, with tests for negative indices, extension arrays, fragmented liquidity, missing arrays and transaction account limits.
 4. Resolve multi-replica approval storage using a shared transactional store with atomic single-use consumption, expiry and restart recovery.
 5. Complete independent security review and failure/replay/expiry tests.
