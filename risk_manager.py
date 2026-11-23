@@ -162,6 +162,14 @@ def _check_history_guards(token_address, mode):
     return True, None
 
 
+def _force_stop_reason():
+    try:
+        import trading_control
+        return "FORCE STOP ACTIVE" if trading_control.is_force_stopped() else None
+    except Exception:
+        return "TRADING CONTROL UNAVAILABLE"
+
+
 def check_trade_risk(
     balance,
     open_positions,
@@ -173,6 +181,10 @@ def check_trade_risk(
     token_address=None,
     mode="paper"
 ):
+
+    force_stop_reason = _force_stop_reason()
+    if force_stop_reason:
+        return False, force_stop_reason
 
     if strategy not in VALID_STRATEGIES:
         return False, "INVALID STRATEGY"
