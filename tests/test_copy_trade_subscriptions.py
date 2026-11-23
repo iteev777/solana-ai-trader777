@@ -14,7 +14,7 @@ class FakeWebSocket:
 
     def recv(self):
         if not self.responses:
-            raise AssertionError("subscription loop requested an unexpected response")
+            raise copy_trade.websocket.WebSocketTimeoutException("timed out")
         return json.dumps(self.responses.pop(0))
 
 
