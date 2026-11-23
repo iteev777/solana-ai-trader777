@@ -76,7 +76,7 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
 
     fresh = dbc.quote_meteora_dbc_pool(pool, input_mint, amount, slippage, output_mint)
     if (not isinstance(fresh, dict)
-            or fresh.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT"
+            or fresh.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_CURVE_SNAPSHOT"
             or fresh.get("pool_id") != pool
             or fresh.get("input_mint") != input_mint
             or fresh.get("output_mint") != output_mint
@@ -135,6 +135,10 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
     if any(item.get("owner") != TOKEN_PROGRAM_ID
            for item in (base_mint_acc, quote_mint_acc, base_vault_acc, quote_vault_acc)):
         raise ValueError("Native DBC builder currently requires legacy SPL Token")
+    for mint_account, label in ((base_mint_acc, "base"), (quote_mint_acc, "quote")):
+        raw = mint_account.get("data", b"")
+        if not isinstance(raw, (bytes, bytearray)) or len(raw) != 82 or raw[45] != 1:
+            raise ValueError("Meteora DBC " + label + " mint is not an initialized legacy SPL Token mint")
     base_decimals = chain._mint_decimals(base_mint_acc)
     quote_decimals = chain._mint_decimals(quote_mint_acc)
     if base_decimals is None or quote_decimals is None:
@@ -145,6 +149,20 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
     _token_account(quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault")
     _token_account(user_in_acc, wallet, input_mint, "User input token account", amount)
     _token_account(user_out_acc, wallet, output_mint, "User output token account")
+    for mint, account_address in ((input_mint, user_input_token_account),
+                                  (output_mint, user_output_token_account)):
+        expected_ata, _ = chain._find_program_address(
+            [_key(wallet, "wallet"), _key(TOKEN_PROGRAM_ID, "token program"),
+             _key(mint, "mint")],
+            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+        )
+        if account_address != expected_ata:
+            raise ValueError("Meteora DBC user token account is not the canonical associated token account")
+    if fresh.get("fee_rate_numerator") != config["cliff_fee_numerator"]:
+        raise ValueError("Meteora DBC fee rate changed since the fresh quote")
+    expected_fee_on_input = config["collect_fee_mode"] == 0 and not input_is_base
+    if fresh.get("fee_on_input") != expected_fee_on_input:
+        raise ValueError("Meteora DBC fee collection direction changed")
     event_authority, _ = chain._find_program_address([EVENT_AUTHORITY_SEED], PROGRAM_ID)
 
     data = SWAP + struct.pack("<QQ", amount, minimum_out)
