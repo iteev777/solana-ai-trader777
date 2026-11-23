@@ -649,6 +649,28 @@ def api_route_comparison():
         return jsonify({"error": "Quote comparison failed", "detail": str(error)[:180]}), 502
 
 
+@app.get("/api/dex-status")
+def api_dex_status():
+    from dex_engine import get_engine_status
+    return jsonify(get_engine_status())
+
+
+@app.get("/api/dex-route")
+def api_dex_route():
+    from dex_engine import build_route
+    input_mint = request.args.get("input_mint", "")
+    output_mint = request.args.get("output_mint", "")
+    amount = request.args.get("amount", "")
+    slippage = request.args.get("slippage_bps", default=None, type=int)
+    pool_address = request.args.get("pool_address", "").strip() or None
+    try:
+        return jsonify(build_route(input_mint, output_mint, amount, slippage, pool_address))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": "DEX route selection failed", "detail": str(error)[:180]}), 502
+
+
 @app.get("/api/strategy-catalog")
 def api_strategy_catalog():
     from strategy_catalog import get_strategy_catalog

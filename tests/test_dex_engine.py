@@ -1,0 +1,145 @@
+import time
+import unittest
+from unittest.mock import patch
+
+import dex_engine
+
+
+class DexEngineTests(unittest.TestCase):
+    def _comparison(self, quotes):
+        return {
+            "input_mint": "input",
+            "output_mint": "output",
+            "input_amount": 1000,
+            "slippage_bps": 100,
+            "quotes": quotes,
+        }
+
+    def _quote(self, provider, minimum, **overrides):
+        quote = {
+            "provider": provider,
+            "status": "QUOTED",
+            "out_amount": minimum + 10,
+            "minimum_out_amount": minimum,
+            "price_impact_percent": 0.2,
+            "quoted_at": time.time(),
+            "latency_ms": 25,
+            "route": {"hops": 1},
+            "quality": {"status": "PASS"},
+        }
+        quote.update(overrides)
+        return quote
+
+    @patch("route_comparison.compare_quotes")
+    def test_selects_highest_minimum_output(self, compare):
+        compare.return_value = self._comparison({
+            "jupiter": self._quote("jupiter", 900),
+            "raptor": self._quote("raptor", 950),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertEqual(result["best_provider"], "raptor")
+        self.assertEqual(result["best_minimum_output"], 950)
+        self.assertTrue(result["selected_route"]["selected"])
+        self.assertEqual(result["execution"], "LOCKED")
+        self.assertFalse(result["live_trading_ready"])
+
+    @patch("route_comparison.compare_quotes")
+    def test_rejects_stale_quote(self, compare):
+        compare.return_value = self._comparison({
+            "jupiter": self._quote("jupiter", 900, quoted_at=time.time() - 60),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertIsNone(result["selected_route"])
+        self.assertEqual(result["rejected_routes"]["jupiter"], ["QUOTE_STALE"])
+
+    @patch("route_comparison.compare_quotes")
+    def test_rejects_unknown_price_impact(self, compare):
+        compare.return_value = self._comparison({
+            "raptor": self._quote("raptor", 900, price_impact_percent=None),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertEqual(
+            result["rejected_routes"]["raptor"], ["PRICE_IMPACT_UNAVAILABLE"]
+        )
+
+    @patch("route_comparison.compare_quotes")
+    def test_rejects_route_quality_failure(self, compare):
+        compare.return_value = self._comparison({
+            "jupiter": self._quote(
+                "jupiter", 900, quality={"status": "REJECT"}
+            ),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertEqual(
+            result["rejected_routes"]["jupiter"], ["ROUTE_QUALITY_REJECTED"]
+        )
+
+    @patch("route_comparison.compare_quotes")
+    def test_rejects_wrong_output_mint(self, compare):
+        compare.return_value = self._comparison({
+            "direct_pool": self._quote(
+                "raydium_direct", 900, output_mint="different-mint"
+            ),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertEqual(
+            result["rejected_routes"]["direct_pool"], ["OUTPUT_MINT_MISMATCH"]
+        )
+
+    @patch("route_comparison.compare_quotes")
+    def test_rejects_excessive_hops(self, compare):
+        compare.return_value = self._comparison({
+            "jupiter": self._quote(
+                "jupiter", 900, route={"hops": dex_engine.MAX_ALLOWED_HOPS + 1}
+            ),
+        })
+        result = dex_engine.build_route("input", "output", 1000)
+        self.assertEqual(
+            result["rejected_routes"]["jupiter"], ["HOP_COUNT_OUTSIDE_LIMIT"]
+        )
+
+    def test_rejects_fractional_raw_amounts_and_hops(self):
+        with self.assertRaises(ValueError):
+            dex_engine._positive_int(1.5, "out_amount")
+        candidate = self._quote("jupiter", 900, route={"hops": 1.5})
+        normalized, reasons = dex_engine._candidate("jupiter", candidate, "output", time.time())
+        self.assertIsNone(normalized)
+        self.assertEqual(reasons, ["INVALID_HOP_COUNT"])
+
+    def test_invalid_environment_values_fall_back_safely(self):
+        with patch.dict("os.environ", {
+            "TROJAN_DEX_MAX_QUOTE_AGE_SECONDS": "nan",
+            "TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT": "bad",
+            "TROJAN_DEX_MAX_HOPS": "not-an-int",
+        }):
+            self.assertEqual(
+                dex_engine._bounded_env_float("TROJAN_DEX_MAX_QUOTE_AGE_SECONDS", 8, 1, 30),
+                8.0,
+            )
+            self.assertEqual(
+                dex_engine._bounded_env_float("TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT", 3, 0.01, 20),
+                3.0,
+            )
+            self.assertEqual(
+                dex_engine._bounded_env_int("TROJAN_DEX_MAX_HOPS", 4, 1, 8),
+                4,
+            )
+
+    def test_rejects_invalid_pair_and_amount(self):
+        with self.assertRaises(ValueError):
+            dex_engine.build_route("same", "same", 1000)
+        with self.assertRaises(ValueError):
+            dex_engine.build_route("input", "output", 0)
+
+    @patch("route_comparison.get_router_status")
+    def test_engine_status_keeps_live_execution_locked(self, status):
+        status.return_value = {"direct_pool": {"quote_adapters": ["PumpSwap"]}}
+        result = dex_engine.get_engine_status()
+        self.assertTrue(result["execution_locked"])
+        self.assertFalse(result["signing_available"])
+        self.assertFalse(result["broadcast_available"])
+        self.assertIn("PumpSwap", result["direct_pool"]["quote_adapters"])
+
+
+if __name__ == "__main__":
+    unittest.main()
