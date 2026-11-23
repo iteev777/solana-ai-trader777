@@ -1,17 +1,17 @@
 """Unsigned native Meteora DAMM v2 exact-input swap builder.
 
-The adapter uses the verified 14-account cp-amm swap instruction. It supports
-legacy SPL Token mints only until Token-2022 transfer-fee and hook behavior is
-modelled by the Trojan quote path. It re-quotes and verifies the full pool
-state, vaults, mint pair and canonical user ATAs before returning an unsigned
-transaction.
+The adapter uses the verified 14-account cp-amm swap instruction and supports
+legacy SPL Token plus the audited Token-2022 transfer-fee extension subset.
+It re-quotes and verifies pool state, vaults, mint programs and canonical user
+ATAs before returning an unsigned transaction. Transfer hooks remain blocked.
 """
 import base64
 import struct
 
 import solana_onchain as chain
 import meteora_damm_quote as damm_quote
-from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports, _decode_user_token_account
+import token2022_inspector as token2022
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["meteora_damm_v2"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
@@ -41,20 +41,21 @@ def _u64(value, label):
     return value
 
 
-def _vault(account, mint, authority, label):
-    if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " token-account layout is invalid")
-    if chain._key(raw, 0) != mint or chain._key(raw, 32) != authority:
-        raise ValueError(label + " mint or pool authority does not match")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    amount = int.from_bytes(raw[64:72], "little")
+def _vault(account, token_program, mint, authority, label):
+    amount = token2022.validate_token_account_for_program(
+        account, token_program, mint, authority, label, 1
+    )
     if amount <= 0:
         raise ValueError(label + " reserve is empty")
     return amount
+
+
+def _ata(owner, token_program, mint):
+    return chain._find_program_address(
+        [_pubkey(owner, "ATA owner"), _pubkey(token_program, "ATA token program"),
+         _pubkey(mint, "ATA mint")],
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+    )[0]
 
 
 def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
@@ -97,6 +98,9 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
         or fresh.get("input_amount") != amount
     ):
         raise ValueError("Fresh Meteora DAMM quote does not validate pool, pair and amount")
+    for field in ("token_program_input", "token_program_output"):
+        if quote.get(field) != fresh.get(field):
+            raise ValueError("Meteora DAMM token program state changed since the supplied quote")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
@@ -148,31 +152,44 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
             raise ValueError("Meteora DAMM pool state changed during transaction preparation")
     if slot < fresh_slot or slot - fresh_slot > max_quote_slot_lag:
         raise ValueError("Fresh Meteora DAMM quote is stale relative to transaction snapshot")
-    if any(mint.get("owner") != TOKEN_PROGRAM_ID for mint in (mint_a, mint_b)):
-        raise ValueError("Meteora DAMM builder supports legacy SPL Token mints only")
-    if any(vault.get("owner") != TOKEN_PROGRAM_ID for vault in (vault_a, vault_b)):
-        raise ValueError("Meteora DAMM vaults must use legacy SPL Token")
-    _vault(vault_a, current["mint_a"], pool_authority, "Meteora DAMM vault A")
-    _vault(vault_b, current["mint_b"], pool_authority, "Meteora DAMM vault B")
+    token_program_a = mint_a.get("owner")
+    token_program_b = mint_b.get("owner")
+    supported_programs = (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM)
+    if token_program_a not in supported_programs or token_program_b not in supported_programs:
+        raise ValueError("Meteora DAMM mint uses an unsupported token program")
+    if vault_a.get("owner") != token_program_a or vault_b.get("owner") != token_program_b:
+        raise ValueError("Meteora DAMM vault token program does not match its mint")
+    for mint_account, token_program in ((mint_a, token_program_a), (mint_b, token_program_b)):
+        mint_data = mint_account.get("data", b"")
+        if token_program == chain.TOKEN_2022_PROGRAM:
+            token2022.validate_swap_compatible_mint_data(mint_data)
+        elif not isinstance(mint_data, (bytes, bytearray)) or len(mint_data) != 82 or mint_data[45] != 1:
+            raise ValueError("Meteora DAMM mint is not an initialized legacy SPL Token mint")
+    _vault(vault_a, token_program_a, current["mint_a"], pool_authority, "Meteora DAMM vault A")
+    _vault(vault_b, token_program_b, current["mint_b"], pool_authority, "Meteora DAMM vault B")
     if chain._mint_decimals(mint_a) is None or chain._mint_decimals(mint_b) is None:
         raise ValueError("Meteora DAMM mint decimals are invalid")
+    token_program_input = token_program_a if input_mint == current["mint_a"] else token_program_b
+    token_program_output = token_program_b if input_mint == current["mint_a"] else token_program_a
+    if (fresh.get("token_program_input") != token_program_input
+            or fresh.get("token_program_output") != token_program_output):
+        raise ValueError("Meteora DAMM token program state changed during transaction preparation")
 
-    input_balance = _decode_user_token_account(
-        user_input, wallet, input_mint, "Meteora DAMM input token account"
+    input_balance = token2022.validate_token_account_for_program(
+        user_input, token_program_input, input_mint, wallet,
+        "Meteora DAMM input token account", amount,
     )
-    _decode_user_token_account(
-        user_output, wallet, output_mint, "Meteora DAMM output token account"
+    token2022.validate_token_account_for_program(
+        user_output, token_program_output, output_mint, wallet,
+        "Meteora DAMM output token account",
     )
     if input_balance < amount:
         raise ValueError("Meteora DAMM wallet input token account has insufficient balance")
-    for account, mint in ((user_input_token_account, input_mint),
-                          (user_output_token_account, output_mint)):
-        expected_ata, _ = chain._find_program_address(
-            [_pubkey(wallet, "wallet"), _pubkey(TOKEN_PROGRAM_ID, "token program"),
-             _pubkey(mint, "mint")],
-            ASSOCIATED_TOKEN_PROGRAM_ID,
-        )
-        if account != expected_ata:
+    for account, mint, token_program in (
+        (user_input_token_account, input_mint, token_program_input),
+        (user_output_token_account, output_mint, token_program_output),
+    ):
+        if account != _ata(wallet, token_program, mint):
             raise ValueError("Meteora DAMM wallet token account is not the canonical associated token account")
 
     instruction_data = SWAP_DISCRIMINATOR + struct.pack("<QQ", amount, minimum_out)
@@ -186,8 +203,8 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
         {"pubkey": current["mint_a"], "is_signer": False, "is_writable": False},
         {"pubkey": current["mint_b"], "is_signer": False, "is_writable": False},
         {"pubkey": wallet, "is_signer": True, "is_writable": False},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
-        {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_a, "is_signer": False, "is_writable": False},
+        {"pubkey": token_program_b, "is_signer": False, "is_writable": False},
         {"pubkey": PROGRAM_ID, "is_signer": False, "is_writable": False},
         {"pubkey": event_authority, "is_signer": False, "is_writable": False},
         {"pubkey": PROGRAM_ID, "is_signer": False, "is_writable": False},
@@ -213,6 +230,9 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
         "output_mint": output_mint,
         "input_amount": amount,
         "minimum_output_amount": minimum_out,
+        "token_program_input": token_program_input,
+        "token_program_output": token_program_output,
+        "token2022_fee_aware_supported": chain.TOKEN_2022_PROGRAM in (token_program_input, token_program_output),
         "instruction": "swap",
         "instruction_data_base64": base64.b64encode(instruction_data).decode("ascii"),
         "instruction_accounts": [meta["pubkey"] for meta in metas],
