@@ -216,6 +216,6 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
             tx_index=tx_index, delta_raw=economic_native_delta,
             before_raw=subject_pre if 0 <= subject_pre <= MAX_U128 else None,
             after_raw=subject_post if 0 <= subject_post <= MAX_U128 else None,
-            decimals=9, kind=kind, venue=venue, fee_native_raw=fee, success=True,
+            decimals=9, kind=kind, venue=venue, fee_native_raw=subject_fee, success=True,
         ))
     return result
