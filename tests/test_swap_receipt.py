@@ -142,3 +142,55 @@ class SwapReceiptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeExecutionReceiptIntegrationTests(unittest.TestCase):
+    def test_confirmed_receipt_fetches_parsed_transaction_and_returns_accounting(self):
+        from unittest.mock import patch
+        import native_execution
+
+        details = {
+            "slot": 900,
+            "transaction": {"message": {"accountKeys": ["wallet", "out-account"]}},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "preTokenBalances": [
+                    {"accountIndex": 1, "uiTokenAmount": {"amount": "10"}}
+                ],
+                "postTokenBalances": [
+                    {"accountIndex": 1, "uiTokenAmount": {"amount": "910"}}
+                ],
+            },
+        }
+        def rpc(method, params):
+            self.assertEqual(method, "getTransaction")
+            self.assertEqual(params[1]["encoding"], "jsonParsed")
+            return details
+
+        with patch.object(native_execution, "get_native_transaction_status",
+                          return_value={"status": "CONFIRMED"}), \
+             patch.object(native_execution.chain, "_rpc", side_effect=rpc):
+            result = native_execution.get_native_swap_receipt(
+                "sig", "out-account", "mint", 800
+            )
+        self.assertEqual(result["received_amount"], 900)
+        self.assertTrue(result["received_amount_exact"])
+        self.assertEqual(result["accounting"], "EXACT_ONCHAIN_TOKEN_DELTA")
+
+    def test_receipt_integration_refuses_unconfirmed_transaction(self):
+        from unittest.mock import patch
+        import native_execution
+
+        with patch.object(native_execution, "get_native_transaction_status",
+                          return_value={"status": "PROCESSED"}):
+            with self.assertRaisesRegex(native_execution.NativeExecutionRejected,
+                                        "not yet confirmed"):
+                native_execution.get_native_swap_receipt(
+                    "sig", "out-account", "mint", 800
+                )
+
+    def test_receipt_integration_keeps_live_broadcast_locked(self):
+        import native_execution
+        self.assertTrue(native_execution.NATIVE_BROADCAST_HARD_LOCK)
+        self.assertFalse(native_execution.get_native_execution_status()["broadcast_available"])
