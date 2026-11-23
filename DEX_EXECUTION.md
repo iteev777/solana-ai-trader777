@@ -512,6 +512,7 @@ conservative limitation rather than assuming the AMM's fee interaction.
 | Meteora DBC | Transfer-fee aware | Flat-fee, non-migrated VirtualPools only |
 | PumpSwap V2 | Transfer-fee aware | Supported buy/sell V2 pool modes; unsupported pool flags fail closed |
 | Pump.fun legacy | Transfer-fee aware | SOL-paired, supported legacy bonding curves only |
+| Jupiter V2 aggregator | Token-2022 preflight | Route fees are calculated by Jupiter; Trojan validates both mint owners/extensions and requires unsigned simulation PASS before eligibility |
 | FluxBeam | Zero-fee Token-2022 only | Both transfer-fee schedules must be zero and authority disabled |
 | Raydium AMM v4 | Blocked | No native Token-2022 path verified against the reference implementation |
 | Moonit | Blocked | No native Token-2022 path verified against the reference implementation |
