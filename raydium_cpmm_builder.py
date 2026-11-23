@@ -8,6 +8,8 @@ handling is fully integrated into both quote and execution paths.
 import base64
 import hashlib
 import struct
+import os
+import struct
 import time
 
 import solana_onchain as chain
@@ -52,11 +54,48 @@ def _shortvec(value):
             return bytes(encoded)
 
 
-def _compile_legacy_message(payer, recent_blockhash, program_id, metas, data):
-    """Compile one instruction into a canonical legacy message."""
+COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+
+
+def _priority_fee_micro_lamports():
+    raw = os.getenv("TROJAN_PRIORITY_FEE_MICROLAMPORTS", "10000").strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError("TROJAN_PRIORITY_FEE_MICROLAMPORTS must be an integer")
+    if isinstance(value, bool) or not 0 <= value <= 1_000_000_000:
+        raise ValueError("TROJAN_PRIORITY_FEE_MICROLAMPORTS is outside the safe range")
+    return value
+
+
+def _compile_legacy_message(payer, recent_blockhash, program_id, metas, data,
+                            compute_unit_limit=None, compute_unit_price=None):
+    """Compile a DEX instruction with optional Solana compute-budget instructions."""
     _pubkey(payer, "wallet")
     blockhash = _pubkey(recent_blockhash, "recent blockhash")
     _pubkey(program_id, "program id")
+    if compute_unit_limit is not None:
+        if (isinstance(compute_unit_limit, bool) or not isinstance(compute_unit_limit, int)
+                or not 1 <= compute_unit_limit <= 1_400_000):
+            raise ValueError("Compute unit limit must be between 1 and 1400000")
+    if compute_unit_price is not None:
+        if (isinstance(compute_unit_price, bool) or not isinstance(compute_unit_price, int)
+                or not 0 <= compute_unit_price <= 1_000_000_000):
+            raise ValueError("Compute unit price is outside the safe range")
+
+    instruction_specs = []
+    if compute_unit_limit is not None:
+        instruction_specs.append((
+            COMPUTE_BUDGET_PROGRAM_ID, [],
+            bytes([2]) + struct.pack("<I", compute_unit_limit),
+        ))
+    if compute_unit_price:
+        instruction_specs.append((
+            COMPUTE_BUDGET_PROGRAM_ID, [],
+            bytes([3]) + struct.pack("<Q", compute_unit_price),
+        ))
+    instruction_specs.append((program_id, metas, data))
+
     merged = {}
 
     def add(key, signer=False, writable=False):
@@ -69,11 +108,12 @@ def _compile_legacy_message(payer, recent_blockhash, program_id, metas, data):
             current["writable"] = current["writable"] or bool(writable)
 
     add(payer, signer=True, writable=True)
-    for meta in metas:
-        if not isinstance(meta, dict):
-            raise ValueError("instruction account meta must be an object")
-        add(meta.get("pubkey"), meta.get("is_signer", False), meta.get("is_writable", False))
-    add(program_id, signer=False, writable=False)
+    for ix_program, ix_metas, _ in instruction_specs:
+        add(ix_program, signer=False, writable=False)
+        for meta in ix_metas:
+            if not isinstance(meta, dict):
+                raise ValueError("instruction account meta must be an object")
+            add(meta.get("pubkey"), meta.get("is_signer", False), meta.get("is_writable", False))
 
     ordered = [payer]
     ordered.extend(key for key, flags in merged.items()
@@ -91,23 +131,25 @@ def _compile_legacy_message(payer, recent_blockhash, program_id, metas, data):
     readonly_signed = sum(1 for flags in merged.values() if flags["signer"] and not flags["writable"])
     readonly_unsigned = sum(1 for flags in merged.values() if not flags["signer"] and not flags["writable"])
     if required_signatures != 1:
-        raise ValueError("Raydium CPMM swap must have exactly one external wallet signer")
+        raise ValueError("DEX transaction must have exactly one external wallet signer")
 
-    instruction_accounts = bytes(index[meta["pubkey"]] for meta in metas)
-    compiled_instruction = (
-        bytes([index[program_id]])
-        + _shortvec(len(instruction_accounts))
-        + instruction_accounts
-        + _shortvec(len(data))
-        + data
-    )
+    compiled_instructions = []
+    for ix_program, ix_metas, ix_data in instruction_specs:
+        instruction_accounts = bytes(index[meta["pubkey"]] for meta in ix_metas)
+        compiled_instructions.append(
+            bytes([index[ix_program]])
+            + _shortvec(len(instruction_accounts))
+            + instruction_accounts
+            + _shortvec(len(ix_data))
+            + ix_data
+        )
     message = (
         bytes([required_signatures, readonly_signed, readonly_unsigned])
         + _shortvec(len(ordered))
         + b"".join(_pubkey(key, "account key") for key in ordered)
         + blockhash
-        + _shortvec(1)
-        + compiled_instruction
+        + _shortvec(len(compiled_instructions))
+        + b"".join(compiled_instructions)
     )
     transaction = _shortvec(required_signatures) + (b"\x00" * 64) + message
     return transaction, ordered
