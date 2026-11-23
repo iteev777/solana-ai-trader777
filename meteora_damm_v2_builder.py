@@ -11,7 +11,7 @@ import struct
 
 import solana_onchain as chain
 import meteora_damm_quote as damm_quote
-from raydium_cpmm_builder import _compile_legacy_message, _decode_user_token_account
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports, _decode_user_token_account
 
 PROGRAM_ID = chain.PROGRAMS["meteora_damm_v2"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
@@ -220,6 +220,8 @@ def build_meteora_damm_v2_swap(quote, wallet, user_input_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid,
         "compute_units": COMPUTE_UNITS,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
