@@ -211,8 +211,10 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simu
     if in_amount != amount:
         raise ValueError("Jupiter order input amount does not match request")
     minimum_out = payload.get("otherAmountThreshold")
-    minimum_out = _uint(minimum_out, "Jupiter minimum output") if minimum_out not in (None, "") else None
-    if minimum_out is not None and minimum_out > out_amount:
+    if minimum_out in (None, ""):
+        raise ValueError("Jupiter order response is missing its mandatory minimum output threshold")
+    minimum_out = _uint(minimum_out, "Jupiter minimum output")
+    if minimum_out > out_amount:
         raise ValueError("Jupiter minimum output exceeds quoted output")
 
     mint_validation = _inspect_order_mints(input_mint, output_mint)
@@ -256,7 +258,9 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simu
         "route_plan": payload.get("routePlan") or [],
         "fee_bps": payload.get("feeBps"),
         "simulation": simulation,
-        "execution_eligible": simulation.get("status") == "PASS",
+        "simulation_passed": simulation.get("status") == "PASS",
+        "execution_eligible": False,
+        "execution_lock_reason": "PHASE_5_LIVE_EXECUTION_HARD_LOCK",
         "quoted_at": time.time(),
         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "signing": "USER_WALLET_REQUIRED",
