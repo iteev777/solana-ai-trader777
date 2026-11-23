@@ -240,5 +240,32 @@ class Token2022InspectorTests(unittest.TestCase):
                 inspector.inspect_token2022_mint(key(6))
 
 
+    def test_conservative_fee_uses_larger_actual_fee_not_larger_rate(self):
+        config = {
+            "older": {"basis_points": 500, "maximum_fee": 10},
+            "newer": {"basis_points": 100, "maximum_fee": 1_000},
+        }
+        self.assertEqual(inspector.conservative_transfer_fee_for_amount(config, 1_000), 10)
+        self.assertEqual(inspector.conservative_net_amount(config, 1_000), 990)
+
+    def test_conservative_fee_compares_both_caps_at_requested_amount(self):
+        config = {
+            "older": {"basis_points": 100, "maximum_fee": 1_000},
+            "newer": {"basis_points": 250, "maximum_fee": 5},
+        }
+        self.assertEqual(inspector.conservative_transfer_fee_for_amount(config, 10_000), 100)
+        self.assertEqual(inspector.conservative_net_amount(config, 10_000), 9_900)
+
+    def test_conservative_fee_rejects_missing_schedule(self):
+        with self.assertRaisesRegex(ValueError, "Both older and newer"):
+            inspector.conservative_transfer_fee_for_amount(
+                {"older": {"basis_points": 100, "maximum_fee": 10}}, 100
+            )
+
+    def test_conservative_fee_without_extension_is_zero(self):
+        self.assertEqual(inspector.conservative_transfer_fee_for_amount(None, 123), 0)
+        self.assertEqual(inspector.conservative_net_amount(None, 123), 123)
+
+
 if __name__ == "__main__":
     unittest.main()
