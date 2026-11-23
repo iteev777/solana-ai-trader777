@@ -7,17 +7,20 @@ import math
 import time
 import threading
 import re
+import os
+from collections import OrderedDict
 
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
 REQUEST_TIMEOUT = 20
 CACHE_SECONDS = 60
-
+MAX_CACHE_ENTRIES = 2000
 MAX_SAFE_SCORE = 40
 
-_cache = {}
+_cache = OrderedDict()
 _cache_lock = threading.RLock()
+_inflight = {}
 
 
 # ==========================================
@@ -447,97 +450,119 @@ def analyze_rugcheck_report(data):
 # FETCH REPORT
 # ==========================================
 
+def _cache_ttl_seconds():
+    try:
+        value = float(os.getenv("TROJAN_RUGCHECK_CACHE_SECONDS", str(CACHE_SECONDS)))
+        if not math.isfinite(value):
+            return CACHE_SECONDS
+        return max(0.0, min(value, 3600.0))
+    except (TypeError, ValueError, OverflowError):
+        return CACHE_SECONDS
+
+
+def _cached_report(token_address, now):
+    with _cache_lock:
+        cached = _cache.get(token_address)
+        if cached is None:
+            return None
+        cached_time, cached_data = cached
+        if now - cached_time >= _cache_ttl_seconds():
+            _cache.pop(token_address, None)
+            return None
+        _cache.move_to_end(token_address)
+        return cached_data
+
+
+def _store_cached_report(token_address, result):
+    with _cache_lock:
+        _cache[token_address] = (time.monotonic(), result)
+        _cache.move_to_end(token_address)
+        while len(_cache) > MAX_CACHE_ENTRIES:
+            _cache.popitem(last=False)
+
+
 def get_rugcheck_report(token_address):
-
+    """Fetch one report per mint at a time; cache valid responses with bounded LRU."""
     if not isinstance(token_address, str) or not token_address.strip():
-
         print("RUGCHECK ERROR: Missing token address")
         return None
 
     token_address = token_address.strip()
+    cached = _cached_report(token_address, time.monotonic())
+    if cached is not None:
+        return cached
 
-    now = time.time()
-
+    # Coalesce concurrent requests for the same mint. Waiters never make a
+    # second upstream request while the leader is fetching the report.
     with _cache_lock:
+        event = _inflight.get(token_address)
+        leader = event is None
+        if leader:
+            event = threading.Event()
+            _inflight[token_address] = event
 
-        cached = _cache.get(token_address)
-
-        if cached:
-
-            cached_time, cached_data = cached
-
-            if now - cached_time < CACHE_SECONDS:
-                return cached_data
-
-            _cache.pop(token_address, None)
-
-    url = API_URL + token_address + "/report"
+    if not leader:
+        event.wait(timeout=REQUEST_TIMEOUT + 2)
+        return _cached_report(token_address, time.monotonic())
 
     try:
+        cached = _cached_report(token_address, time.monotonic())
+        if cached is not None:
+            return cached
 
-        response = requests.get(
-            url,
-            headers={"Accept": "application/json"},
-            timeout=REQUEST_TIMEOUT
-        )
+        url = API_URL + token_address + "/report"
+        try:
+            response = requests.get(
+                url,
+                headers={"Accept": "application/json"},
+                timeout=REQUEST_TIMEOUT
+            )
+            if response.status_code == 429:
+                print("RUGCHECK: Rate limit reached")
+                return None
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                print("RUGCHECK ERROR: Invalid response")
+                return None
 
-        if response.status_code == 429:
+            analysis = analyze_rugcheck_report(data)
+            result = {
+                "token_address": token_address,
+                "report": data,
+                "analysis": analysis
+            }
+            _store_cached_report(token_address, result)
 
-            print("RUGCHECK: Rate limit reached")
+            print("================================")
+            print("TROJAN V2 RUGCHECK")
+            print("TOKEN:", token_address)
+            print("STATUS:", analysis["status"])
+            print("SCORE:", analysis["score"])
+            print("HIGH RISKS:", analysis["high_risks"])
+            print("MEDIUM RISKS:", analysis["medium_risks"])
+            print("LOW RISKS:", analysis["low_risks"])
+            print("MINT AUTHORITY:", analysis["mint_authority"])
+            print("FREEZE AUTHORITY:", analysis["freeze_authority"])
+            for reason in analysis["reasons"]:
+                print("RISK:", reason)
+            print("================================")
+            return result
+
+        except requests.RequestException as error:
+            print("RUGCHECK CONNECTION ERROR:", repr(error))
             return None
-
-        response.raise_for_status()
-
-        data = response.json()
-
-        if not isinstance(data, dict):
-
-            print("RUGCHECK ERROR: Invalid response")
+        except ValueError as error:
+            print("RUGCHECK DATA ERROR:", repr(error))
             return None
-
-        analysis = analyze_rugcheck_report(data)
-
-        result = {
-            "token_address": token_address,
-            "report": data,
-            "analysis": analysis
-        }
-
+        except Exception as error:
+            print("RUGCHECK UNKNOWN ERROR:", repr(error))
+            return None
+    finally:
         with _cache_lock:
-            _cache[token_address] = (time.time(), result)
-
-        print("================================")
-        print("TROJAN V2 RUGCHECK")
-        print("TOKEN:", token_address)
-        print("STATUS:", analysis["status"])
-        print("SCORE:", analysis["score"])
-        print("HIGH RISKS:", analysis["high_risks"])
-        print("MEDIUM RISKS:", analysis["medium_risks"])
-        print("LOW RISKS:", analysis["low_risks"])
-        print("MINT AUTHORITY:", analysis["mint_authority"])
-        print("FREEZE AUTHORITY:", analysis["freeze_authority"])
-
-        for reason in analysis["reasons"]:
-            print("RISK:", reason)
-
-        print("================================")
-
-        return result
-
-    except requests.RequestException as error:
-
-        print("RUGCHECK CONNECTION ERROR:", repr(error))
-        return None
-
-    except ValueError as error:
-
-        print("RUGCHECK DATA ERROR:", repr(error))
-        return None
-
-    except Exception as error:
-
-        print("RUGCHECK UNKNOWN ERROR:", repr(error))
-        return None
+            current = _inflight.pop(token_address, None)
+            if current is not None:
+                current.set()
 
 
 # ==========================================
