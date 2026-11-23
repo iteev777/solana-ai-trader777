@@ -4,6 +4,7 @@ from unittest.mock import patch
 import clmm_quote_math as mathx
 import solana_onchain as chain
 import raydium_clmm_quote as dlmm
+import raydium_clmm_builder as clmm_builder
 from raydium_clmm_quote import quote_raydium_clmm_pool
 
 
@@ -117,8 +118,10 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
 
         mint0 = bytearray(82)
         mint0[44] = 6
+        mint0[45] = 1
         mint1 = bytearray(82)
         mint1[44] = 9
+        mint1[45] = 1
         self.mint0_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint0)}
         self.mint1_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint1)}
 
@@ -192,6 +195,60 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             }):
                 with self.assertRaisesRegex(ValueError, "fee"):
                     quote_raydium_clmm_pool(self.pool, self.mint1, 1000, output_mint=self.mint0)
+
+    def test_native_builder_builds_exact_input_swap_and_checks_pool_authority(self):
+        quote = self.quote()
+        wallet = chain._b58encode(bytes([21]) * 32)
+        user_in = chain._b58encode(bytes([22]) * 32)
+        user_out = chain._b58encode(bytes([23]) * 32)
+        input_account = self.token_account(self.mint1, 10**9, wallet)
+        output_account = self.token_account(self.mint0, 0, wallet)
+        observation = chain._b58encode(bytes([24]) * 32)
+        observation_raw = bytearray(40)
+        observation_raw[8:40] = chain._b58decode(self.pool)
+        observation_account = {
+            "owner": chain.PROGRAMS["raydium_clmm"], "data": bytes(observation_raw)
+        }
+        builder_accounts = [
+            self.accounts[0], self.accounts[1], self.accounts[2], self.accounts[3],
+            self.accounts[4], self.accounts[5], None, observation_account,
+            input_account, output_account, self.tick_account,
+        ]
+
+        def pda(seeds, program):
+            if seeds[0] == dlmm.BITMAP_EXTENSION_SEED:
+                return self.bitmap_extension, 255
+            if seeds[0] == b"observation":
+                return observation, 254
+            return self.tick_array, 253
+
+        def account(address):
+            if address == self.pool:
+                return {"owner": chain.PROGRAMS["raydium_clmm"], "data": self.state}
+            return None
+
+        with (
+            patch.object(chain, "_account", side_effect=account),
+            patch.object(chain, "_find_program_address", side_effect=pda),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         side_effect=[(self.accounts, 123456), (builder_accounts, 123456)]),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": chain._b58encode(bytes([25]) * 32),
+                "lastValidBlockHeight": 999999,
+            }}),
+        ):
+            result = clmm_builder.build_raydium_clmm_swap(
+                quote, wallet, user_in, user_out
+            )
+        data = __import__("base64").b64decode(result["instruction_data_base64"])
+        self.assertEqual(data[:8], clmm_builder.SWAP_V2)
+        self.assertEqual(len(data), 41)
+        self.assertEqual(len(result["instruction_accounts"]), 15)
+        self.assertEqual(result["instruction_accounts"][5:8],
+                         [self.vault1, self.vault0, observation])
+        self.assertEqual(result["instruction_accounts"][13:],
+                         [self.bitmap_extension, self.tick_array])
+        self.assertEqual(result["execution"], "LOCKED")
 
     def test_bitmap_extension_decodes_positive_and_negative_array_ranges(self):
         raw = bytearray(40 + 2 * dlmm.BITMAP_EXTENSION_BLOCKS * 64)
