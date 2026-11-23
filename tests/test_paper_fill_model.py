@@ -104,6 +104,8 @@ class PaperFillIntegrationTests(unittest.TestCase):
         }
         with (
             patch.object(paper_trading, "refresh_account"),
+            patch.object(paper_trading, "balance", 100.0),
+            patch.object(paper_trading, "_dca_in_flight", set()),
             patch.object(paper_trading, "get_dca_policy", return_value={
                 "enabled": True, "steps": [{"drop_pct": 5, "add_usd": 2.5}],
                 "measure_from": "average", "cooldown_minutes": 0,
