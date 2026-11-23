@@ -48,8 +48,6 @@ def _decode_virtual_pool(raw, chain):
         raise ValueError("Meteora DBC curve has migrated; use its post-migration AMM")
     if state["sqrt_price"] <= 0:
         raise ValueError("Meteora DBC current square-root price is invalid")
-    if state["base_mint"] == state["quote_vault"] or state["base_vault"] == state["quote_vault"]:
-        raise ValueError("Meteora DBC pool relationships are invalid")
     return state
 
 
@@ -206,6 +204,14 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
     if config_discovery.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Meteora DBC PoolConfig owner is invalid")
     config_first = _decode_pool_config(config_discovery.get("data"), chain)
+
+    if (
+        first["base_mint"] == config_first["quote_mint"]
+        or first["base_vault"] == first["quote_vault"]
+        or first["base_mint"] == first["base_vault"]
+        or config_first["quote_mint"] == first["quote_vault"]
+    ):
+        raise ValueError("Meteora DBC mint/vault relationships are invalid")
 
     if input_mint == first["base_mint"]:
         input_is_base = True
