@@ -299,15 +299,71 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "current tick array is not initialized"):
             dlmm._array_starts(state, self.pool, False, chain)
 
-    def test_token_2022_mints_are_rejected(self):
+    def test_token2022_zero_fee_mint_is_accepted_with_matching_vault_program(self):
         accounts = list(self.accounts)
-        accounts[5] = dict(accounts[5], owner=chain.TOKEN_2022_PROGRAM)
+        mint = bytearray(82)
+        mint[44] = 6
+        mint[45] = 1
+        accounts[5] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
+        accounts[3] = dict(accounts[3], owner=chain.TOKEN_2022_PROGRAM)
         with (
             patch.object(chain, "_account", side_effect=self._account),
             patch.object(chain, "_find_program_address", side_effect=self._pda),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 123456)),
         ):
-            with self.assertRaisesRegex(ValueError, "Token-2022"):
+            quote = quote_raydium_clmm_pool(
+                self.pool, self.mint1, 1000, output_mint=self.mint0
+            )
+        self.assertEqual(quote["token_program_input"], chain.TOKEN_2022_PROGRAM)
+        self.assertFalse(quote["token2022_input_transfer_fee"])
+        self.assertGreater(quote["out_amount"], 0)
+
+    def test_token2022_transfer_fees_are_applied_to_both_clmm_swap_legs(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        mint = bytearray(166)
+        mint[44] = 6
+        mint[45] = 1
+        mint[165] = MINT_ACCOUNT_TYPE
+        mint.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        accounts = list(self.accounts)
+        accounts[4] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
+        accounts[5] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
+        accounts[2] = dict(accounts[2], owner=chain.TOKEN_2022_PROGRAM)
+        accounts[3] = dict(accounts[3], owner=chain.TOKEN_2022_PROGRAM)
+        with (
+            patch.object(chain, "_account", side_effect=self._account),
+            patch.object(chain, "_find_program_address", side_effect=self._pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 123456)),
+        ):
+            quote = quote_raydium_clmm_pool(
+                self.pool, self.mint1, 10_000, output_mint=self.mint0
+            )
+        self.assertTrue(quote["token2022_input_transfer_fee"])
+        self.assertEqual(quote["token2022_input_received_by_pool"], 9_900)
+        self.assertTrue(quote["token2022_output_transfer_fee"])
+        self.assertLess(quote["out_amount"], quote["token2022_output_gross_amount"])
+
+    def test_token2022_transfer_hook_mint_is_rejected(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        mint = bytearray(166)
+        mint[44] = 6
+        mint[45] = 1
+        mint[165] = MINT_ACCOUNT_TYPE
+        mint.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
+        accounts = list(self.accounts)
+        accounts[5] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
+        accounts[3] = dict(accounts[3], owner=chain.TOKEN_2022_PROGRAM)
+        with (
+            patch.object(chain, "_account", side_effect=self._account),
+            patch.object(chain, "_find_program_address", side_effect=self._pda),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 123456)),
+        ):
+            with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
                 quote_raydium_clmm_pool(self.pool, self.mint1, 1000, output_mint=self.mint0)
 
 
