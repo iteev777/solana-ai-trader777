@@ -74,12 +74,16 @@ X-Trojan-Action: 1
 
 The preflight validates the wallet account, legacy SPL Token mint layouts,
 token-account mint and authority, initialized state, raw input balance, and a
-configurable minimum SOL reserve. The reserve defaults to 10,000,000 lamports
+configurable minimum SOL reserve. It also derives the canonical input and output
+Associated Token Account (ATA) addresses and reports whether each supplied
+account is that wallet/mint ATA. Valid non-ATA token accounts remain accepted;
+the native builders can use explicitly supplied token accounts. The reserve defaults to 10,000,000 lamports
 (0.01 SOL) and can be changed with `TROJAN_MIN_SOL_RESERVE_LAMPORTS`.
 
 A missing output token account is reported with
-`CREATE_OUTPUT_TOKEN_ACCOUNT_AND_RETRY`; Trojan does not create it or spend
-SOL. Token-2022 is explicitly unsupported by this native preflight because
+`CREATE_OUTPUT_TOKEN_ACCOUNT_AND_RETRY`, alongside the canonical output ATA
+address; Trojan does not create it or spend SOL. This is an ATA discovery and
+readiness check, not an ATA creation manager. Token-2022 is explicitly unsupported by this native preflight because
 the current native builders require the legacy SPL Token program.
 
 This is a funding/account readiness check, not an exact fee or rent quote. The
