@@ -1581,14 +1581,14 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/copy/database/schema.rs` | PENDING |  |
 | `src/trader/copy/database/tests.rs` | PENDING |  |
 | `src/trader/copy/database/tests/paper.rs` | PENDING |  |
-| `src/trader/copy/entries.rs` | PENDING |  |
-| `src/trader/copy/exits.rs` | PENDING |  |
-| `src/trader/copy/guards.rs` | PENDING |  |
+| `src/trader/copy/entries.rs` | MAPPED | `main.py`, `copy_risk.py`, `trading_manager.py` | Initial mapping only: Trojan queues paper BUY through shared sniper strategy and applies wallet risk; reference has per-task prepared entry, provenance, task sizing, shared executor and paper leg idempotency. |
+| `src/trader/copy/exits.rs` | MAPPED | `main.py`, `paper_trading.py`, `exit_policy.py` | Initial mapping only: Trojan mirrors a target SELL by fully closing the same wallet-owned mint; reference supports ownership-aware BuyOnly/Mirror/Hybrid exit modes and task-specific paper/live exit execution. Partial sell proportion not matched. |
+| `src/trader/copy/guards.rs` | MAPPED | `copy_freshness.py`, `copy_trade.py` | Initial guard comparison: arrival freshness and RPC cursor recovery inspected; storage-restore pause, detached-watch reconciliation, latency kill switch and retryable/permanent decode outcome handling are not fully implemented. Trojan fixes: `7d5548d`, `3969332`; tests pending final CI. |
 | `src/trader/copy/insights.rs` | PENDING |  |
 | `src/trader/copy/insights_tests.rs` | PENDING |  |
 | `src/trader/copy/label_tests.rs` | PENDING |  |
 | `src/trader/copy/live.rs` | PENDING |  |
-| `src/trader/copy/matcher.rs` | PENDING |  |
+| `src/trader/copy/matcher.rs` | MAPPED | `main.py`, `copy_trade.py` | Reference matches every task by target and WatchSource, including paused tasks for close-only handling. Trojan has one global signal queue and no per-task matcher/paused-close-only model. |
 | `src/trader/copy/mod.rs` | PENDING |  |
 | `src/trader/copy/notify.rs` | PENDING |  |
 | `src/trader/copy/paper_book.rs` | PENDING |  |
@@ -1601,11 +1601,11 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/copy/paper_execution/tests.rs` | PENDING |  |
 | `src/trader/copy/paper_execution/wanted.rs` | PENDING |  |
 | `src/trader/copy/pause.rs` | PENDING |  |
-| `src/trader/copy/risk.rs` | PENDING |  |
+| `src/trader/copy/risk.rs` | MAPPED | `copy_risk.py`, `main.py` | Compared task-level precheck against Trojan wallet-level USD risk. Trojan does not yet reproduce target min/max, self-copy, filter-pass, slippage, buy-once and per-task SOL budget semantics. |
 | `src/trader/copy/round_fixtures.rs` | PENDING |  |
-| `src/trader/copy/service.rs` | PENDING |  |
+| `src/trader/copy/service.rs` | MAPPED | `main.py`, `copy_trade.py`, `trading_manager.py`, `paper_trading.py` | Initial comparison only: reference shared observation broadcast, per-task FIFO, reconciliation and shared paper dispatcher; Trojan global queue/single paper path. Mirror/hybrid sell modes and task-level lifecycle remain gaps. |
 | `src/trader/copy/service/tests.rs` | PENDING |  |
-| `src/trader/copy/sizing.rs` | PENDING |  |
+| `src/trader/copy/sizing.rs` | MAPPED | `copy_risk.py`, `main.py` | Compared hard-cap sizing: Trojan caps USD wallet exposure/ticket and applies cap again before paper entry; no full equivalent for reference SOL per-task budget, per-token cap and engine multiplier. |
 | `src/trader/copy/types.rs` | PENDING |  |
 | `src/trader/copy/types/paper.rs` | PENDING |  |
 | `src/trader/copy/types/tests.rs` | PENDING |  |
@@ -1771,14 +1771,14 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/wallets/validation.rs` | PENDING |  |
 | `src/wallets/watch/database.rs` | PENDING |  |
 | `src/wallets/watch/database/tests.rs` | PENDING |  |
-| `src/wallets/watch/dedupe.rs` | PENDING |  |
+| `src/wallets/watch/dedupe.rs` | MAPPED | `database.py`, `copy_trade.py` | Trojan has durable signature/event dedupe and cursor tables; compared at high level. Subject-scoped durable dedupe and atomic record-before-cursor semantics require deeper schema/transaction audit. |
 | `src/wallets/watch/error.rs` | PENDING |  |
 | `src/wallets/watch/migrations.rs` | PENDING |  |
 | `src/wallets/watch/mod.rs` | PENDING |  |
-| `src/wallets/watch/poller.rs` | PENDING |  |
-| `src/wallets/watch/recorder.rs` | PENDING |  |
+| `src/wallets/watch/poller.rs` | MAPPED | `copy_trade.py` | Compared bounded newest-first paging, oldest-first replay and durable cursor semantics. Trojan already accumulates pages; now treats null transaction indexing as retryable. It still lacks explicit per-signature retryable/terminal outcomes and reference baseline/gap-fill/stream-mode policy. |
+| `src/wallets/watch/recorder.rs` | MAPPED | `copy_trade.py`, `database.py` | Reference separates own-wallet raw transaction/delta persistence from watched-target metadata and emits events only for own wallet; Trojan persists parsed copy events only. Full transaction history/delta ledger not implemented. |
 | `src/wallets/watch/runtime.rs` | PENDING |  |
-| `src/wallets/watch/service.rs` | PENDING |  |
+| `src/wallets/watch/service.rs` | MAPPED | `copy_trade.py`, `sniper_scanner.py` | Initial comparison: shared WS/poll funnel, durable cursor, decode/classify/record/dedupe/broadcast pipeline versus Trojan WS + HTTP catch-up monitor. Cursor retry behavior improved; full target lifecycle and event bus parity remain open. |
 | `src/wallets/watch/service/tests.rs` | PENDING |  |
 | `src/wallets/watch/service_state.rs` | PENDING |  |
 | `src/wallets/watch/service_targets.rs` | PENDING |  |
