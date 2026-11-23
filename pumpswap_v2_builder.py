@@ -115,8 +115,13 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     if user_base_token_account == user_quote_token_account:
         raise ValueError("User base and quote token accounts must differ")
 
-    is_buy = input_mint == quote.get("quote_mint") and output_mint == quote.get("base_mint")
-    is_sell = input_mint == quote.get("base_mint") and output_mint == quote.get("quote_mint")
+    first = chain._account(pool_id)
+    if first.get("owner") != PUMPSWAP_PROGRAM_ID:
+        raise ValueError("Pool account is not owned by the PumpSwap program")
+    decoded = chain._decode_pool("pumpswap", first["data"])
+    _validate_pool_identity(pool_id, first["data"], decoded)
+    is_buy = input_mint == decoded["quote_mint"] and output_mint == decoded["base_mint"]
+    is_sell = input_mint == decoded["base_mint"] and output_mint == decoded["quote_mint"]
     if not (is_buy or is_sell):
         raise ValueError("Quote mints do not describe a supported PumpSwap buy or sell")
 
@@ -136,11 +141,6 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh PumpSwap quote is older than the supplied quote")
 
-    first = chain._account(pool_id)
-    if first.get("owner") != PUMPSWAP_PROGRAM_ID:
-        raise ValueError("Pool account is not owned by the PumpSwap program")
-    decoded = chain._decode_pool("pumpswap", first["data"])
-    _validate_pool_identity(pool_id, first["data"], decoded)
     if decoded.get("is_mayhem_mode") or decoded.get("is_cashback_coin") or decoded.get("is_holder_reward"):
         raise ValueError("PumpSwap native V2 builder currently refuses mayhem, cashback and holder-reward pools")
     if input_mint not in (decoded["base_mint"], decoded["quote_mint"]):
@@ -160,18 +160,6 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     event_authority, _ = chain._find_program_address([b"__event_authority"], PUMPSWAP_PROGRAM_ID)
     if global_config_pda != GLOBAL_CONFIG or fee_config_pda != FEE_CONFIG:
         raise ValueError("PumpSwap canonical GlobalConfig or FeeConfig PDA does not match known address")
-
-    buyback_atas = [
-        _ata(recipient, TOKEN_PROGRAM_ID, decoded["quote_mint"])
-        for recipient in _validate_global_config({
-            "owner": PUMPSWAP_PROGRAM_ID,
-            "data": (
-                # GlobalConfig is fetched in the confirmed snapshot below;
-                # this placeholder is replaced before recipient selection.
-                b""
-            ),
-        })["buyback_fee_recipients"]
-    ] if False else []
 
     # The first account read discovers the pool relationships. The confirmed
     # multi-account snapshot below includes the global recipient list and all
@@ -209,7 +197,11 @@ def build_pumpswap_v2_swap(quote, wallet, user_base_token_account,
     if current.get("is_mayhem_mode") or current.get("is_cashback_coin") or current.get("is_holder_reward"):
         raise ValueError("PumpSwap pool mode is not supported by the native V2 builder")
 
-    global_state = _validate_global_config(global_acc)
+    snapshot_global_state = _validate_global_config(global_acc)
+    if (snapshot_global_state["buyback_fee_recipients"] != global_state["buyback_fee_recipients"]
+            or snapshot_global_state["buyback_basis_points"] != global_state["buyback_basis_points"]):
+        raise ValueError("PumpSwap buyback fee configuration changed during transaction preparation")
+    global_state = snapshot_global_state
     if global_state["disable_flags"] & ((1 << 3) if is_buy else (1 << 4)):
         raise ValueError("PumpSwap buy or sell instruction is disabled by GlobalConfig")
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM_ID:
