@@ -98,6 +98,33 @@ class DexEngineTests(unittest.TestCase):
             result["rejected_routes"]["jupiter"], ["HOP_COUNT_OUTSIDE_LIMIT"]
         )
 
+    def test_rejects_fractional_raw_amounts_and_hops(self):
+        with self.assertRaises(ValueError):
+            dex_engine._positive_int(1.5, "out_amount")
+        candidate = self._quote("jupiter", 900, route={"hops": 1.5})
+        normalized, reasons = dex_engine._candidate("jupiter", candidate, "output", time.time())
+        self.assertIsNone(normalized)
+        self.assertEqual(reasons, ["INVALID_HOP_COUNT"])
+
+    def test_invalid_environment_values_fall_back_safely(self):
+        with patch.dict("os.environ", {
+            "TROJAN_DEX_MAX_QUOTE_AGE_SECONDS": "nan",
+            "TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT": "bad",
+            "TROJAN_DEX_MAX_HOPS": "not-an-int",
+        }):
+            self.assertEqual(
+                dex_engine._bounded_env_float("TROJAN_DEX_MAX_QUOTE_AGE_SECONDS", 8, 1, 30),
+                8.0,
+            )
+            self.assertEqual(
+                dex_engine._bounded_env_float("TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT", 3, 0.01, 20),
+                3.0,
+            )
+            self.assertEqual(
+                dex_engine._bounded_env_int("TROJAN_DEX_MAX_HOPS", 4, 1, 8),
+                4,
+            )
+
     def test_rejects_invalid_pair_and_amount(self):
         with self.assertRaises(ValueError):
             dex_engine.build_route("same", "same", 1000)
