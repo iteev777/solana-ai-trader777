@@ -1,12 +1,6 @@
 name: Create Solana Playground Token-2022 share link
 
 on:
-  push:
-    branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - playground_token2022_ata.ts
-      - .github/workflows/create-playground-token2022-share.yml
   workflow_dispatch:
 
 permissions:
