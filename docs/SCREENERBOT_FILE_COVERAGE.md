@@ -1619,15 +1619,15 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/error.rs` | PENDING |  |
 | `src/trader/evaluators/dca.rs` | MAPPED | Trojan `position_policy.py` + `paper_trading.py`; pure decision/gating logic implemented independently | Compared step selection, average/first-entry basis, waits, cooldown, stale prices, loss-stop, in-flight, first-buy sizing and minimum ticket. Trojan implementation commits `bee9ff1` / `6acfd66`; tests passed. |
 | `src/trader/evaluators/entry.rs` | PENDING |  |
-| `src/trader/evaluators/exit.rs` | PENDING |  |
-| `src/trader/evaluators/exit_break_even.rs` | PENDING |  |
-| `src/trader/evaluators/exit_rules.rs` | PENDING |  |
-| `src/trader/evaluators/exit_stop_loss.rs` | PENDING |  |
-| `src/trader/evaluators/exit_take_profit.rs` | PENDING |  |
-| `src/trader/evaluators/exit_time.rs` | PENDING |  |
-| `src/trader/evaluators/exit_time_stagnation.rs` | PENDING |  |
-| `src/trader/evaluators/exit_time_watch.rs` | PENDING |  |
-| `src/trader/evaluators/exit_trailing.rs` | PENDING |  |
+| `src/trader/evaluators/exit.rs` | MAPPED | Trojan `paper_trading.py`, `exit_policy.py`, `main.py` | Full coordinator compared at responsibility level: reference separates always-on blacklist/emergency-risk safety exits from ownership-scoped LLM, built-in and strategy exits; Trojan currently has a paper-position evaluator with built-in price/time exits but lacks the same safety/policy ownership boundary and LLM/strategy exit coordinator. See Trojan inventory `exit_policy.py` / `paper_trading.py`; parity remains partial. |
+| `src/trader/evaluators/exit_break_even.rs` | MAPPED | Trojan `exit_policy.py` | Peak-armed break-even protection and below-entry firing mapped; Trojan supports activation/offset but does not validate offset < activation like the reference. |
+| `src/trader/evaluators/exit_rules.rs` | MAPPED | Trojan `exit_policy.py`, `paper_trading.py` | Reference rule order is stop-loss → trailing → break-even → take-profit → time-loss → stagnation; first admitted rule wins and invalid rule config is isolated/reported so later rules still run. Trojan has a fixed sequence and whole-policy parse failure currently blocks the position update; parity gap documented. |
+| `src/trader/evaluators/exit_stop_loss.rs` | MAPPED | Trojan `exit_policy.py` | Fixed loss threshold mapped; reference additionally supports minimum hold and one-time partial stop-loss, then full exit if still below threshold. Trojan currently uses full stop-loss only and has no min-hold/partial-once controls. |
+| `src/trader/evaluators/exit_take_profit.rs` | MAPPED | Trojan `position_policy.py`, `paper_trading.py` | Reference sell_pct shares are fractions of original position, converted to share of remaining at each tier; Trojan now accepts reference-style sell_pct and normalizes to remaining share while preserving legacy sell_fraction. Final tier can full-close. Commits `ee9b6f9`, `8146985`; tests `9bbb982`, `78e68c1`, `c7e5161`; 1,029 tests and full validation passed. |
+| `src/trader/evaluators/exit_time.rs` | MAPPED | Trojan `exit_policy.py` | Duration plus P&L threshold mapped; reference validates policy and ignores invalid/nonpositive price, while Trojan's supplied mark is positive-finite checked before evaluating. Separate scheduled time-watch behavior remains to audit. |
+| `src/trader/evaluators/exit_time_stagnation.rs` | MAPPED | Trojan `exit_policy.py` | Held-duration and flat P&L band mapped; reference requires positive duration and band and uses inclusive price bounds. Trojan permits a zero band and uses abs(P&L) comparison; edge-boundary parity needs a focused follow-up test. |
+| `src/trader/evaluators/exit_time_watch.rs` | IMPLEMENT | Trojan `paper_trading.update_position()` currently checks time exits only when a position update arrives; reference exposes an ownership-aware next-due watch with explicit Off/Unpriced/Clear/Due states and computes due_at. Implement a lightweight paper-only equivalent after completing the position lifecycle and scheduler audit; do not introduce a second price source. |
+| `src/trader/evaluators/exit_trailing.rs` | MAPPED | Trojan `exit_policy.py` | Peak-armed trailing and profit-only trigger mapped, including tiered distances. Reference validates bands and computes distance at the highest reached peak band; Trojan uses the same peak basis, but band-vs-base validation and boundary cases remain to verify. |
 | `src/trader/evaluators/mod.rs` | PENDING |  |
 | `src/trader/evaluators/strategies.rs` | PENDING |  |
 | `src/trader/executors/buy.rs` | PENDING |  |
@@ -1663,11 +1663,11 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/paper/types/tests.rs` | PENDING |  |
 | `src/trader/policy.rs` | PARTIAL | Trojan `position_policy.py`, `exit_policy.py` | Compared DCA config snapshot fields and exit-policy ownership concept; full policy file and all policy types remain open. |
 | `src/trader/safety/blacklist.rs` | MAPPED | `blacklist.py`, `main.py`, `exit_policy.py` | Trojan checks token/pool/account blacklists before entry, but no verified emergency blacklist-triggered position exit equivalent to the reference safety evaluator. |
-| `src/trader/safety/cooldown.rs` | PENDING |  |
-| `src/trader/safety/limits.rs` | PENDING |  |
-| `src/trader/safety/loss_limit.rs` | PENDING |  |
+| `src/trader/safety/cooldown.rs` | MAPPED | Trojan `risk_manager.py`, `database.py` | Token re-entry cooldown is implemented using persisted last-exit timestamp and configurable duration; reference scopes it per book. Trojan has paper/live mode separation but no separate book-level ownership dimension. |
+| `src/trader/safety/limits.rs` | MAPPED | Trojan `risk_manager.py`, `paper_trading.py` | Global and per-strategy position limits mapped. Reference excludes wallet-derived holdings from capacity and separately checks any already-held/pending token; Trojan's current capacity is based on paper position map and needs lifecycle/pending-entry audit. |
+| `src/trader/safety/loss_limit.rs` | MAPPED | Trojan `risk_manager.py`, `database.py`, `trading_control.py` | Rolling realized-loss entry guard exists in Trojan in USD and database history; reference maintains a native-denominated period state synced from books, tracks manual resume and optional auto-resume on rollover. Trojan lacks equivalent exposed period state/manual resume semantics; full integration parity remains open. |
 | `src/trader/safety/mod.rs` | PENDING |  |
-| `src/trader/safety/risk.rs` | PENDING |  |
+| `src/trader/safety/risk.rs` | MAPPED | Trojan `exit_policy.py`, `risk_manager.py` | Reference emergency exit at >90% loss from average entry is a safety exit independent of policy ownership. Trojan's default stop loss is earlier and full, but the explicit emergency safety path and precedence over ownership are not yet separately represented. |
 | `src/trader/stats/breakdowns.rs` | PENDING |  |
 | `src/trader/stats/breakdowns_tests.rs` | PENDING |  |
 | `src/trader/stats/mod.rs` | PENDING |  |
