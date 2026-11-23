@@ -8,6 +8,8 @@ import os
 import json
 import ipaddress
 import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import subprocess
 import select
 import threading
@@ -171,9 +173,18 @@ def _entry(url):
 def _retry_after(response):
     value = response.headers.get("Retry-After")
     try:
-        return min(_MAX_COOLDOWN, max(1.0, float(value)))
-    except (TypeError, ValueError):
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            seconds = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return 5.0
+    if not math.isfinite(seconds):
         return 5.0
+    return min(_MAX_COOLDOWN, max(1.0, seconds))
 
 
 def rpc_call(method, params):
