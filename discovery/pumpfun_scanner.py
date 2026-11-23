@@ -1,5 +1,5 @@
 # ==========================================
-# TROJAN V2 - BIRDEYE MEME LISTING SCANNER
+# TROJAN V2 - BIRDEYE MEME LISTING SCANNER (LEGACY MODULE PATH)
 # RECENT LISTINGS + TRENDING FALLBACK
 # ==========================================
 
@@ -233,6 +233,11 @@ def scan_pumpfun():
         raise
 
     return found_tokens
+
+
+def scan_birdeye_meme_listing():
+    """Canonical name for the Birdeye-backed meme-platform listing feed."""
+    return scan_pumpfun()
 
 
 # ==========================================
