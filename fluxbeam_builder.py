@@ -10,7 +10,7 @@ import struct
 import time
 
 import solana_onchain as chain
-from raydium_cpmm_builder import _compile_legacy_message
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 import token2022_inspector as token2022
 
 PROGRAM_ID = chain.PROGRAMS["fluxbeam_amm"]
@@ -238,6 +238,8 @@ def build_fluxbeam_swap(quote, wallet, user_input_token_account,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
         "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(),
         "last_valid_block_height": last_valid,
         "authority_bump": bump,
         "compute_units": COMPUTE_UNITS,
