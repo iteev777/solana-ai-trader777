@@ -82,6 +82,10 @@ behavior are unverified by this checkpoint.
 - `c552fab`: add malformed Clock sysvar regression cases.
 - `633eeb8`: measure confirmed snapshot freshness using a monotonic clock rather than wall-clock time.
 - `130e363`: add freshness and stale-snapshot regression tests, including a wall-clock independence check.
+- `44e1d60`, `67db8c2`: derive Q64.64 bin price from the signed bin id and step, matching ScreenerBot's bounded fixed-point exponentiation rather than relying on lazily populated on-chain bin price; preserve the three-consecutive-array fail-closed scope.
+- `517ba8c`: test zero and signed bin IDs, zero stored prices, and missing next array.
+- `3bb69c5`: test inverse input-fee rounding minimality and output-fee bounds.
+- Three targeted comparisons completed at source level: consecutive array coverage, fee-rounding formulas, and derived price mathematics. **Validation is pending**: GitHub reported no workflow run for the new commits and full Python regression tests have not been executed. Do not mark production parity complete yet.
 - Validation: **not executed** in this continuation; do not count these changes in the previous 605-test checkpoint.
-- Remaining DLMM review: full reference adapter and layouts, fee arithmetic, bin traversal, missing-array behavior, quote output accounting, and integration tests. Preserve read-only live execution lock.
+- Remaining DLMM review: execute all regression tests; independently verify actual DLMM account layout, price arithmetic and quote output against pinned reference fixtures or on-chain simulation; complete the full adapter and layout review. Preserve read-only live execution lock.
 - Next file remains `meteora_dlmm_quote.py` until the full comparison and tests are completed.
