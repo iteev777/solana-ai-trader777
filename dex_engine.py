@@ -234,7 +234,8 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
     )
     if effective_slippage_bps > route_comparison.MAX_SLIPPAGE_BPS:
         raise ValueError("Slippage exceeds configured safety cap")
-    network_fee_output_amounts = network_fee_output_amounts or {}
+    if network_fee_output_amounts is None:
+        network_fee_output_amounts = {}
     if not isinstance(network_fee_output_amounts, dict):
         raise ValueError("network_fee_output_amounts must be an object")
 
@@ -284,11 +285,20 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
 
     now = time.time()
     candidates = []
-    aggregate = raw_quotes.get("aggregators") or {}
+    aggregate = raw_quotes.get("aggregators")
+    if not isinstance(aggregate, dict):
+        rejected["aggregators"] = "INVALID_AGGREGATOR_RESPONSE"
+        aggregate_quotes = {}
+    else:
+        aggregate_quotes = aggregate.get("quotes")
+        if not isinstance(aggregate_quotes, dict):
+            rejected["aggregators"] = "INVALID_AGGREGATOR_QUOTES_MAP"
+            aggregate_quotes = {}
+
     for provider in ("jupiter", "raptor"):
-        item = (aggregate.get("quotes") or {}).get(provider)
+        item = aggregate_quotes.get(provider)
         if item is None:
-            rejected[provider] = "QUOTE_UNAVAILABLE"
+            rejected[provider] = rejected.get("aggregators", "QUOTE_UNAVAILABLE")
             continue
         try:
             candidates.append(_normalize_candidate(
@@ -395,7 +405,13 @@ def get_engine_status():
         "meteora_dlmm": protocol_capabilities.get("meteora_dlmm", {}).get("transaction_builder", {}),
         "other_protocols": {
             "available": False,
-            "reason": "No protocol-specific native builder is registered and validated",
+            "status": "REGISTERED_BUT_NOT_PROMOTED_IN_LEGACY_SUMMARY",
+            "registered_protocols": [
+                name for name, capability in protocol_capabilities.items()
+                if name not in {"raydium_cpmm", "pumpswap", "orca_whirlpool", "meteora_dlmm"}
+                and capability.get("transaction_builder", {}).get("available")
+            ],
+            "reason": "Additional builders are listed in protocol_capabilities but are not promoted in this legacy dashboard summary",
         },
     }
     # Preserve dashboard fields while adding the full, explicit protocol matrix.
