@@ -179,6 +179,14 @@ class MultiPoolDexEngineTests(unittest.TestCase):
                 pool_addresses=[], network_fee_output_amounts={"jupter": 1}
             )
 
+    def test_rejects_network_fee_for_unknown_direct_pool(self):
+        with self.assertRaisesRegex(ValueError, "unknown route"):
+            dex_engine.build_routes(
+                self.input_mint, self.output_mint, 100,
+                pool_addresses=["pool-a"],
+                network_fee_output_amounts={"direct:pool-b": 1}
+            )
+
     def test_status_keeps_live_execution_locked(self):
         with patch("solana_onchain.get_onchain_status", return_value={
             "supported_protocols": ["raydium_cpmm"]
