@@ -168,8 +168,9 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
     if (fresh.get("token_program_input") != token_program_input
             or fresh.get("token_program_output") != token_program_output):
         raise ValueError("Orca token program state changed during transaction preparation")
+    input_account = user_a_acc if a_to_b else user_b_acc
     input_balance = _decode_user_token(
-        user_input_token_account, token_program_input, wallet, input_mint,
+        input_account, token_program_input, wallet, input_mint,
         "Input token account", amount,
     )
     _decode_user_token(user_a_acc, token_program_a, wallet, state["mint_a"], "Token A account")
