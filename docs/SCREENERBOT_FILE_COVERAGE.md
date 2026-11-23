@@ -929,7 +929,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/pools/fetcher.rs` | PENDING |  |
 | `src/chains/solana/pools/fetcher_ops.rs` | PENDING |  |
 | `src/chains/solana/pools/fetcher_types.rs` | PENDING |  |
-| `src/chains/solana/pools/layouts/clmm_ticks.rs` | PENDING |  |
+| `src/chains/solana/pools/layouts/clmm_ticks.rs` | MAPPED | `raydium_clmm_quote.py`, `clmm_quote_math.py` | Reference InitializedTick structure maps to Trojan validated (tick_index, liquidity_net) records; Trojan additionally rejects duplicate indexes and non-i128 liquidity deltas at quote boundary. |
 | `src/chains/solana/pools/layouts/fluxbeam.rs` | PENDING |  |
 | `src/chains/solana/pools/layouts/meteora_damm.rs` | PENDING |  |
 | `src/chains/solana/pools/layouts/meteora_dbc.rs` | PENDING |  |
@@ -940,7 +940,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/pools/layouts/pumpfun_amm.rs` | PENDING |  |
 | `src/chains/solana/pools/layouts/pumpfun_legacy.rs` | PENDING |  |
 | `src/chains/solana/pools/layouts/raydium_amm_v4.rs` | PENDING |  |
-| `src/chains/solana/pools/layouts/raydium_clmm.rs` | PENDING |  |
+| `src/chains/solana/pools/layouts/raydium_clmm.rs` | MAPPED | `raydium_clmm_quote.py`, `raydium_clmm_builder.py` | Compared pool/config/bitmap/tick-array offsets and validation. Trojan rejects malformed owner/discriminator/layout and verifies discovery-vs-confirmed snapshot state. |
 | `src/chains/solana/pools/layouts/raydium_cpmm.rs` | PENDING |  |
 | `src/chains/solana/pools/mod.rs` | PENDING |  |
 | `src/chains/solana/pools/reserve_accounts.rs` | PENDING |  |
@@ -984,7 +984,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/swaps/direct/quote.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/registry.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venue.rs` | PENDING |  |
-| `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` | PENDING |  |
+| `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` | MAPPED | `clmm_quote_math.py`, `raydium_clmm_quote.py`, `tests/test_raydium_clmm_direct_quote.py` | Trojan independently implements Q64.64 tick math, tick crossing, fee-per-step and coverage-boundary refusal. Integer bounds/rounding and malformed tick validation strengthened; no source copied. |
 | `src/chains/solana/swaps/direct/venues/fluxbeam.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/math.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/meteora_damm.rs` | PENDING |  |
@@ -996,7 +996,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/swaps/direct/venues/pumpfun_amm.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/pumpfun_legacy.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/raydium_amm_v4.rs` | PENDING |  |
-| `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` | PENDING |  |
+| `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` | MAPPED | `raydium_clmm_quote.py`, `raydium_clmm_builder.py`, `tests/test_raydium_clmm_direct_quote.py` | Trojan read-only quote plus unsigned SWAP_V2 builder maps pool state, bitmap extension, tick arrays, Token-2022 transfer fees and fixed instruction accounts. Builder deliberately does not sign/broadcast; price-impact field semantics differ. |
 | `src/chains/solana/swaps/direct/venues/raydium_cpmm.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/token2022.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/verify.rs` | PENDING |  |
