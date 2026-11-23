@@ -483,3 +483,38 @@ mint's Token-2022 layout, vault token-program ownership and the canonical
 FluxBeam vault authority before quoting. Non-zero TransferFeeConfig mints and
 unsupported extensions remain blocked, matching the reference venue's
 conservative limitation rather than assuming the AMM's fee interaction.
+
+
+## Token-2022 native DEX support matrix
+
+| Native venue | Current Token-2022 policy | Scope / restriction |
+|---|---|---|
+| Raydium CPMM | Transfer-fee aware | Both transfer legs are included in net quote and min-out |
+| Raydium CLMM | Transfer-fee aware | Both transfer legs are included in tick-walk quote and SwapV2 |
+| Orca Whirlpool | Transfer-fee aware | SwapV2 path; live mainnet instruction confirmation is still outstanding |
+| Meteora DLMM | Transfer-fee aware | function_type=0 only; Swap2 has no remaining accounts |
+| Meteora DAMM v2 | Transfer-fee aware | Existing supported pool fee modes only |
+| Meteora DBC | Transfer-fee aware | Flat-fee, non-migrated VirtualPools only |
+| PumpSwap V2 | Transfer-fee aware | Supported buy/sell V2 pool modes; unsupported pool flags fail closed |
+| Pump.fun legacy | Transfer-fee aware | SOL-paired, supported legacy bonding curves only |
+| FluxBeam | Zero-fee Token-2022 only | Both transfer-fee schedules must be zero and authority disabled |
+| Raydium AMM v4 | Blocked | No native Token-2022 path verified against the reference implementation |
+| Moonit | Blocked | No native Token-2022 path verified against the reference implementation |
+
+The shared mint validator permits the audited TransferFeeConfig and the
+metadata/group pointer extensions that do not add unimplemented transfer
+behavior. It rejects transfer hooks, confidential-transfer behavior,
+non-transferable mints, permanent delegates, default-frozen account behavior,
+pausable mints and any unknown extension. The account validator checks the
+TransferFeeAmount extension's exact eight-byte value and ImmutableOwner's
+zero-byte value; it does not accept unknown token-account extensions.
+
+For ATA rent estimates, legacy token accounts use 165 bytes. Supported
+Token-2022 accounts use 170 bytes for the base account plus ImmutableOwner, or
+182 bytes when TransferFeeAmount is also required. Rent is fetched from RPC for
+the computed size. These sizes are limited to the explicitly accepted mint
+extension set; the server never assumes that every Token-2022 mint has a
+165-byte account.
+
+All native transaction builders remain unsigned and non-broadcasting. Token
+program compatibility and transfer-fee math do not unlock live trading.
