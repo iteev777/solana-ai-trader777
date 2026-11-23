@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import strategy_conditions
 import strategy_rules
+import strategy_catalog
 
 
 class StrategyConditionTests(unittest.TestCase):
@@ -220,6 +221,19 @@ class StrategyConditionTests(unittest.TestCase):
             "minimum_pct": 10, "maximum_pct": 20
         })
         self.assertTrue(passed)
+
+
+    def test_strategy_catalog_exposes_bounded_indicator_freshness_policy(self):
+        with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "90"}):
+            policy = strategy_catalog.get_strategy_catalog()["indicator_freshness"]
+        self.assertTrue(policy["enabled"])
+        self.assertEqual(policy["max_age_seconds"], 90.0)
+        self.assertEqual(policy["missing_timestamp"], "reject")
+
+    def test_invalid_indicator_freshness_configuration_uses_safe_default(self):
+        with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "nan"}):
+            policy = strategy_catalog.get_strategy_catalog()["indicator_freshness"]
+        self.assertEqual(policy["max_age_seconds"], 180.0)
 
 
 if __name__ == "__main__":
