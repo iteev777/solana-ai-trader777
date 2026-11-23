@@ -48,7 +48,13 @@ def _env_bool(name, default=False):
     raw = os.getenv(name)
     if raw is None:
         return bool(default)
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    # Invalid configuration must not silently disable a safety filter.
+    return bool(default)
 
 
 def _result(status, stage, reason, metrics=None):
@@ -68,12 +74,17 @@ def _clean_metadata_text(value):
 
 def _metadata_stage(token, mint):
     symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name_raw = token.get("name") if "name" in token else _get(token, "baseToken", "name")
+    name_raw = token.get("name") or _get(token, "baseToken", "name")
     name = _clean_metadata_text(name_raw)
     symbol = _clean_metadata_text(symbol)
 
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
+    candidate_mint = token.get("address") or _get(token, "baseToken", "address")
+    if candidate_mint and candidate_mint != mint:
+        return _result("REJECT", "metadata", "TOKEN_MINT_MISMATCH", {
+            "requested_mint": mint, "candidate_mint": candidate_mint
+        })
     if not symbol:
         if _env_bool("TROJAN_FILTER_REJECT_EMPTY_SYMBOLS", True):
             return _result("REJECT", "metadata", "EMPTY_SYMBOL")
@@ -128,8 +139,20 @@ def _authority_is_active(value):
     if value is None or value is False:
         return False
     if isinstance(value, str):
-        return value.strip().lower() not in ("", "none", "null", "disabled", "revoked", "unknown")
+        return value.strip().lower() not in ("", "none", "null", "disabled", "revoked")
     return value is True
+
+
+def _optional_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
 
 
 def _onchain_stage(token):
@@ -144,7 +167,9 @@ def _onchain_stage(token):
     freeze_authority = _first_value(token.get("freezeAuthority"), token.get("freeze_authority"))
     update_authority = _first_value(token.get("updateAuthority"), token.get("update_authority"))
     creator = _first_value(token.get("creator"), token.get("creatorAddress"), token.get("creator_address"))
-    mutable = _first_value(token.get("mutable"), token.get("isMutable"), token.get("is_mutable"))
+    mutable = _optional_bool(_first_value(
+        token.get("mutable"), token.get("isMutable"), token.get("is_mutable")
+    ))
 
     reject_immutable_freeze = _env_bool(
         "TROJAN_FILTER_REJECT_IMMUTABLE_WITH_FREEZE", True
@@ -530,6 +555,10 @@ def _quality_stage(token):
     tier = quality.get("tier") if isinstance(quality, dict) else None
     if score is None:
         return _result("WAIT", "quality", "CANDIDATE_QUALITY_UNKNOWN")
+    if not 0.0 <= score <= 100.0:
+        return _result("REJECT", "quality", "INVALID_CANDIDATE_QUALITY_SCORE", {
+            "quality_score": score
+        })
     if score < minimum:
         return _result("REJECT", "quality", "CANDIDATE_QUALITY_BELOW_MINIMUM", {
             "quality_score": score, "minimum": minimum, "tier": tier
@@ -545,21 +574,31 @@ def evaluate_token(token, mint, strategy="main"):
     Missing optional market signals are WAIT only when their corresponding
     requirement is enabled. This avoids treating absent provider data as zero.
     """
-    token = token if isinstance(token, dict) else {}
+    if not isinstance(token, dict):
+        return {
+            "status": "REJECT",
+            "reason": "INVALID_TOKEN_DATA",
+            "stage": "metadata",
+            "decisions": [_result("REJECT", "metadata", "INVALID_TOKEN_DATA")],
+            "evaluated_at": time.time(),
+        }
+    # Keep stage execution lazy: the first WAIT/REJECT must prevent all later
+    # stages from running, matching the ordered reference profile.
     stages = (
-        _metadata_stage(token, mint),
-        _onchain_stage(token),
-        _market_stage(token, strategy),
-        _age_stage(token),
-        _valuation_stage(token),
-        _pool_metrics_stage(token),
-        _activity_stage(token),
-        _momentum_stage(token),
-        _provenance_stage(token),
-        _quality_stage(token),
+        lambda: _metadata_stage(token, mint),
+        lambda: _onchain_stage(token),
+        lambda: _market_stage(token, strategy),
+        lambda: _age_stage(token),
+        lambda: _valuation_stage(token),
+        lambda: _pool_metrics_stage(token),
+        lambda: _activity_stage(token),
+        lambda: _momentum_stage(token),
+        lambda: _provenance_stage(token),
+        lambda: _quality_stage(token),
     )
     decisions = []
-    for item in stages:
+    for evaluate_stage in stages:
+        item = evaluate_stage()
         decisions.append(item)
         if item["status"] != "PASS":
             return {
@@ -573,6 +612,6 @@ def evaluate_token(token, mint, strategy="main"):
         "status": "PASS",
         "reason": "ALL_FILTER_STAGES_PASSED",
         "stage": "complete",
-        "decisions": list(stages),
+        "decisions": decisions,
         "evaluated_at": time.time(),
     }
