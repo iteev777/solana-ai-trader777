@@ -227,6 +227,10 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     minimum_out = _u64(fresh_quote.get("minimum_out_amount"), "fresh quote minimum output")
     if minimum_out > fresh_out:
         raise ValueError("Fresh quote minimum output exceeds its quoted output")
+    if (quote.get("token_program_base") != fresh_quote.get("token_program_base")
+            or quote.get("token_program_quote") != fresh_quote.get("token_program_quote")):
+        raise ValueError("Raydium CPMM token program state changed since the supplied quote")
+
     fresh_quote_slot = fresh_quote.get("slot")
     if isinstance(fresh_quote_slot, bool) or not isinstance(fresh_quote_slot, int) or fresh_quote_slot < quote_slot:
         raise ValueError("Fresh Raydium CPMM quote is older than the supplied quote")
@@ -270,7 +274,8 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     if chain._key(pool_acc["data"], 296) != observation or pool_acc["data"][328] != authority_bump:
         raise ValueError("Raydium CPMM authority or observation PDA changed during transaction snapshot")
     for field in ("amm_config", "vault_base", "vault_quote", "base_mint",
-                  "quote_mint", "open_time", "status"):
+                  "quote_mint", "token_program_base", "token_program_quote",
+                  "open_time", "status"):
         if current.get(field) != discovered.get(field):
             raise ValueError("Raydium CPMM pool relationships changed during snapshot")
     if slot < fresh_quote_slot or slot - fresh_quote_slot > max_quote_slot_lag:
