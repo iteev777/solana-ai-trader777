@@ -2,7 +2,7 @@
 import math
 import time
 
-PROGRAM = "meteora_damm"
+PROGRAM = "meteora_damm_v2"
 FEE_DENOMINATOR = 1_000_000_000
 MAX_SNAPSHOT_AGE_SECONDS = 5.0
 MAX_SLIPPAGE_BPS = 300
