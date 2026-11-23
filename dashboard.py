@@ -775,7 +775,7 @@ def api_raydium_cpmm_order():
             }), 422
         from native_execution import register_native_approval
         approval = register_native_approval(
-            order["transaction"], "raydium_cpmm", order["last_valid_block_height"]
+            order["transaction"], "raydium_cpmm", order["last_valid_block_height"], simulation
         )
         order.update(approval)
         order["simulation"] = simulation
@@ -840,7 +840,7 @@ def api_pumpswap_v2_order():
             }), 422
         from native_execution import register_native_approval
         approval = register_native_approval(
-            order["transaction"], "pumpswap", order["last_valid_block_height"]
+            order["transaction"], "pumpswap", order["last_valid_block_height"], simulation
         )
         order.update(approval)
         order["simulation"] = simulation
