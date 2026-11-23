@@ -1098,19 +1098,19 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/connectivity/types.rs` | PENDING |  |
 | `src/data_server/access.rs` | PENDING |  |
 | `src/data_server/mod.rs` | PENDING |  |
-| `src/database/backup.rs` | PENDING |  |
+| `src/database/backup.rs` | MAPPED | `database.py::backup_database`, `restore_database`, `list_database_backups` | Trojan uses SQLite online backup API, full integrity check, atomic temp-file replacement, retention and offline-only restore with emergency snapshot. Reference uses per-store snapshots and pre-upgrade backups with manifest metadata; Trojan has one monolithic DB and no per-store snapshots. |
 | `src/database/backup/snapshot.rs` | PENDING |  |
 | `src/database/backup/snapshot_tests.rs` | PENDING |  |
 | `src/database/catalog.rs` | PENDING |  |
 | `src/database/catalog_tests.rs` | PENDING |  |
 | `src/database/configure.rs` | PENDING |  |
 | `src/database/handles.rs` | PENDING |  |
-| `src/database/health.rs` | PENDING |  |
+| `src/database/health.rs` | MAPPED | `database.py::get_database_health` | Trojan exposes full `PRAGMA integrity_check`, journal mode, DB/WAL size, storage backend and backup count/latest backup. Reference tracks typed health per store (healthy/rebuilt/restored/unavailable), reconciliation state and transitions; Trojan aggregate health is less granular. |
 | `src/database/maintenance.rs` | PENDING |  |
-| `src/database/mod.rs` | PENDING |  |
+| `src/database/mod.rs` | MAPPED | `database.py` | Trojan has one SQLite database module with connection context manager, WAL, foreign keys and busy timeout. Reference has multiple store specs/handles and per-store ownership; Trojan's monolithic single-file architecture remains a structural gap. |
 | `src/database/open.rs` | PENDING |  |
 | `src/database/open_tests.rs` | PENDING |  |
-| `src/database/recovery.rs` | PENDING |  |
+| `src/database/recovery.rs` | PARTIAL | `database.py::restore_database` | Trojan supports manual offline restore from a verified snapshot and keeps an emergency backup. Reference classifies corruption/open failures, quarantines damaged DB plus WAL/SHM and can restore a verified snapshot automatically; Trojan has no quarantine manifest or automatic recovery policy. |
 | `src/database/recovery/policy.rs` | PENDING |  |
 | `src/database/recovery/policy_tests.rs` | PENDING |  |
 | `src/database/recovery_tests.rs` | PENDING |  |
@@ -1120,7 +1120,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/database/schema/mod.rs` | PENDING |  |
 | `src/database/schema/renames.rs` | PENDING |  |
 | `src/database/schema/types.rs` | PENDING |  |
-| `src/database/schema/upgrade.rs` | PENDING |  |
+| `src/database/schema/upgrade.rs` | PARTIAL | `database.py::initialize_database`, `SCHEMA_VERSION` | Trojan now refuses a stored future schema before any schema write and performs additive `CREATE IF NOT EXISTS`/`ALTER TABLE` migrations. Reference uses per-store schema ledgers, reader compatibility fences, transactional versioned migrations, rename reconciliation and pre-upgrade snapshots; Trojan still lacks those. |
 | `src/database/schema/upgrade_tests.rs` | PENDING |  |
 | `src/database/transaction.rs` | PENDING |  |
 | `src/errors/account.rs` | PENDING |  |
@@ -1226,7 +1226,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/ohlcvs/database/config.rs` | PENDING |  |
 | `src/ohlcvs/database/data_version.rs` | PENDING |  |
 | `src/ohlcvs/database/gaps.rs` | PENDING |  |
-| `src/ohlcvs/database/maintenance.rs` | PENDING |  |
+| `src/ohlcvs/database/maintenance.rs` | PARTIAL | `database.py::prune_market_candles`, `save_market_candles` | Trojan has bounded candle retention and upsert by pool/timeframe/open_time; reference additionally performs scheduled gap repair, data-version cleanup and coordinated maintenance. Full gap/retention scheduler comparison remains open. |
 | `src/ohlcvs/database/migrations.rs` | PENDING |  |
 | `src/ohlcvs/database/mod.rs` | PENDING |  |
 | `src/ohlcvs/database/retention.rs` | PENDING |  |
@@ -1275,7 +1275,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/positions/database/global.rs` | PENDING |  |
 | `src/positions/database/mod.rs` | PENDING |  |
 | `src/positions/database/open_round.rs` | PENDING |  |
-| `src/positions/database/operations.rs` | PENDING |  |
+| `src/positions/database/operations.rs` | MAPPED | `database.py::open_position_atomic`, `add_position_investment_atomic`, `partial_close_position_atomic`, `close_position_atomic` | Trojan uses atomic SQLite transactions for position open, DCA add, partial close and full close with paper accounting. Reference has richer position lifecycle/booking/provenance, multi-book and reconciliation logic; Trojan live reconciliation and ownership-aware position store are not equivalent. |
 | `src/positions/database/paper.rs` | PENDING |  |
 | `src/positions/database/provenance.rs` | PENDING |  |
 | `src/positions/database/queries.rs` | PENDING |  |
@@ -1680,7 +1680,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/trader/types.rs` | PENDING |  |
 | `src/transactions/database/bootstrap.rs` | PENDING |  |
 | `src/transactions/database/column_names.rs` | PENDING |  |
-| `src/transactions/database/deltas.rs` | PENDING |  |
+| `src/transactions/database/deltas.rs` | MAPPED | `database.py::record_copy_trade_event`, `subject_asset_deltas`, `get_subject_asset_deltas` | Trojan stores complete subject-relative asset deltas atomically with copy event signature dedupe, preserving raw amounts, decimals, kind, venue, fee and success. Reference has general transaction DB, durable cursor/backfill and chain-level transaction manager; Trojan only persists copy-watch events and needs general transaction history parity. |
 | `src/transactions/database/global.rs` | PENDING |  |
 | `src/transactions/database/maintenance.rs` | PENDING |  |
 | `src/transactions/database/migrations.rs` | PENDING |  |
