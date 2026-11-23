@@ -249,6 +249,10 @@ class StrategyConditionTests(unittest.TestCase):
         self.assertTrue(policy["enabled"])
         self.assertEqual(policy["max_age_seconds"], 90.0)
         self.assertEqual(policy["missing_timestamp"], "reject")
+        catalog = strategy_catalog.get_strategy_catalog()
+        self.assertEqual(catalog["evaluation_policy"]["timeout_ms"], 50)
+        self.assertEqual(catalog["evaluation_policy"]["maximum_rule_depth"], 4)
+        self.assertEqual(catalog["evaluation_policy"]["maximum_group_children"], 30)
 
     def test_invalid_indicator_freshness_configuration_uses_safe_default(self):
         with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "nan"}):
