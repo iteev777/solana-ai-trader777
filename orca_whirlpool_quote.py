@@ -260,14 +260,25 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     if expected_output_amount <= 0:
         raise ValueError("Token-2022 output transfer fee consumes the entire output amount")
 
-    spot_ratio = (
-        (state["sqrt_price_x64"] / mathx.Q64) ** 2
-        if zero_for_one else (mathx.Q64 / state["sqrt_price_x64"]) ** 2
-    )
-    average_ratio = expected_output_amount / amount_in
-    impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
+    sqrt_after_x64 = quote.get("sqrt_price_after_x64")
+    if (
+        isinstance(sqrt_after_x64, bool)
+        or not isinstance(sqrt_after_x64, int)
+        or not 0 < sqrt_after_x64 <= 2**128 - 1
+    ):
+        raise ValueError("Orca Whirlpool post-swap square-root price is invalid")
+    sqrt_before = state["sqrt_price_x64"] / mathx.Q64
+    sqrt_after = sqrt_after_x64 / mathx.Q64
+    price_before = sqrt_before * sqrt_before
+    price_after = sqrt_after * sqrt_after
+    if not math.isfinite(price_before) or not math.isfinite(price_after) or price_before <= 0:
+        raise ValueError("Orca Whirlpool price impact inputs are invalid")
+    # Match ScreenerBot: impact is the movement in the squared spot price,
+    # not an average execution-rate metric that also folds fees into impact.
+    impact = abs(price_before - price_after) / price_before * 100.0
     if not math.isfinite(impact):
         raise ValueError("Orca Whirlpool price impact is invalid")
+    impact = min(100.0, max(0.0, impact))
     block_time = chain._rpc("getBlockTime", [slot])
     if (isinstance(block_time, bool)
             or not isinstance(block_time, (int, float))
