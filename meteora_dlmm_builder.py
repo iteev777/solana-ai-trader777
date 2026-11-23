@@ -91,18 +91,25 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
         pool, input_mint, amount, slippage, output_mint
     )
     if (
-        fresh.get("pool_id") != pool or fresh.get("input_mint") != input_mint
+        not isinstance(fresh, dict)
+        or fresh.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_BIN_SNAPSHOT"
+        or fresh.get("pool_id") != pool or fresh.get("input_mint") != input_mint
         or fresh.get("output_mint") != output_mint
         or fresh.get("input_amount") != amount
-        or fresh.get("slot", 0) < quote_slot
     ):
-        raise ValueError("Fresh Meteora DLMM quote does not validate pool, pair and amount")
+        raise ValueError("Fresh Meteora DLMM quote does not validate status, pool, pair and amount")
+    fresh_slot = fresh.get("slot")
+    if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot or fresh_slot <= 0:
+        raise ValueError("Fresh Meteora DLMM quote has an invalid or older confirmed slot")
     for field in ("token_program_input", "token_program_output"):
         if quote.get(field) != fresh.get(field):
             raise ValueError("DLMM token program state changed since the supplied quote")
     minimum_out = fresh.get("minimum_out_amount")
+    fresh_out = fresh.get("out_amount")
     if isinstance(minimum_out, bool) or not isinstance(minimum_out, int) or not 0 < minimum_out <= 2**64 - 1:
         raise ValueError("Fresh Meteora DLMM minimum output is invalid")
+    if isinstance(fresh_out, bool) or not isinstance(fresh_out, int) or not minimum_out <= fresh_out <= 2**64 - 1:
+        raise ValueError("Fresh Meteora DLMM minimum output exceeds or lacks the quoted output")
 
     discovered = chain._account(pool)
     if discovered.get("owner") != DLMM_PROGRAM_ID:
@@ -326,7 +333,7 @@ def simulate_meteora_dlmm_transaction(transaction_base64):
         "status": "PASS", "success": True,
         "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
         "units_consumed": value.get("unitsConsumed"),
-        "logs": (value.get("logs") or [])[-8:],
+        "logs": [str(line)[:300] for line in logs[-8:]],
         "signing": "NOT_PERFORMED", "broadcast": "NOT_PERFORMED",
         "execution": "LOCKED",
     }
