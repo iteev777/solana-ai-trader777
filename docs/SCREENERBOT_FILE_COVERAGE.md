@@ -1175,9 +1175,9 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/filtering/store_helpers.rs` | PENDING |  |
 | `src/filtering/store_helpers_tests.rs` | PENDING |  |
 | `src/filtering/types.rs` | PENDING |  |
-| `src/global/mod.rs` | PENDING |  |
+| `src/global/mod.rs` | MAPPED | Trojan `trading_control.py` | Force-stop flag, timestamp and operator reason are equivalent process-local controls; Trojan adds input normalization, a 300-character reason bound, dashboard scope and explicit live-locked status. Remaining global module responsibilities are in `src/global/state.rs`, not this force-stop comparison. |
 | `src/global/security.rs` | PENDING |  |
-| `src/global/state.rs` | PENDING |  |
+| `src/global/state.rs` | MAPPED | Trojan `service_health.py`, `main.py`, `dashboard.py`, `trading_control.py` | Readiness/heartbeat subset is represented by Trojan service health and loop heartbeats. Reference additionally has explicit initialization/explore-mode flags, atomic readiness prerequisites, restart reservation/notify, GUI state and per-service global flags; desktop/restart mechanics are not one-to-one in this Railway/headless bot and need individual applicability decisions. |
 | `src/i18n/html.rs` | PENDING |  |
 | `src/i18n/localizer.rs` | PENDING |  |
 | `src/i18n/markup.rs` | PENDING |  |
@@ -1332,7 +1332,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/process/profiling.rs` | PENDING |  |
 | `src/process/restart.rs` | PENDING |  |
 | `src/process/restart_safety.rs` | PENDING |  |
-| `src/process/shutdown.rs` | PENDING |  |
+| `src/process/shutdown.rs` | MAPPED | Trojan `main.py`, `service_health.py` | Both have process lifecycle/shutdown responsibilities; Trojan shuts down thread pools/executors and records service heartbeats, but has no shared process-wide shutdown flag for collaborators to downgrade expected teardown errors. Evaluate whether that distinction needs an independent helper after service lifecycle review. |
 | `src/rpc/circuit_breaker/config.rs` | PENDING |  |
 | `src/rpc/circuit_breaker/mod.rs` | PENDING |  |
 | `src/rpc/circuit_breaker/state.rs` | PENDING |  |
