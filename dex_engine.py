@@ -398,6 +398,14 @@ def get_engine_status():
     }
     # Preserve dashboard fields while adding the full, explicit protocol matrix.
     for key in ("raydium_cpmm", "pumpswap_v2"):
+        protocol_key = "raydium_cpmm" if key == "raydium_cpmm" else "pumpswap"
+        simulation_capability = protocol_capabilities.get(protocol_key, {}).get(
+            "simulation", {}
+        )
+        simulation_available = bool(
+            isinstance(simulation_capability, dict)
+            and simulation_capability.get("available")
+        )
         native_builders[key] = {
             **native_builders[key],
             "instruction": "SwapBaseInput" if key == "raydium_cpmm" else None,
@@ -405,6 +413,7 @@ def get_engine_status():
             "transaction_version": "legacy",
             "fresh_requote_required": True,
             "rpc_simulation_required": True,
+            "rpc_simulation_available": simulation_available,
             "token_program_support": ["legacy_spl_token"],
             "existing_user_token_accounts_required": True,
             "pool_modes": ["standard_non_cashback_non_mayhem"] if key == "pumpswap_v2" else None,
