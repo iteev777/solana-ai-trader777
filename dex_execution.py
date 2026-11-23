@@ -5,11 +5,8 @@ transaction for the user's wallet to sign. /execute is disabled by default and
 requires both an explicit per-call confirmation and an environment feature flag.
 """
 import base64
-import math
 import os
-import re
 import time
-import uuid
 
 import requests
 
