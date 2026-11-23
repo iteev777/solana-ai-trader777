@@ -17,6 +17,21 @@ _lock = threading.RLock()
 _canonical_pool_by_token = OrderedDict()
 
 
+def _valid_pubkey(value):
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        import solana_onchain as chain
+        decoded = chain._b58decode(value)
+        return (
+            isinstance(decoded, (bytes, bytearray))
+            and len(decoded) == 32
+            and chain._b58encode(decoded) == value
+        )
+    except Exception:
+        return False
+
+
 def _number(value):
     if isinstance(value, bool):
         return None
@@ -28,12 +43,13 @@ def _number(value):
 
 
 def _address(token):
-    return token.get("address") if isinstance(token, dict) else None
+    value = token.get("address") if isinstance(token, dict) else None
+    return value if _valid_pubkey(value) else None
 
 
 def _pair_identity(pair):
     value = pair.get("pairAddress") or pair.get("poolAddress") or pair.get("address")
-    return value.strip() if isinstance(value, str) and value.strip() else None
+    return value if _valid_pubkey(value) else None
 
 
 def _derive_native_price(pairs):
@@ -58,14 +74,17 @@ def _derive_native_price(pairs):
 
 def _candidate(pair, native_price_usd):
     pool_address = _pair_identity(pair)
-    if pool_address:
-        import pool_analysis
-        if pool_analysis.should_skip_pool(pool_address):
-            return None
+    if not pool_address:
+        return None
+    import pool_analysis
+    if pool_analysis.should_skip_pool(pool_address):
+        return None
     base = pair.get("baseToken") if isinstance(pair.get("baseToken"), dict) else {}
     quote = pair.get("quoteToken") if isinstance(pair.get("quoteToken"), dict) else {}
     base_address = _address(base)
     quote_address = _address(quote)
+    if not base_address or not quote_address:
+        return None
     liquidity = pair.get("liquidity") if isinstance(pair.get("liquidity"), dict) else {}
     volume = pair.get("volume") if isinstance(pair.get("volume"), dict) else {}
     liquidity_usd = _number(liquidity.get("usd"))
@@ -113,11 +132,10 @@ def _summary(candidate):
 
 def select_best_pairs(pairs, requested_addresses):
     """Return one canonical, correctly base-priced pool for each requested mint."""
-    if not isinstance(pairs, list):
+    if not isinstance(pairs, list) or not isinstance(requested_addresses, (list, tuple, set)):
         return {}
     requested = {
-        value.strip() for value in requested_addresses
-        if isinstance(value, str) and value.strip()
+        value for value in requested_addresses if _valid_pubkey(value)
     }
     native_price = _derive_native_price(pairs)
     grouped = {}
