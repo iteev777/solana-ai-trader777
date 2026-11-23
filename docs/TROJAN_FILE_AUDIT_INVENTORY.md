@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 228
+- Trojanin seurattavat tiedostot: 230
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -237,6 +237,8 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 
 | `quote_errors.py` | `src/swaps/error.rs` | TESTED | Independent typed quote failure classifier for timeout, rate limit, no route, not tradable, rejected quote and unavailable; retry policy/HTTP status exposed. Tests `test_quote_errors.py`; full validation `45254436959`. |
 | `tests/test_quote_errors.py` | `src/swaps/error.rs` behavior tests | TESTED | Covers timeout, rate limit/retry-after, no-route vs not-tradable distinction, rejected payload and provider 5xx; full validation `45254436959`. |
+| `transaction_deltas.py` | `src/transactions/manager.rs`, `src/transactions/types.rs` | PARTIAL | New chain-specific subject-relative raw asset delta model preserves token/native movements, slot/time/venue/kind and fee payer ownership; unit tests are being added. Not yet wired into a durable general transaction table/manager. |
+| `tests/test_transaction_deltas.py` | `src/transactions/` transaction parsing tests | PENDING | New tests cover raw mint deltas, native SOL, fee-payer attribution, failed/ambiguous transactions and serialization; awaiting full validation. |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
 | `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
 | `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `tests/trader_dca.rs` | TESTED | Pure DCA gate tests cover legacy and multiplier sizing, price freshness, min-hold, cooldown, basis and hard-stop failures; full validation `45254436959` (998 tests).
