@@ -135,13 +135,17 @@ def _fetch_wallet_transaction(signature, wallet):
     )
 
 
-def _fetch_wallet_signatures(wallet, limit=None, before=None, until=None):
-    """Fetch one bounded Solana signature page, newest first, with resumable bounds."""
+def _signature_page_size():
     try:
         configured = int(os.getenv("TROJAN_COPY_POLL_SIGNATURE_LIMIT", "100"))
     except (TypeError, ValueError, OverflowError):
         configured = 100
-    maximum = max(1, min(configured, 1000))
+    return max(1, min(configured, 1000))
+
+
+def _fetch_wallet_signatures(wallet, limit=None, before=None, until=None):
+    """Fetch one bounded Solana signature page, newest first, with resumable bounds."""
+    maximum = _signature_page_size()
     if limit is None:
         page_limit = maximum
     elif isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= maximum:
@@ -250,9 +254,10 @@ def _poll_wallet_activity(wallets):
                 _poll_catchup[wallet] = state
 
             if not state["complete"]:
+                page_size = _signature_page_size()
                 for _ in range(_COPY_MAX_PAGES_PER_POLL):
                     page = _fetch_wallet_signatures(
-                        wallet, limit=_COPY_SIGNATURE_PAGE_SIZE,
+                        wallet, limit=page_size,
                         before=state["before"], until=state["until"]
                     )
                     if not page:
@@ -275,10 +280,10 @@ def _poll_wallet_activity(wallets):
 
                     # First observation deliberately establishes a recent bounded
                     # baseline; it does not replay the wallet's entire lifetime.
-                    if state["initial_window"] or len(page) < _COPY_SIGNATURE_PAGE_SIZE:
+                    if state["initial_window"] or len(page) < page_size:
                         state["complete"] = True
                         break
-                    if len(state["newest_first"]) >= _COPY_MAX_BACKLOG_SIGNATURES:
+                    if len(state["newest_first"]) >= page_size * _COPY_MAX_PAGES_PER_POLL:
                         break
 
             if not state["complete"]:
