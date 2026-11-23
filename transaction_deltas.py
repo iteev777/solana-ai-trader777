@@ -164,9 +164,6 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
     if fee is None:
         return []
 
-    # Record the network fee only when the watched subject is the fee payer.
-    subject_fee = fee if subject_index == 0 else 0
-
     program_ids = _program_ids(transaction, keys)
     venue = _venue_for(program_ids)
     system_ids = {
@@ -207,7 +204,7 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
             before_raw=before if 0 <= before <= MAX_U128 else None,
             after_raw=after if 0 <= after <= MAX_U128 else None,
             decimals=decimals, kind=kind, venue=venue,
-            fee_native_raw=subject_fee, success=True,
+            fee_native_raw=fee, success=True,
         ))
 
     if native_material:
