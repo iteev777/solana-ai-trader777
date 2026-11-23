@@ -186,11 +186,11 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         mint[44] = 6
         mint[45] = 1
         accounts[4] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
-        accounts[1] = self.token_account(
-            self.mint_a, 10**12, token_program=chain.TOKEN_2022_PROGRAM
+        accounts[2] = self.token_account(
+            self.mint_b, 10**12, token_program=chain.TOKEN_2022_PROGRAM
         )
         result = self.quote(accounts=accounts)
-        self.assertEqual(result["token_program_output"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
         self.assertFalse(result["token2022_output_transfer_fee"])
         self.assertGreater(result["out_amount"], 0)
 
@@ -232,8 +232,8 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         mint.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
         accounts = list(self.accounts)
         accounts[4] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint)}
-        accounts[1] = self.token_account(
-            self.mint_a, 10**12, token_program=chain.TOKEN_2022_PROGRAM
+        accounts[2] = self.token_account(
+            self.mint_b, 10**12, token_program=chain.TOKEN_2022_PROGRAM
         )
         with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
             self.quote(accounts=accounts)
