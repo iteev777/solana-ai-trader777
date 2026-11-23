@@ -198,6 +198,18 @@ def evaluate_condition(node, context):
             indicators = selected
             context = dict(context)
             context["indicators"] = indicators
+            # _context() also exposes 1m indicators as top-level convenience
+            # fields. Override those fields with the selected timeframe so a
+            # technical condition cannot accidentally keep reading 1m values.
+            for field in (
+                "rsi_14", "ema_9", "ema_21", "ema_cross_bullish",
+                "breakout_20", "breakdown_20", "volume_spike_ratio",
+                "bollinger_percent_b", "atr_percent", "above_vwap",
+                "candle_body_pct", "candle_range_pct",
+                "consecutive_green_candles", "consecutive_red_candles",
+                "previous_high_20", "stochastic_k", "volume_spike",
+            ):
+                context[field] = indicators.get(field)
         elif timeframe != "1m":
             return False, [name + ": timeframe data unavailable (" + timeframe + ")"]
     fresh, freshness_reason = _indicator_freshness(name, context, indicators, timeframe)
