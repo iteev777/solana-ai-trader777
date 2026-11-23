@@ -354,3 +354,8 @@ Trailing protection can use peak-profit tiers through `TROJAN_TRAILING_BANDS_JSO
 
 OHLCV analysis now uses SMA-seeded exponential moving averages, Wilder-smoothed RSI(14) and ATR(14), and a conventionally aligned MACD(12,26,9). Malformed candles are excluded, MACD stays explicitly unavailable until its full signal history exists, and the indicator payload reports the calculation methods used. This avoids treating short or incomplete history as a fabricated technical signal.
 
+
+
+## OHLCV history and cache
+
+GeckoTerminal OHLCV retrieval requests up to the provider's documented 1,000-candle maximum, improving the available 1m-derived 5m/15m/30m indicator history. The indicator cache is bounded to 100 pools with a 60-second monotonic TTL and LRU eviction. The configurable request interval is clamped to at least six seconds to stay within the public API's approximately 10 calls/minute budget; cache status exposes the current limits. Higher timeframes remain explicitly not-ready when the available history is insufficient.
