@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 223
+- Trojanin seurattavat tiedostot: 226
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -42,7 +42,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `copy_risk.py` | Ei vielä kartoitettu | PENDING |  |
 | `copy_trade.py` | Ei vielä kartoitettu | PENDING |  |
 | `dashboard.py` | Ei vielä kartoitettu | PENDING |  |
-| `database.py` | Ei vielä kartoitettu | PENDING |  |
+| `database.py` | `src/database/`, `src/positions/db.rs` | PARTIAL | Atomic paper DCA investment and partial-close transaction paths inspected; full database parity audit remains open. |
 | `devnet_e2e.py` | Ei vielä kartoitettu | PENDING |  |
 | `devnet_token2022_e2e.py` | Ei vielä kartoitettu | PENDING |  |
 | `devnet_token2022_signed_e2e.py` | Ei vielä kartoitettu | PENDING |  |
@@ -74,7 +74,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `liquidity_monitor.py` | Ei vielä kartoitettu | PENDING |  |
 | `live_execution.py` | Ei vielä kartoitettu | PENDING |  |
 | `live_trading.py` | Ei vielä kartoitettu | PENDING |  |
-| `main.py` | Ei vielä kartoitettu | PENDING |  |
+| `main.py` | `src/trader/` supervisor/position-monitor files (exact counterpart mapping pending) | PARTIAL | Position monitor and market-price timestamp handoff compared; DCA timestamp is fail-closed. Full file audit remains open. |
 | `market_data.py` | Ei vielä kartoitettu | PENDING |  |
 | `meteora_damm_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `meteora_damm_v2_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -89,13 +89,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `paper_fill_model.py` | Ei vielä kartoitettu | PENDING |  |
-| `paper_trading.py` | Ei vielä kartoitettu | PENDING |  |
+| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/positions/operations/dca.rs` | PARTIAL | DCA gate and atomic paper add path compared/updated; full position/exit lifecycle audit remains open. Commits `6acfd66`, `f8ae81c`. |
 | `playground_token2022_ata.ts` | Ei vielä kartoitettu | PENDING |  |
 | `pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | Ei vielä kartoitettu | PENDING |  |
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs` | TESTED | Full file compared for DCA policy; added cooldown, min hold, basis selection, fresh-price gate and first-buy multiplier while retaining legacy add_usd. Commit `bee9ff1`; 974-test validation passed. |
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -105,7 +105,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `raydium_clmm_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `raydium_cpmm_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `requirements.txt` | `tools/fonts/requirements.txt` | PENDING |  |
-| `risk_manager.py` | Ei vielä kartoitettu | PENDING |  |
+| `risk_manager.py` | `src/trader/safety/`, `src/trader/` risk gates | PARTIAL | DCA add capped by existing max ticket, balance fraction and minimum ticket; complete risk subsystem comparison remains open. |
 | `route_comparison.py` | Ei vielä kartoitettu | PENDING |  |
 | `rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `rugcheck.py` | Ei vielä kartoitettu | PENDING |  |
@@ -180,7 +180,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_onchain_indicators.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_orca_whirlpool_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_paper_fill_model.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_paper_fill_model.py` | `tests/trader_dca.rs` | PARTIAL | DCA fill integration fixture updated for strict threshold and timestamp; other tests in file not fully audited. Commit `0418985`. |
 | `tests/test_paper_position_input_hardening.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
@@ -192,7 +192,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_snapshot_integrity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_watch_parity.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_position_management.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_position_management.py` | `tests/trader_dca.rs`, position database tests | PARTIAL | Atomic DCA/partial/full close accounting test reviewed; broader lifecycle parity remains open. |
 | `tests/test_pre_strategy_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
@@ -234,3 +234,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `trading_control.py` | Ei vielä kartoitettu | PENDING |  |
 | `trading_manager.py` | Ei vielä kartoitettu | PENDING |  |
 | `wallet_preflight.py` | Ei vielä kartoitettu | PENDING |  |
+
+| `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
+| `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
+| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `tests/trader_dca.rs` | TESTED | New pure DCA gate tests: legacy and multiplier sizing, price freshness, min-hold, cooldown, basis and hard-stop failures. 974 tests passed. |
