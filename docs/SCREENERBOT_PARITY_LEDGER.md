@@ -7,8 +7,8 @@
 - Trojan: https://github.com/iteev777/solana-ai-trader777
 - Trojan baseline revision before this ledger: `e52fc52ed598dcbbaab89bc267822c2c8ada9ef0`
 - Trojan working branch: `feature/dex-jupiter-noncustodial-execution-current`
-- Latest parity ledger revision before this update: `d854de0d45ebd2d20c7dfa97d2514324bcb3fa33`
-- Latest working branch revision before this update: `a29284c51f58bb01d00a78dcbfc8346395cc8260`
+- Latest parity ledger revision before this update: `65cf97ac13705d9bc5935ef99cf1a718c6c2f144`
+- Latest working branch revision before this update: `4fb12d9215202104c61d1c4d6135fb4a479a447e`
 
 ### Repository-wide tree inventory
 
@@ -42,7 +42,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 
 | Functional area | Reference surface inspected | Trojan surface inspected | Status |
 |---|---|---|---|
-| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, focused tests | Partial inspection; recently-updated feed and both pool-side discovery added; no acceptance sign-off |
+| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, `tests/test_token_aggregator.py`, `docs/DISCOVERY_QUALITY.md` | Partial inspection; recently-updated feed, both pool sides, and provider/global switches added; dynamic runtime configuration and broader runner parity remain open |
 | Filtering pipeline | `src/filtering/stage.rs`, `src/chains/solana/filtering.rs`, `src/filtering/sources/rugcheck.rs`, `src/filtering/sources/market.rs`, `src/filtering/sources/dexscreener.rs`, `src/filtering/sources/geckoterminal.rs` | `filter_pipeline.py`, `main.py`, `rugcheck.py`, `token_security.py`, focused tests | Partial comparison; RugCheck/on-chain token gates moved before strategy scoring; deeper feature parity remains open |
 | API clients and rate limiting | API manager and provider clients | `api_client.py`, provider scanners | Not audited end-to-end |
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
@@ -66,20 +66,25 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 - Trojan has separate feed functions for DexScreener profiles/latest boosts/top boosts; RugCheck new/recent/trending/verified; Jupiter recent/organic/traded/trending; CoinGecko; and DeFiLlama, in addition to GeckoTerminal, Pump.fun and Birdeye scanners.
 - ScreenerBot's GeckoTerminal recently-updated-token feed is implemented in Trojan as `scan_recently_updated_tokens()` using `tokens/info_recently_updated?network=solana`; the aggregator registers it as `geckoterminal_recently_updated`. The scanner validates response shape and Solana identity, deduplicates addresses, preserves metadata, and raises failures for source-health accounting. Focused tests cover request scoping, malformed entries, invalid response shapes and transport failures.
 - ScreenerBot's GeckoTerminal pool discovery extracts both base and quote token IDs. Trojan originally extracted only the base token. `discovery/gecko_scanner.py` now discovers both sides, deduplicates them, and attaches base-denominated market data only to the base token. Focused tests cover both sides and duplicate IDs.
-- ScreenerBot's discovery runner demonstrates configurable source enablement, chain-adapter feed registration, shutdown-aware scheduling, skip behavior during confirmed network outages/tool contention, and structured run statistics. These behaviors need explicit mapping to Trojan before discovery can be marked complete.
+- ScreenerBot's discovery runner demonstrates runtime-configurable source enablement, chain-adapter feed registration, shutdown-aware scheduling, skip behavior during confirmed network outages/tool contention, and structured run statistics. Trojan has static-at-process-start environment switches for provider and per-feed enablement, a global discovery switch, parallel isolated fetches, persisted per-source health/latency, source-family consensus, deduplication and candidate persistence. Trojan still lacks the reference's explicit shutdown-raced discovery loop and confirmed-offline/tool-contention skip behavior; its switches are not re-read dynamically without process restart.
 - ScreenerBot's canonical filter sequence is `meta -> symbols -> Solana on-chain -> market -> RugCheck -> LLM`. Trojan's local filter sequence currently covers metadata/symbol checks, market, age, valuation, pool metrics, activity, momentum, provenance and quality. It previously ran RugCheck and RPC token-security checks only after a BUY strategy decision. This ordering defect is now corrected: `main.py` runs RugCheck and configured on-chain mint/account checks after local filters but before candidate observation and strategy scoring. The same fetched RugCheck report is propagated into the approved result.
 - On-chain token-security checks remain conditional on RPC configuration for backwards-compatible paper-mode operation. Set `TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true` to fail closed when RPC is absent. The default remains false; this is an explicit remaining configuration difference from ScreenerBot's cached on-chain metadata stage, not claimed as full parity.
 - ScreenerBot's Solana on-chain stage also checks known scam freeze/update/mint authorities, creator reputation, immutable metadata combined with freeze authority, and a configurable combined risk score. Trojan's `token_security.py` checks mint/freeze authorities and largest token-account/authority concentration, but the same cached authority blacklist and combined-risk scoring parity is not yet established.
 - ScreenerBot's RugCheck source exposes configurable gates for rugged status, risk score/level, mint/freeze authorities, holder distribution, insiders, graph insiders, creator balance, transfer fees, LP providers and LP lock. Trojan's `check_rugcheck()` has strict PASS/safe/score/high-risk checks, while `rugcheck.py` contains additional extensions; the full field-by-field configuration and semantics comparison remains open.
 - This is an initial sample, not a claim that all discovery files or edge cases have been inspected.
 
-## Work completed in this audit session (filtering continuation)
+## Work completed in this audit session (filtering and discovery continuation)
 
 - `main.py`: added `evaluate_pre_strategy_security()` and moved RugCheck plus configured on-chain mint/account security checks ahead of candidate observation and strategy scoring. RugCheck transport failures, RPC status failures, account blacklist hits and on-chain report failures reject safely. Added opt-in fail-closed behavior when RPC is missing via `TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true` (default false preserves existing paper behavior).
 - Added `tests/test_pre_strategy_security.py` with seven focused tests for RugCheck rejection, provider failure, RPC absent in both modes, RPC status failure, on-chain rejection and successful configured checks.
 - GitHub Actions for commit `a29284c51f58bb01d00a78dcbfc8346395cc8260`: 891 unit tests passed; full validation passed including module compilation, live execution safety locks, dashboard smoke checks and paper-only status (run `45243701804`).
 - Commit headlines from this session: `fix(security): run token risk gates before strategy scoring`; `test(security): cover pre-strategy risk gate ordering and failures`.
-- Discovery changes already validated in prior session: 884 tests passed and full validation succeeded on commit `86782fd736e7148f3bd9a0fe738a81cff61fc4aa` (run `45242963828`).
+- Discovery feed parity from the preceding pass: 884 tests passed and full validation succeeded on commit `86782fd736e7148f3bd9a0fe738a81cff61fc4aa` (run `45242963828`).
+- `discovery/token_aggregator.py`: added `TROJAN_DISCOVERY_ENABLED`, GeckoTerminal provider/per-feed switches, and Pump.fun/Birdeye provider switches. The new source switches default to enabled and are read at process startup, consistent with existing provider switches.
+- `tests/test_token_aggregator.py`: added coverage for global discovery disablement, GeckoTerminal provider/per-feed switches, and independent Pump.fun/Birdeye switches.
+- `docs/DISCOVERY_QUALITY.md`: documented all newly introduced environment controls and restart behavior.
+- Discovery switch commit headlines: `feat(discovery): add GeckoTerminal and chain feed enablement controls`; `test(discovery): cover provider and global feed controls`; `docs(discovery): document global and per-feed source controls`.
+- GitHub Actions for the source-change commit `fd614db36c15d1d15b2b36a58a3369b537534d60`: 894 unit tests passed; full validation passed (run `45244092689`). The following documentation-only commit is `4fb12d9215202104c61d1c4d6135fb4a479a447e`.
 
 ## Completion criteria
 
