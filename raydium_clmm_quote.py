@@ -31,6 +31,8 @@ def _decode_state(raw, chain):
         "amm_config": chain._key(raw, 9),
         "mint_0": chain._key(raw, 73),
         "mint_1": chain._key(raw, 105),
+        "decimals_0": raw[233],
+        "decimals_1": raw[234],
         "vault_0": chain._key(raw, 137),
         "vault_1": chain._key(raw, 169),
         "tick_spacing": chain._u16(raw, 235),
@@ -253,6 +255,9 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Raydium CLMM mint uses an unsupported token program")
     if vault0_acc.get("owner") != token_program_0 or vault1_acc.get("owner") != token_program_1:
         raise ValueError("Raydium CLMM vault token program does not match its mint")
+    if (chain._mint_decimals(mint0_acc) != state["decimals_0"]
+            or chain._mint_decimals(mint1_acc) != state["decimals_1"]):
+        raise ValueError("Raydium CLMM pool decimals do not match the mint accounts")
     mint0_token2022 = (
         token2022.validate_swap_compatible_mint_data(mint0_acc.get("data", b""))
         if token_program_0 == chain.TOKEN_2022_PROGRAM else None
@@ -317,6 +322,8 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Raydium CLMM confirmed snapshot is stale")
 
     minimum_out = expected_output_amount * (10_000 - slippage_bps) // 10_000
+    if minimum_out <= 0:
+        raise ValueError("Raydium CLMM minimum output rounds to zero")
     return {
         "provider": "raydium_clmm_direct",
         "protocol": PROGRAM,
