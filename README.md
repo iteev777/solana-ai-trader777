@@ -379,3 +379,8 @@ RugCheck also supports `TROJAN_RUGCHECK_MIN_LP_PROVIDERS` for a minimum reported
 
 The read-only direct quote path supports legacy SOL-paired Pump.fun curves using the on-chain Global and Pump Fees configuration. It verifies the bonding-curve PDA against the requested token mint, reads curve/global/fee/mint accounts at one confirmed slot, selects the market-cap fee tier, and validates both virtual pricing reserves and real settlement reserves. Mayhem, cashback, holder-reward, custom creator-fee, custom quote-mint, completed, truncated and Token-2022 curves are refused until their exact fee/settlement behavior is implemented. The route comparison forwards the requested output mint to this adapter; no instruction is constructed or signed.
 
+
+
+## Canonical pool quarantine fallback
+
+Canonical pool ranking excludes pools currently in transient RPC backoff or structural quarantine. A quarantined high-liquidity pool cannot remain the selected price source while unverified; the selector falls back to the next eligible candidate and continues to expose the eligible candidate count and ranking summaries. Only verified successful pool snapshots clear the underlying retry/quarantine state.
