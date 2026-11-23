@@ -224,7 +224,15 @@ def _merge_rugcheck_candidate(existing, incoming):
     for key in merge_keys:
         current = existing.get(key)
         value = incoming.get(key)
-        if current in (None, "", "Unknown", 0) and value not in (None, "", "Unknown", 0):
+        current_missing = (
+            current is None
+            or (isinstance(current, str) and current.strip().lower() in {"", "unknown"})
+        )
+        incoming_missing = (
+            value is None
+            or (isinstance(value, str) and value.strip().lower() in {"", "unknown"})
+        )
+        if current_missing and not incoming_missing:
             existing[key] = value
     for source in incoming.get("discovery_sources", []):
         if source not in existing["discovery_sources"]:
