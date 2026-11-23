@@ -141,7 +141,7 @@ def _indicator_freshness(name, context, indicators):
         return True, None
 
     if indicators.get("ready") is not True:
-        return False, "indicator series is not ready"
+        return False, "indicator series unavailable or not ready"
     timestamp = _num(indicators.get("timestamp"))
     if timestamp is None or timestamp <= 0:
         return False, "indicator timestamp is missing"
