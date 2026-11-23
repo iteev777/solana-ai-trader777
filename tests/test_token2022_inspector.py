@@ -285,7 +285,7 @@ class Token2022InspectorTests(unittest.TestCase):
         bad = bytearray(raw)
         bad[168:170] = (1).to_bytes(2, "little")
         bad.extend(bytes([0]))
-        with self.assertRaisesRegex(ValueError, "ImmutableOwner extension length"):
+        with self.assertRaisesRegex(ValueError, "invalid IMMUTABLE_OWNER extension length"):
             inspector.validate_token2022_account_data(
                 {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(bad)}, mint, owner
             )
