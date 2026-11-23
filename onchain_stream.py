@@ -239,9 +239,9 @@ def _refresh_many(position_keys, candidate_keys=None, prune_unwatched=False):
         positions, candidates = partition_refresh_priority(position_keys, candidate_keys or [])
         passes = []
         if positions:
-            passes.append((positions, prune_unwatched and not candidates))
+            passes.append((positions, False))
         if candidates:
-            passes.append((candidates, prune_unwatched))
+            passes.append((candidates, False))
         totals = {"last_refresh_pools": 0, "last_priced_pools": 0,
                   "last_failed_pools": 0, "last_skipped_pools": 0,
                   "last_rpc_batches": 0, "last_accounts_requested": 0}
@@ -249,6 +249,8 @@ def _refresh_many(position_keys, candidate_keys=None, prune_unwatched=False):
             result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune)
             for name in totals:
                 totals[name] += int(result.get(name, 0) or 0)
+        if prune_unwatched:
+            pool_account_fetcher.prune_pool_account_cache(positions + candidates)
         with _lock:
             _batch_status.update(totals)
             _status["last_latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
