@@ -7,7 +7,8 @@
 - Trojan: https://github.com/iteev777/solana-ai-trader777
 - Trojan baseline revision before this ledger: `e52fc52ed598dcbbaab89bc267822c2c8ada9ef0`
 - Trojan working branch: `feature/dex-jupiter-noncustodial-execution-current`
-- Latest ledger commit before discovery feed implementation: `1557c2de5d27dace659cc97ca39cba4ce8d94615`
+- Latest parity ledger revision before this update: `6d2e2364b5f02d554c41bb3f1a4102658fc97489`
+- Latest working branch revision after GeckoTerminal pool-side parity: `86782fd736e7148f3bd9a0fe738a81cff61fc4aa`
 
 ### Repository-wide tree inventory
 
@@ -41,7 +42,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 
 | Functional area | Reference surface inspected | Trojan surface inspected | Status |
 |---|---|---|---|
-| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, focused tests | Partial inspection; recently-updated GeckoTerminal feed added; no acceptance sign-off |
+| Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, focused tests | Partial inspection; recently-updated feed and both pool-side discovery added; no acceptance sign-off |
 | Filtering pipeline | `src/filtering/engine.rs`, RugCheck filter source | `filter_pipeline.py`, `rugcheck.py` | Partial inspection only; no acceptance sign-off |
 | API clients and rate limiting | API manager and provider clients | `api_client.py`, provider scanners | Not audited end-to-end |
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
