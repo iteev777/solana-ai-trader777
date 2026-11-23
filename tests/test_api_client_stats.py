@@ -1,4 +1,7 @@
 import unittest
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import api_client
@@ -10,6 +13,7 @@ class ApiClientStatsTests(unittest.TestCase):
             api_client.cache.clear()
         with api_client.state_lock:
             api_client._api_stats.clear()
+            api_client._inflight_cache_requests.clear()
 
     def test_records_success_and_cache_hit_per_host_and_endpoint(self):
         url = "https://api.dexscreener.com/token-profiles/latest/v1"
@@ -34,6 +38,40 @@ class ApiClientStatsTests(unittest.TestCase):
         self.assertEqual(stats["cache_hits"], 1)
         self.assertEqual(stats["success_rate"], 100.0)
         self.assertEqual(stats["cache_hit_rate"], 50.0)
+
+    def test_identical_concurrent_cacheable_calls_are_coalesced_and_counted(self):
+        url = "https://api.rugcheck.xyz/v1/tokens/Mint111/report"
+        payload = {"score": 5}
+        call_count = 0
+        call_lock = threading.Lock()
+        start = threading.Barrier(8)
+
+        def fake_fetch(url, params=None, headers=None, timeout=15, cache_ttl=0, max_retries=1):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+            time.sleep(0.05)
+            key = api_client.cache_key(url, params, headers)
+            api_client.save_cache(key, payload, cache_ttl)
+            return payload
+
+        with patch.object(api_client, "_get_json_impl", side_effect=fake_fetch):
+            def request():
+                start.wait(timeout=2)
+                return api_client.get_json(url, cache_ttl=60)
+
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                results = list(executor.map(lambda _index: request(), range(8)))
+
+        self.assertEqual(results, [payload] * 8)
+        self.assertEqual(call_count, 1)
+        stats = api_client.get_api_status()["stats"]["api.rugcheck.xyz"]["default"]
+        self.assertEqual(stats["total_requests"], 1)
+        self.assertEqual(stats["successful_requests"], 1)
+        self.assertEqual(stats["failed_requests"], 0)
+        self.assertEqual(stats["cache_misses"], 1)
+        self.assertEqual(stats["cache_hits"], 7)
+        self.assertEqual(stats["cache_hit_rate"], 87.5)
 
     def test_records_failed_request_and_error_message(self):
         url = "https://api.rugcheck.xyz/v1/tokens/Mint111/report"
