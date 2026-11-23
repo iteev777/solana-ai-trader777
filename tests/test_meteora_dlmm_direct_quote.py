@@ -106,14 +106,14 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         return values
 
     def quote(self, input_mint=None, output_mint=None, amount=1_000_000,
-              overrides=None, pair_data=None):
+              overrides=None, pair_data=None, slot=123987):
         pool_account = self.pool_account if pair_data is None else {
             "owner": chain.PROGRAMS["meteora_dlmm"], "data": pair_data
         }
         def snapshot(keys):
             values = self._accounts_for(keys, overrides)
             values[0] = pool_account
-            return values, 123987
+            return values, slot
         with (
             patch.object(chain, "_account", return_value=pool_account),
             patch.object(chain, "_find_program_address", side_effect=self._fake_pda),
@@ -193,6 +193,18 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         pair = bytearray(self.pair_data)
         pair[36] = 9
         with self.assertRaisesRegex(ValueError, "fee collection mode"):
+            self.quote(pair_data=bytes(pair))
+
+    def test_invalid_confirmed_slot_is_rejected(self):
+        for slot in (0, -1, True, "123"):
+            with self.subTest(slot=slot):
+                with self.assertRaisesRegex(ValueError, "snapshot slot is invalid"):
+                    self.quote(slot=slot)
+
+    def test_aliased_reserve_and_mint_are_rejected(self):
+        pair = bytearray(self.pair_data)
+        pair[152:184] = chain._b58decode(self.mint_x)
+        with self.assertRaisesRegex(ValueError, "distinct addresses"):
             self.quote(pair_data=bytes(pair))
 
     def test_wrong_output_mint_is_rejected(self):
