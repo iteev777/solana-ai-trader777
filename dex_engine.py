@@ -65,7 +65,7 @@ def _validate_pool_addresses(pool_addresses):
 
 
 def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
-                         network_fee_output_amount=0):
+                         network_fee_output_amount=None):
     if not isinstance(item, dict) or item.get("status") != "QUOTED":
         raise ValueError("QUOTE_UNAVAILABLE")
     if item.get("output_mint") not in (None, output_mint):
@@ -106,7 +106,10 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
     if age > MAX_QUOTE_AGE_SECONDS:
         raise ValueError("QUOTE_STALE")
 
-    network_cost = _uint(network_fee_output_amount, "network_fee_output_amount", allow_zero=True)
+    network_cost = _uint(
+        network_fee_output_amount if network_fee_output_amount is not None else 0,
+        "network_fee_output_amount", allow_zero=True
+    )
     if network_cost >= minimum_out:
         raise ValueError("NETWORK_COST_CONSUMES_OUTPUT")
     net_minimum = minimum_out - network_cost
@@ -121,7 +124,7 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
         "minimum_out_amount": minimum_out,
         "network_fee_output_amount": network_cost,
         "net_minimum_output": net_minimum,
-        "network_fee_priced": network_cost > 0,
+        "network_fee_priced": network_fee_output_amount is not None,
         "price_impact_percent": impact,
         "quote_age_seconds": round(age, 3),
         "latency_ms": item.get("latency_ms", item.get("quote_latency_ms")),
@@ -209,7 +212,7 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         try:
             candidates.append(_normalize_candidate(
                 provider, item, input_mint, output_mint, now,
-                fee_estimates.get(provider, 0)
+                fee_estimates.get(provider)
             ))
         except Exception as error:
             rejected[provider] = (str(error) or type(error).__name__)[:180]
@@ -220,7 +223,7 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         try:
             candidates.append(_normalize_candidate(
                 key, item, input_mint, output_mint, now,
-                fee_estimates.get(key, 0)
+                fee_estimates.get(key)
             ))
         except Exception as error:
             rejected[key] = (str(error) or type(error).__name__)[:180]
