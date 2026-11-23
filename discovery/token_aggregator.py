@@ -2,7 +2,11 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
+from discovery.gecko_scanner import (
+    scan_new_pools,
+    scan_trending_pools,
+    scan_recently_updated_tokens,
+)
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_dexscreener
@@ -11,6 +15,7 @@ from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coin
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
+    ("geckoterminal_recently_updated", scan_recently_updated_tokens),
     ("birdeye_meme_listing", scan_pumpfun),
     ("birdeye", scan_birdeye),
     ("dexscreener", scan_dexscreener),
@@ -20,7 +25,7 @@ SCANNERS = [
     ("defillama", scan_defillama),
 ]
 MAX_RESULTS = 500
-MAX_WORKERS = min(9, len(SCANNERS))
+MAX_WORKERS = min(10, len(SCANNERS))
 _aggregator_lock = threading.Lock()
 _last_source_stats = {}
 _last_scan_at = None
