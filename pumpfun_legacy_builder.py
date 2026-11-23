@@ -155,7 +155,10 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
         or fresh.get("input_amount") != amount
     ):
         raise ValueError("Fresh Pump.fun quote does not validate curve, pair and amount")
+    fresh_out = _u64(fresh.get("out_amount"), "fresh quote output")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
+    if minimum_out > fresh_out:
+        raise ValueError("Fresh Pump.fun minimum output exceeds its quoted output")
     token_program = fresh.get("token_program")
     if token_program not in (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM):
         raise ValueError("Fresh Pump.fun quote contains an unsupported token program")
