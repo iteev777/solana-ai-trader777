@@ -1,21 +1,15 @@
 """Read-only Token-2022 Devnet E2E for the supplied 1% transfer-fee mint.
 
-The runner creates a throwaway in-memory payer, funds it on Devnet, reads the
-real mint over RPC, derives the Token-2022 ATA, and simulates an unsigned
-CreateIdempotent instruction. It never signs, broadcasts, or touches mainnet.
+Uses the user's explicitly supplied public Devnet wallet only as the simulated
+ATA payer. It never reads a secret, signs, broadcasts, or touches mainnet.
 """
 import os
-import time
-
-from solders.keypair import Keypair
 
 DEVNET_URL = "https://api.devnet.solana.com"
 DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 TOKEN_2022_MINT = "CFTBSCy68VqUzGeMwjmgzufeBgGi64i281f4iUxzavj7"
 TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-LAMPORTS_PER_SOL = 1_000_000_000
-AIRDROP_LAMPORTS = 100_000_000
-TIMEOUT_SECONDS = 120
+TEST_WALLET = "DrXL17U7RS2Nx6KVTUStpqhcsmDod3RfMS7RnTTSgTRH"
 
 
 def rpc(method, params):
@@ -35,34 +29,13 @@ def rpc(method, params):
     return payload.get("result")
 
 
-def require_devnet():
-    if rpc("getGenesisHash", []) != DEVNET_GENESIS_HASH:
-        raise RuntimeError("RPC endpoint is not Solana Devnet")
-
-
-def fund_temporary_payer(address):
-    signature = rpc("requestAirdrop", [address, AIRDROP_LAMPORTS])
-    if not isinstance(signature, str) or not signature:
-        raise RuntimeError("Devnet faucet did not return an airdrop signature")
-    deadline = time.monotonic() + TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        result = rpc("getSignatureStatuses", [[signature], {"searchTransactionHistory": True}])
-        status = (result or {}).get("value", [None])[0]
-        if status and status.get("err") is not None:
-            raise RuntimeError("Devnet airdrop failed: " + str(status["err"])[:200])
-        if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
-            balance = rpc("getBalance", [address, {"commitment": "confirmed"}])
-            if (balance or {}).get("value", 0) >= AIRDROP_LAMPORTS:
-                return signature, balance["value"]
-        time.sleep(2)
-    raise TimeoutError("Temporary Devnet payer was not funded in time")
-
-
 def main():
     if os.getenv("TROJAN_DEVNET_TOKEN2022_E2E_ENABLED", "").lower() not in ("1", "true", "yes"):
         raise RuntimeError("Set TROJAN_DEVNET_TOKEN2022_E2E_ENABLED=true")
 
-    require_devnet()
+    if rpc("getGenesisHash", []) != DEVNET_GENESIS_HASH:
+        raise RuntimeError("RPC endpoint is not Solana Devnet")
+
     os.environ["SOLANA_RPC_URL"] = DEVNET_URL
     os.environ.pop("SOLANA_RPC_URLS", None)
 
@@ -100,16 +73,15 @@ def main():
     if calculated_fee != expected_fee or calculated_fee != 1_000_000:
         raise RuntimeError("Transfer-fee calculation did not produce the expected 1% result")
 
-    # A fresh ephemeral payer avoids requesting the user's private key or
-    # spending the user's SOL. The only on-chain write is a Devnet faucet airdrop.
-    payer = Keypair()
-    payer_address = str(payer.pubkey())
-    airdrop_signature, payer_balance = fund_temporary_payer(payer_address)
+    wallet_balance_result = rpc("getBalance", [TEST_WALLET, {"commitment": "confirmed"}])
+    wallet_balance = (wallet_balance_result or {}).get("value")
+    if not isinstance(wallet_balance, int) or wallet_balance <= 0:
+        raise RuntimeError("Supplied Devnet wallet has no spendable SOL balance for ATA simulation")
 
-    # Build and simulate the actual Token-2022 ATA instruction. No signature
-    # verification, signing, broadcast, or account creation is performed.
+    # Build and simulate the actual Token-2022 ATA instruction. This is an
+    # unsigned, sigVerify=false simulation: it cannot spend SOL or create ATA.
     ata_order = ata_manager.create_ata_order(
-        payer_address, TOKEN_2022_MINT, min_sol_reserve_lamports=0
+        TEST_WALLET, TOKEN_2022_MINT, min_sol_reserve_lamports=0
     )
     if ata_order.get("status") != "UNSIGNED_ATA_ORDER_SIMULATED":
         raise RuntimeError("ATA manager did not return a simulated unsigned order")
@@ -136,9 +108,8 @@ def main():
         "active_transfer_fee_maximum_raw": active_schedule["maximum_fee"],
         "probe_amount_raw": probe_amount,
         "probe_fee_raw": calculated_fee,
-        "temporary_payer": payer_address,
-        "temporary_payer_balance_lamports": payer_balance,
-        "airdrop_signature": airdrop_signature,
+        "wallet": TEST_WALLET,
+        "wallet_balance_lamports": wallet_balance,
         "ata": ata_order["ata"],
         "ata_token_program": ata_order["token_program"],
         "ata_data_size": ata_order["token_account_size"],
