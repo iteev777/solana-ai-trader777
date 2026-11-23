@@ -129,12 +129,10 @@ def _unknown_result(reasons):
     )
 
 
-def _evaluate(node, context, path="root"):
-    """Evaluate a rule tree with three-valued logic: TRUE/FALSE/UNKNOWN.
-
-    Missing or stale data is UNKNOWN, never a false value that a NOT node can
-    invert into an approval. AND/OR retain their decisive sibling semantics.
-    """
+def _evaluate(node, context, path="root", deadline=None):
+    """Evaluate a validated rule tree with bounded, three-valued semantics."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return "timeout", [path + ": strategy evaluation timeout"]
     if not isinstance(node, dict):
         return "unknown", [path + ": invalid rule node"]
     groups = [key for key in ("all", "any", "not") if key in node]
@@ -145,30 +143,35 @@ def _evaluate(node, context, path="root"):
         children = node[key]
         if not isinstance(children, list) or not children:
             return "unknown", [path + ": rule group must contain conditions"]
-        results = [
-            _evaluate(child, context, path + "." + key + "[" + str(i) + "]")
-            for i, child in enumerate(children)
-        ]
-        states = [item[0] for item in results]
-        reasons = [reason for state, messages in results if state != "true" for reason in messages]
-        if key == "all":
-            if "false" in states:
-                return "false", reasons
-            if "unknown" in states:
-                return "unknown", reasons
-            return "true", []
-        if key == "any":
-            if "true" in states:
-                return "true", []
-            if "unknown" in states:
-                return "unknown", reasons
-            return "false", reasons or [path + ": no alternative passed"]
-        if len(results) != 1:
+        if key == "not" and len(children) != 1:
             return "unknown", [path + ": not requires exactly one condition"]
-        state, messages = results[0]
-        if state == "unknown":
-            return "unknown", messages
-        return ("false" if state == "true" else "true"), ([] if state == "true" else messages)
+        reasons = []
+        unknown_seen = False
+        for index, child in enumerate(children):
+            state, messages = _evaluate(
+                child, context, path + "." + key + "[" + str(index) + "]", deadline
+            )
+            if state == "timeout":
+                return state, messages
+            if key == "not":
+                if state == "unknown":
+                    return "unknown", messages
+                return ("false" if state == "true" else "true"), ([] if state == "true" else messages)
+            if state == "unknown":
+                unknown_seen = True
+                reasons.extend(messages)
+            elif key == "all" and state == "false":
+                reasons.extend(messages)
+                return "false", reasons
+            elif key == "any" and state == "true":
+                return "true", []
+            elif state == "false":
+                reasons.extend(messages)
+        if unknown_seen:
+            return "unknown", reasons
+        if key == "all":
+            return "true", []
+        return "false", reasons or [path + ": no alternative passed"]
 
     if "condition" in node:
         try:
@@ -293,7 +296,14 @@ def evaluate_strategy_rules(token, score, strategy):
     rule = config["rules"].get(strategy)
     if rule is None:
         return True, "No custom rules for " + strategy
-    state, reasons = _evaluate(rule, _context(token, score))
+    try:
+        timeout_ms = float(os.getenv("TROJAN_STRATEGY_EVALUATION_TIMEOUT_MS", "50"))
+    except (TypeError, ValueError, OverflowError):
+        timeout_ms = 50.0
+    if not math.isfinite(timeout_ms) or not 1.0 <= timeout_ms <= 1000.0:
+        timeout_ms = 50.0
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    state, reasons = _evaluate(rule, _context(token, score), deadline=deadline)
     passed = state == "true"
     return passed, "Custom rules passed" if passed else "; ".join(reasons)
 
