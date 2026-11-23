@@ -94,7 +94,7 @@ class MoonitBuilderTests(unittest.TestCase):
             patch.object(chain, "_account", return_value=self.account_map[self.pool]),
             patch.object(chain, "_find_program_address",
                          side_effect=[(self.config, 251), (self.curve_ata, 255),
-                                      (self.user_out, 253)]),
+                                      (self.user_out if (quote or self.quote).get("input_mint") == chain.SOL_MINT else self.user_in, 253)]),
             patch.object(chain, "_multiple_accounts_with_context",
                          side_effect=lambda keys: ([account_map.get(k) for k in keys], slot)),
             patch.object(chain, "_rpc", return_value={"value": {
@@ -102,12 +102,8 @@ class MoonitBuilderTests(unittest.TestCase):
             }}),
         ):
             selected_quote = quote or self.quote
-            if selected_quote.get("input_mint") == chain.SOL_MINT:
-                input_account, output_account = self.user_in, self.user_out
-            else:
-                input_account, output_account = self.user_out, self.user_in
             return builder.build_moonit_swap(
-                selected_quote, self.wallet, input_account, output_account
+                selected_quote, self.wallet, self.user_in, self.user_out
             )
 
     def test_builds_native_sol_buy_with_verified_11_account_order(self):
@@ -141,7 +137,7 @@ class MoonitBuilderTests(unittest.TestCase):
             self.call_builder(dict(self.quote, protocol="raydium_cpmm"))
         with self.assertRaisesRegex(ValueError, "confirmed Moonit"):
             self.call_builder(dict(self.quote, status="STALE"))
-        with self.assertRaisesRegex(ValueError, "native SOL and the curve"):
+        with self.assertRaisesRegex(ValueError, "Fresh Moonit quote"):
             self.call_builder(dict(self.quote, output_mint=key(55)))
 
     def test_rejects_curve_token_balance_mismatch(self):
