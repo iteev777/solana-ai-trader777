@@ -79,6 +79,13 @@ class RaydiumClmmMathTests(unittest.TestCase):
                 False, 1000, 3000, 60,
             )
 
+    def test_rejects_current_tick_and_sqrt_price_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "inconsistent"):
+            mathx.quote_exact_input(
+                mathx.sqrt_price_at_tick(11), 1_000_000_000, 10, [],
+                False, 1000, 3000, 60,
+            )
+
     def test_rejects_duplicate_or_malformed_initialized_ticks(self):
         sqrt_price = mathx.sqrt_price_at_tick(10)
         with self.assertRaisesRegex(ValueError, "unique"):
