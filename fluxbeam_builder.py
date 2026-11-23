@@ -51,16 +51,10 @@ def _mint_program_and_validate(account, label):
     if len(raw) < 82 or raw[45] != 1:
         raise ValueError(label + " mint layout is invalid or uninitialized")
     if owner == TOKEN_2022_PROGRAM_ID:
-        extensions = token2022.parse_tlv_extensions(raw, token2022.MINT_ACCOUNT_TYPE) if len(raw) != 82 else []
-        extension_ids = {item["type"] for item in extensions}
-        if 14 in extension_ids:
-            raise ValueError(label + " has a Token-2022 transfer hook unsupported by FluxBeam")
-        unsupported = extension_ids & UNSUPPORTED_MINT_EXTENSIONS
-        if unsupported:
-            raise ValueError(label + " has unsupported Token-2022 mint extensions: " + ",".join(map(str, sorted(unsupported))))
-        config = token2022.decode_transfer_fee_config(raw)
-        if config and any(config[name]["basis_points"] > 0 for name in ("older", "newer")):
-            raise ValueError(label + " has a non-zero Token-2022 transfer fee unsupported by FluxBeam quote math")
+        try:
+            token2022.validate_zero_fee_mint_data(raw)
+        except ValueError as exc:
+            raise ValueError(label + " is not a supported zero-fee Token-2022 mint: " + str(exc))
     return owner
 
 
