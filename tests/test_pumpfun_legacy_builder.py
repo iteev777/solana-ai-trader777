@@ -192,7 +192,7 @@ class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
               user_input_override=None, user_output_override=None):
         account_map = account_map or self.account_map
         def fresh(pool, input_mint, output_mint, amount, slippage):
-            result = dict(self.quote)
+            result = dict(quote or self.quote)
             result.update({
                 "input_mint": input_mint, "output_mint": output_mint,
                 "input_amount": amount, "slippage_bps": slippage,
