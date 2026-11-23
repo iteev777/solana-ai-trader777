@@ -3,16 +3,57 @@ import math
 import os
 import time
 import threading
+import os
+from collections import OrderedDict
 from api_client import get_json
 from ohlcv_integrity import normalize_ohlcv_rows
 
-_cache = {}
+MAX_CACHE_ENTRIES = 100
+CACHE_SECONDS = 60.0
+_cache = OrderedDict()
+_cache_lock = threading.RLock()
 _fetch_lock = threading.Lock()
 _last_fetch = 0.0
-MIN_FETCH_INTERVAL = float(__import__('os').getenv('TROJAN_OHLCV_MIN_INTERVAL', '7.2'))
+
+
+def _minimum_fetch_interval():
+    try:
+        value = float(os.getenv("TROJAN_OHLCV_MIN_INTERVAL", "7.2"))
+    except (TypeError, ValueError, OverflowError):
+        return 7.2
+    if not math.isfinite(value):
+        return 7.2
+    # GeckoTerminal's public API is approximately 10 calls/minute; retain
+    # headroom instead of allowing configuration to exceed that shared budget.
+    return max(6.0, min(value, 60.0))
+
+
+MIN_FETCH_INTERVAL = _minimum_fetch_interval()
 TIMEFRAME = "minute"
 AGGREGATE = 1
-CANDLE_LIMIT = 120
+CANDLE_LIMIT = 1000
+
+
+def _cache_get(key, now=None):
+    clock = time.monotonic() if now is None else now
+    with _cache_lock:
+        cached = _cache.get(key)
+        if cached is None:
+            return None
+        if clock - cached["time"] >= CACHE_SECONDS:
+            _cache.pop(key, None)
+            return None
+        _cache.move_to_end(key)
+        return dict(cached["data"])
+
+
+def _cache_put(key, data, now=None):
+    clock = time.monotonic() if now is None else now
+    with _cache_lock:
+        _cache[key] = {"time": clock, "data": dict(data)}
+        _cache.move_to_end(key)
+        while len(_cache) > MAX_CACHE_ENTRIES:
+            _cache.popitem(last=False)
 
 
 def _finite(value):
@@ -295,9 +336,9 @@ def fetch_pool_indicators(pool_address, force=False):
     if not pool_address:
         return {"ready": False, "reason": "Pool address unavailable"}
     key = str(pool_address)
-    cached = _cache.get(key)
-    if not force and cached and time.time() - cached["time"] < 25:
-        return dict(cached["data"])
+    cached = _cache_get(key)
+    if not force and cached is not None:
+        return cached
     if not _fetch_lock.acquire(blocking=False):
         return {"ready": False, "pool_address": key, "reason": "OHLCV request already in progress"}
     if time.time() - _last_fetch < MIN_FETCH_INTERVAL:
@@ -328,7 +369,7 @@ def fetch_pool_indicators(pool_address, force=False):
         normalized, _quality = normalize_ohlcv_rows(raw)
         indicators = calculate_multi_timeframe_indicators(normalized)
         indicators["pool_address"] = key
-        _cache[key] = {"time": time.time(), "data": indicators}
+        _cache_put(key, indicators)
         if normalized:
             try:
                 import database
