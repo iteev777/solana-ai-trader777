@@ -266,12 +266,8 @@ def emergency_sell(token_address, current_price):
 
 def update_position(token_address, current_price):
 
-    try:
-        current_price = float(current_price)
-    except (ValueError, TypeError):
-        return "Invalid price"
-
-    if current_price <= 0:
+    current_price = _positive_finite(current_price)
+    if current_price is None:
         return "Invalid price"
 
     with _lock:
@@ -303,7 +299,7 @@ def update_position(token_address, current_price):
         # a process restart and does not reset on every monitor cycle.
         stored_peak = _positive_finite(metadata.get("peak_price", entry)) or entry
         peak_price = max(entry, stored_peak, current_price)
-        if peak_price > float(metadata.get("peak_price", 0) or 0):
+        if peak_price > stored_peak:
             metadata["peak_price"] = peak_price
             database.update_position_metadata(
                 MODE, token_address, metadata
@@ -311,7 +307,10 @@ def update_position(token_address, current_price):
 
         # Configurable DCA tiers. Every tier is one-shot, ordered, and
         # blocked at/beyond the hard stop. The default remains disabled.
-        dca_count = int(metadata.get("dca_count", 0) or 0)
+        try:
+            dca_count = max(0, int(metadata.get("dca_count", 0) or 0))
+        except (TypeError, ValueError, OverflowError):
+            dca_count = 0
         if dca_count < len(dca_steps) and change > -(exit_config["stop_loss_pct"] / 100.0):
             step = dca_steps[dca_count]
             if change <= -(step["drop_pct"] / 100.0):
