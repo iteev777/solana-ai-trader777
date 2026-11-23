@@ -364,3 +364,11 @@ Moonit direct quotes are read-only and limited to the verified ConstantProductV1
 
 
 
+
+## Pump.fun legacy bonding-curve direct quote
+
+The direct quote router also supports legacy SOL-paired Pump.fun bonding curves. It reads the curve, Pump Global configuration, Pump Fees FeeConfig and token mint at one confirmed RPC slot. It selects the on-chain market-cap fee tier using the curve's virtual reserves and token supply, applies protocol/creator fee rounding, prices buys and sells against virtual reserves, and checks real token/SOL reserves before returning a quote.
+
+This adapter intentionally refuses completed curves, trades that would cross into synthetic migration, Token-2022 mints, mayhem/cashback/holder-reward modes, custom quote mints and custom creator-fee curves. Those require separate settlement or extension logic. It is read-only and never creates, signs or broadcasts a swap.
+
+
