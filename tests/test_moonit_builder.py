@@ -139,6 +139,28 @@ class MoonitBuilderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Fresh Moonit quote"):
             self.call_builder(dict(self.quote, output_mint=key(55)))
 
+    def test_rejects_noncanonical_wallet_ata(self):
+        wrong_ata = key(55)
+        with self.assertRaisesRegex(ValueError, "canonical associated token account"):
+            with (
+                patch.object(chain, "quote_moonit_pool", side_effect=lambda pool, mint, amount, slip: dict(
+                    self.quote, input_mint=mint, output_mint=self.mint,
+                    input_amount=amount, slippage_bps=slip
+                )),
+                patch.object(chain, "_account", return_value=self.account_map[self.pool]),
+                patch.object(chain, "_find_program_address",
+                             side_effect=[(self.config, 251), (self.curve_ata, 255), (wrong_ata, 253)]),
+            ):
+                builder.build_moonit_swap(
+                    self.quote, self.wallet, self.user_in, self.user_out
+                )
+
+    def test_rejects_token2022_curve_mint(self):
+        accounts = dict(self.account_map)
+        accounts[self.mint] = dict(accounts[self.mint], owner=chain.TOKEN_2022_PROGRAM)
+        with self.assertRaisesRegex(ValueError, "legacy SPL Token mints only"):
+            self.call_builder(account_map=accounts)
+
     def test_rejects_curve_token_balance_mismatch(self):
         accounts = dict(self.account_map)
         accounts[self.curve_ata] = token_account(self.mint, self.pool, self.curve_amount - 1)
