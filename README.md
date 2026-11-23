@@ -109,7 +109,7 @@ Copy-wallet tracking reads public wallet activity, stores unique signatures in S
 
 ## Jupiter route intelligence
 
-Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. Signing, transaction simulation and broadcast remain disabled in code.
+Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. This quote-only paper pre-entry path does not request a transaction. Native protocol order preparation is documented in `docs/NATIVE_EXECUTION.md`; its broadcast path is code-hard-locked and cannot be enabled by an environment variable.
 
 ## Safety-gated DEX route engine
 
