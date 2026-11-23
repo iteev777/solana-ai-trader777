@@ -270,15 +270,20 @@ def simulate_unsigned_swap(input_mint, output_mint, amount, slippage_bps=None, t
             "innerInstructions": False,
         }
     ])
-    value = (result or {}).get("value") or {}
+    value = result.get("value") if isinstance(result, dict) else None
+    if not isinstance(value, dict) or "err" not in value:
+        raise ValueError("RPC did not return a valid simulation result")
+    context = result.get("context")
     elapsed_ms = (time.perf_counter() - started) * 1000
-    logs = value.get("logs") or []
+    logs = value.get("logs")
+    if not isinstance(logs, list):
+        logs = []
     return {
         "status": "PASS" if value.get("err") is None else "FAIL",
         "simulated": True, "signed": False, "broadcast": False,
         "error": value.get("err"),
         "units_consumed": value.get("unitsConsumed"),
-        "context_slot": (result or {}).get("context", {}).get("slot"),
+        "context_slot": context.get("slot") if isinstance(context, dict) else None,
         "log_tail": [str(line)[:240] for line in logs[-8:]],
         "latency_ms": round(elapsed_ms, 2),
         "router": order.get("router"),

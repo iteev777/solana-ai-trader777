@@ -144,12 +144,12 @@ def on_message(ws, message):
 
 
 def on_error(ws, error):
-    print("SNIPER CONNECTION ERROR:", repr(error))
+    print("SNIPER CONNECTION ERROR:", type(error).__name__)
 
 
 def on_close(ws, close_status_code, close_message):
     print("SNIPER CONNECTION CLOSED")
-    print("STATUS:", close_status_code, close_message)
+    print("STATUS:", close_status_code)
 
 
 def run_sniper_listener():
@@ -176,7 +176,7 @@ def run_sniper_listener():
             )
 
         except Exception as error:
-            print("SNIPER ERROR:", repr(error))
+            print("SNIPER ERROR:", type(error).__name__)
 
         print(
             "RECONNECTING IN",

@@ -14,6 +14,10 @@ import requests
 _TIMEOUT = float(os.getenv("SOLANA_RPC_TIMEOUT", "8"))
 _MIN_INTERVAL = float(os.getenv("SOLANA_RPC_MIN_INTERVAL", "0.12"))
 _MAX_COOLDOWN = 60.0
+_READ_ONLY_METHODS = frozenset({
+    "getAccountInfo", "getBalance", "getBlockTime", "getHealth", "getMultipleAccounts",
+    "getSlot", "getTokenAccountsByOwner", "getTokenLargestAccounts", "getTokenSupply",
+})
 _guard = threading.RLock()
 _endpoint_locks = {}
 _state = {}
@@ -69,6 +73,13 @@ def _retry_after(response):
 
 def rpc_call(method, params):
     global _cursor
+    if method == "simulateTransaction":
+        options = params[1] if isinstance(params, (list, tuple)) and len(params) == 2 else None
+        if not isinstance(options, dict) or options.get("sigVerify") is not False:
+            raise ValueError("RPC simulation requires sigVerify=false")
+    elif method not in _READ_ONLY_METHODS:
+        raise ValueError("RPC method is outside the read-only allowlist")
+
     endpoints = _urls()
     if not endpoints:
         raise RuntimeError("No Solana RPC endpoint configured; set SOLANA_RPC_URL or SOLANA_RPC_URLS")
@@ -126,6 +137,9 @@ def rpc_call(method, params):
                     state["last_error"] = "JSON-RPC error " + str(code)
                     errors.append(_host(url) + " JSON-RPC error " + str(code))
                     continue
+                    raise ValueError("RPC returned a JSON-RPC error")
+                if "result" not in payload:
+                    raise ValueError("JSON-RPC response is missing its result")
                 state["successes"] += 1
                 state["last_latency_ms"] = round((time.monotonic() - started) * 1000, 1)
                 state["last_error"] = None
