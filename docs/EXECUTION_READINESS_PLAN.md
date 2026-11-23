@@ -40,7 +40,8 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 ## 2. Test runs
 
 **Automated checks**
-- GitHub Actions runs `python -m unittest discover -s tests -v` on feature pushes and pull requests.
+- GitHub Actions test and validation workflows are manual-dispatch only during the current file-by-file ScreenerBot parity audit. Do not trigger them until the complete audit and implementation pass is finished.
+- The final acceptance run will execute `python -m unittest discover -s tests -v` plus the full validation workflow once, against the completed branch head.
 - Tests are deterministic unit/integration tests with mocked external RPC/provider calls where appropriate.
 
 **Operational test evidence still required**
@@ -75,8 +76,9 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 
 ## 5. Live Trading readiness
 
-**Current state: NOT READY; hard locked.**
-- Native broadcast hard lock is enabled in code. Environment configuration alone cannot unlock it.
+**Current state: NOT READY. Native broadcast is hard locked; the overall live-execution lock is not yet proven complete.**
+- Native broadcast hard lock is enabled in code. Environment configuration alone cannot unlock the native path.
+- A separate Jupiter V2 `/execute` adapter (`dex_execution.py`) still has an environment-controlled execution flag. It currently has no repository caller, but it must receive the same reviewed-release hard lock before the project can claim that every live path is locked.
 - Approval storage is currently process-local and single-use. Multi-server durable storage remains a blocker; a shared transactional store and deployment-level concurrency tests are required.
 - External-wallet-only signing design is retained; no server private-key custody or signing.
 - Native builders support a restricted subset of Raydium CPMM, PumpSwap V2, Orca Whirlpool and Meteora DLMM. This is not proof that all pools/tokens are executable.
@@ -85,7 +87,8 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 - No mainnet transaction, live profitability, or ScreenerBot outperformance is claimed.
 
 **Required before any future unlock**
-1. Trigger and pass the isolated devnet E2E workflow, then retain the finalized signature and workflow log as evidence.
+1. Prove every live/broadcast path is hard locked in code, including the Jupiter V2 adapter; environment variables alone must not unlock any path.
+2. Trigger and pass the isolated Devnet E2E workflow, then retain the finalized signature and workflow log as evidence.
 3. Complete Meteora DLMM bitmap-extension and full bin-array discovery/traversal, with tests for negative indices, extension arrays, fragmented liquidity, missing arrays and transaction account limits.
 4. Resolve multi-replica approval storage using a shared transactional store with atomic single-use consumption, expiry and restart recovery.
 5. Complete independent security review and failure/replay/expiry tests.
