@@ -100,7 +100,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin, säilyttää legacy `add_usd`, estää DCA:n kun policy on pois päältä, soveltaa min-holdin vain ensimmäiseen lisäykseen ja käsittelee täsmälleen DCA-drop-rajan floating-point toleranssilla. Exit ladder hyväksyy legacy `sell_fraction` ja reference-tyylisen `sell_pct` -pohjan. Commitit `ecca597`, `a4704af`, `9980999`; testit `e629bdd`, `0646aa3`; 1 083 unit testiä ja täysi validointi hyväksytty (`45260093768`). |
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin, säilyttää legacy `add_usd`, estää DCA:n kun policy on pois päältä, soveltaa min-holdin vain ensimmäiseen lisäykseen ja käsittelee täsmälleen DCA-drop-rajan floating-point toleranssilla. Exit ladder hyväksyy legacy `sell_fraction` ja reference-tyylisen `sell_pct` -pohjan. Commitit `ecca597`, `a4704af`, `9980999`; testit `e629bdd`, `0646aa3`; 1 114 unit testiä hyväksytty (`45262598124`); full validation for latest revision pending. |
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -125,7 +125,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
 | `telegram_alerts.py` | Ei vielä kartoitettu | PENDING |  |
 | `test_discovery.py` | Trojanin discovery manual smoke script | NO-CHANGE | 478 tavun manuaalinen `collect_tokens()`-smoke script luettu; ei sisällä automaattisia assertioita eikä ScreenerBotissa ole vastaavaa Python CLI -tiedostoa. Varsinainen regressiotestaus on `tests/test_*discovery*.py`-tiedostoissa. |
-| `tests/test_advanced_security_validation.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_advanced_security_validation.py` | `src/chains/solana/assets/mint.rs`, `src/chains/solana/assets/ata/balance.rs` | TESTED | Tests cover canonical Pubkey validation, mint authority/freeze authority, initialized mint, decimals/supply consistency, raw u64 supply/largest accounts, top-10 account concentration and fail-closed incomplete owner concentration. Real base58 fixtures now used; 1 114 tests passed (`45262598124`). |
 | `tests/test_api_client_stats.py` | `src/apis/` client tests | TESTED | Covers per-host/per-endpoint request, cache, latency and failure telemetry; full validation `45254436959`. |
 | `tests/test_ata_manager.py` | `src/chains/solana/assets/ata/helpers.rs`, `close.rs`, `wsol_sweep.rs` | PARTIAL | Testit kattavat legacy SPL + Token-2022 ATA:n luonnin, immutable owner -tilin, transfer-fee-koon/rentin, transfer hook -eston, olemassa olevan ATA:n, riittämättömät varat ja virhetilanteita. Referenssin sulkemisen kilpailutilanteet, zero-balance retry ja WSOL sweep -idle-guard puuttuvat. |
 | `tests/test_ata_close_manager.py` | `src/chains/solana/assets/ata/close.rs`, `helpers.rs`, `wsol_sweep.rs` | UPDATED | Added legacy/Token-2022 close safety, noncanonical/nonempty/foreign authority/withheld fee, fee/reserve and simulation cases. Historical 1,045-test run predates later changes; final test pending. |
@@ -160,7 +160,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_exit_policy.py` | `src/trader/evaluators/exit_rules.rs` and individual exit rule tests | PARTIAL | Testit luettu; stop-loss-prioriteetti, peak-based trailing, break-even, take-profit, stagnation, max-hold, invalid price/config ja trailing bands. Verrattava vielä koko referenssin edge-case testimatriisiin. |
 | `tests/test_expanded_rugcheck_risk.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_extended_market_filter_bounds.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_filter_pipeline.py` | Ei vielä kartoitettu | UPDATED | | Added short-circuit, invalid config, unknown authority, string boolean, metadata fallback, mint mismatch and score-boundary cases. Commits `test(filter): cover short-circuit and fail-closed metadata cases`; `test(filter): cover metadata fallback and URL validation`. Run only after full audit. |
+| `tests/test_filter_pipeline.py` | `src/filtering/engine.rs`, chain filter profile and stage tests | TESTED | Covers ordered lazy stages, metadata/age/on-chain/market/valuation/pool/activity/momentum/provenance/quality gates, missing fields, unknown data and short-circuit behavior. Age-before-onchain order now asserted against canonical profile; 1 114 tests passed (`45262598124`). Full filter profile comparison remains open. |
 | `tests/test_fluxbeam_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_fluxbeam_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_force_stop_dashboard_api.py` | Ei vielä kartoitettu | PENDING |  |
@@ -211,7 +211,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_raydium_clmm_direct_quote.py` | `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` and `raydium_clmm.rs` tests | UPDATED | Full 514-line suite read. Added integer-width, malformed/duplicate tick, output saturation, tick-price consistency, positive slot, vault reserve equality and fixed swap_v2 program-account assertions. Full validation passed on 1,045-test run. | Added integer/tick/slot/reserve and fixed swap_v2 account-list cases. Historical 1,045-test run predates later filter changes; final validation pending. |
 | `tests/test_raydium_cpmm_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_raydium_cpmm_quotes.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_risk_guard_extensions.py` | `tests/trader_loss_limit.rs`, `src/trader/safety/cooldown.rs`, `limits.rs` tests | TESTED | Testaa rolling realized loss, mode isolation, fail-closed history errors, strategy-scoped re-entry cooldown, tokenless loss guard ja invalid mode. 1 113 unit testiä läpäisi ajossa `45262426061`. |
+| `tests/test_risk_guard_extensions.py` | `tests/trader_loss_limit.rs`, `src/trader/safety/cooldown.rs`, `limits.rs` tests | TESTED | Testaa rolling realized loss, mode isolation, fail-closed history errors, strategy-scoped re-entry cooldown, tokenless loss guard ja invalid mode. 1 114 unit testiä läpäisi ajossa `45262598124`. |
 | `tests/test_route_comparison.py` | `src/swaps/` quote/route tests | TESTED | Quote comparison now verifies typed rejection status; full validation `45254436959`.  |
 | `tests/test_rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_cache_concurrency.py` | Ei vielä kartoitettu | PENDING |  |
@@ -232,7 +232,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_strategy_quality_integration.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_strategy_rules.py` | `src/strategies/engine.rs` tests | TESTED | Covers concurrent-evaluation saturation and timeout fail-closed behavior; full validation `45254436959`.  |
 | `tests/test_swap_receipt.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_token2022_inspector.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_token2022_inspector.py` | `src/chains/solana/swaps/direct/venues/token2022.rs`, `src/chains/solana/assets/mint.rs` | TESTED | Tests Token-2022 mint/account TLV extension parsing, transfer-fee schedule selection, fee rounding/cap, malformed extension length/type, unsupported account encoding and u64 bounds. Epoch error message aligned; 1 114 tests passed (`45262598124`). |
 | `tests/test_token2022_inspector_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token_aggregator.py` | `src/tokens/discovery.rs` | PARTIAL | Testaa source health persistence, per-feed enablement, concurrent merge, source provenance, data enrichment without overwriting good values and provider-family consensus. Birdeye meme feed now counts under Birdeye, not as a second provider. Unit test run `45257922212` passed. |
 | `tests/test_trading_control.py` | `src/global/mod.rs` force-stop tests | TESTED | Kattaa reason/timestamp, whitespace + 300 merkin raja, resume cleanup, non-bool rejection ja risk admission halt/resume. 1 029 testiä hyväksytty ajossa `45257483040`; täysi validointi `45257482979`. |
