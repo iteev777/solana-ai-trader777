@@ -156,6 +156,29 @@ class MultiPoolDexEngineTests(unittest.TestCase):
                 network_fee_output_amounts={"jupiter": -1}
             )
 
+    def test_rejects_invalid_quote_latency(self):
+        item = self.aggregator_quotes()["quotes"]["jupiter"]
+        item["latency_ms"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "latency_ms must be finite"):
+            dex_engine._normalize_candidate(
+                "jupiter", item, self.input_mint, self.output_mint, time.time()
+            )
+
+    def test_rejects_negative_quote_latency(self):
+        item = self.aggregator_quotes()["quotes"]["jupiter"]
+        item["latency_ms"] = -1
+        with self.assertRaisesRegex(ValueError, "LATENCY_OUTSIDE_LIMIT"):
+            dex_engine._normalize_candidate(
+                "jupiter", item, self.input_mint, self.output_mint, time.time()
+            )
+
+    def test_rejects_unknown_network_fee_provider_key(self):
+        with self.assertRaisesRegex(ValueError, "Unknown network fee provider key"):
+            dex_engine.build_routes(
+                self.input_mint, self.output_mint, 100,
+                pool_addresses=[], network_fee_output_amounts={"jupter": 1}
+            )
+
     def test_status_keeps_live_execution_locked(self):
         with patch("solana_onchain.get_onchain_status", return_value={
             "supported_protocols": ["raydium_cpmm"]
