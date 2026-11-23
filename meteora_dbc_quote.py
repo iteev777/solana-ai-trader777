@@ -12,6 +12,7 @@ FEE_DENOMINATOR = 1_000_000_000
 MAX_SLIPPAGE_BPS = 300
 MAX_SNAPSHOT_AGE_SECONDS = 5.0
 MAX_CURVE_POINTS = 20
+POOL_AUTHORITY = "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
 TRANSFER_HOOK_POOL_DISCRIMINATOR = bytes([237, 219, 184, 23, 42, 189, 169, 35])
 
 
@@ -245,32 +246,60 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
         if config[field] != config_first[field]:
             raise ValueError("Meteora DBC PoolConfig changed between discovery and confirmed snapshot")
 
-    if base_mint_acc.get("owner") != chain.TOKEN_PROGRAM or quote_mint_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DBC Token-2022 mints are refused until transfer fees and hooks are modelled")
-    if base_vault_acc.get("owner") != chain.TOKEN_PROGRAM or quote_vault_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DBC vaults must use the legacy SPL Token program")
-    base_balance = chain._token_amount(base_vault_acc, state["base_mint"])
-    quote_balance = chain._token_amount(quote_vault_acc, config["quote_mint"])
+    import token2022_inspector as token2022
+    base_token_program = base_mint_acc.get("owner")
+    quote_token_program = quote_mint_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if base_token_program not in supported_programs or quote_token_program not in supported_programs:
+        raise ValueError("Meteora DBC mint uses an unsupported token program")
+    if base_vault_acc.get("owner") != base_token_program or quote_vault_acc.get("owner") != quote_token_program:
+        raise ValueError("Meteora DBC vault token program does not match its mint")
+    base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(base_mint_acc.get("data", b""))
+        if base_token_program == chain.TOKEN_2022_PROGRAM else None
+    )
+    quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(quote_mint_acc.get("data", b""))
+        if quote_token_program == chain.TOKEN_2022_PROGRAM else None
+    )
+    base_balance = token2022.validate_token_account_for_program(
+        base_vault_acc, base_token_program, state["base_mint"], POOL_AUTHORITY,
+        "Meteora DBC base vault",
+    )
+    quote_balance = token2022.validate_token_account_for_program(
+        quote_vault_acc, quote_token_program, config["quote_mint"], POOL_AUTHORITY,
+        "Meteora DBC quote vault",
+    )
     if base_balance <= 0 or quote_balance <= 0:
         raise ValueError("Meteora DBC vault reserves are empty")
 
+    input_token2022 = base_token2022 if input_is_base else quote_token2022
+    output_token2022 = quote_token2022 if input_is_base else base_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire DBC input")
     zero_for_one = input_is_base
     fee_on_input = config["collect_fee_mode"] == 0 and not input_is_base
     if fee_on_input:
-        fee_amount = _ceil_div(amount_in * config["cliff_fee_numerator"], FEE_DENOMINATOR)
-        if fee_amount >= amount_in:
+        fee_amount = _ceil_div(received_by_pool * config["cliff_fee_numerator"], FEE_DENOMINATOR)
+        if fee_amount >= received_by_pool:
             raise ValueError("Meteora DBC fee consumes the entire input")
-        curve_input = amount_in - fee_amount
+        curve_input = received_by_pool - fee_amount
         gross_output, sqrt_after = _walk_curve(state, config, zero_for_one, curve_input)
-        output_amount = gross_output
+        after_trade_fee = gross_output
         fee_mint = input_mint
     else:
-        gross_output, sqrt_after = _walk_curve(state, config, zero_for_one, amount_in)
+        gross_output, sqrt_after = _walk_curve(state, config, zero_for_one, received_by_pool)
         fee_amount = _ceil_div(gross_output * config["cliff_fee_numerator"], FEE_DENOMINATOR)
         if fee_amount >= gross_output:
             raise ValueError("Meteora DBC output fee consumes the entire output")
-        output_amount = gross_output - fee_amount
+        after_trade_fee = gross_output - fee_amount
         fee_mint = expected_output
+    output_amount = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), after_trade_fee
+    )
 
     output_reserve = quote_balance if input_is_base else base_balance
     if gross_output >= output_reserve:
@@ -301,6 +330,12 @@ def quote_meteora_dbc_pool(pool_address, input_mint, amount_in, slippage_bps=100
         "slippage_bps": slippage_bps,
         "output_amount_gross": gross_output,
         "out_amount": output_amount,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < after_trade_fee,
+        "token2022_output_gross_amount": after_trade_fee,
+        "token_program_input": base_token_program if input_is_base else quote_token_program,
+        "token_program_output": quote_token_program if input_is_base else base_token_program,
         "minimum_out_amount": output_amount * (10_000 - slippage_bps) // 10_000,
         "fee_mint": fee_mint,
         "fee_amount": fee_amount,
