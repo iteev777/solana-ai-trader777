@@ -30,3 +30,211 @@ class PumpFunLegacyBuilderSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _pump_key(value):
+    return chain._b58encode(bytes([value]) * 32)
+
+
+def _pump_token_account(mint, owner, amount):
+    raw = bytearray(165)
+    raw[:32] = chain._b58decode(mint)
+    raw[32:64] = chain._b58decode(owner)
+    raw[64:72] = amount.to_bytes(8, "little")
+    raw[108] = 1
+    return {"owner": chain.TOKEN_PROGRAM, "data": bytes(raw)}
+
+
+def _pump_fee_config():
+    fee = bytearray(65)
+    fee[:8] = chain.PUMPSWAP_FEE_CONFIG_DISCRIMINATOR
+    fee[8] = 1
+    fee[41:49] = (0).to_bytes(8, "little")
+    fee[49:57] = (100).to_bytes(8, "little")
+    fee[57:65] = (30).to_bytes(8, "little")
+    fee[65:69] = (2).to_bytes(4, "little")
+    cursor = 69
+    for threshold, rates in ((0, (0, 95, 30)), (3_000_000, (0, 20, 20))):
+        fee[cursor:cursor + 16] = threshold.to_bytes(16, "little")
+        cursor += 16
+        for rate in rates:
+            fee[cursor:cursor + 8] = rate.to_bytes(8, "little")
+            cursor += 8
+    fee[cursor:cursor + 4] = (0).to_bytes(4, "little")
+    cursor += 4
+    for rate in (0, 0, 0):
+        fee[cursor:cursor + 8] = rate.to_bytes(8, "little")
+        cursor += 8
+    return bytes(fee)
+
+
+class PumpFunLegacyBuilderIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.wallet = _pump_key(1)
+        self.mint = _pump_key(2)
+        self.creator = _pump_key(7)
+        self.fee_recipient = _pump_key(40)
+        self.buyback_one = _pump_key(41)
+        self.buyback_two = _pump_key(42)
+        self.pool = chain._find_program_address(
+            [builder.BONDING_CURVE_SEED, chain._b58decode(self.mint)],
+            builder.PROGRAM_ID,
+        )[0]
+        self.global_address = chain._find_program_address(
+            [builder.GLOBAL_SEED], builder.PROGRAM_ID
+        )[0]
+        self.fee_config_address = chain._find_program_address(
+            [builder.FEE_CONFIG_SEED, chain._b58decode(builder.PROGRAM_ID)],
+            builder.FEE_PROGRAM_ID,
+        )[0]
+        self.curve_ata = chain._find_program_address(
+            [chain._b58decode(self.pool), chain._b58decode(chain.TOKEN_PROGRAM),
+             chain._b58decode(self.mint)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        self.user_ata = chain._find_program_address(
+            [chain._b58decode(self.wallet), chain._b58decode(chain.TOKEN_PROGRAM),
+             chain._b58decode(self.mint)], builder.ASSOCIATED_TOKEN_PROGRAM_ID
+        )[0]
+        self.curve_v2 = chain._find_program_address(
+            [builder.BONDING_CURVE_V2_SEED, chain._b58decode(self.mint)],
+            builder.PROGRAM_ID,
+        )[0]
+        curve = bytearray(162)
+        curve[:8] = bytes([23, 183, 248, 55, 96, 216, 172, 96])
+        curve[8:16] = (1_000_000).to_bytes(8, "little")
+        curve[16:24] = (2_000_000).to_bytes(8, "little")
+        curve[24:32] = (500_000).to_bytes(8, "little")
+        curve[32:40] = (400_000).to_bytes(8, "little")
+        curve[40:48] = (1_000_000).to_bytes(8, "little")
+        curve[49:81] = chain._b58decode(self.creator)
+        curve[83:115] = bytes(32)
+        self.curve_data = bytes(curve)
+        global_data = bytearray(997)
+        global_data[:8] = chain.PUMP_GLOBAL_CONFIG_DISCRIMINATOR
+        global_data[105:113] = (100).to_bytes(8, "little")
+        global_data[154:162] = (30).to_bytes(8, "little")
+        global_data[162:194] = chain._b58decode(self.fee_recipient)
+        global_data[741:773] = chain._b58decode(self.buyback_one)
+        global_data[773:805] = chain._b58decode(self.buyback_two)
+        mint_data = bytearray(82)
+        mint_data[44] = 6
+        mint_data[45] = 1
+        self.account_map = {
+            self.pool: {"owner": builder.PROGRAM_ID, "data": self.curve_data},
+            self.mint: {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint_data)},
+            self.global_address: {"owner": builder.PROGRAM_ID, "data": bytes(global_data)},
+            self.fee_config_address: {"owner": builder.FEE_PROGRAM_ID, "data": _pump_fee_config()},
+            self.curve_ata: _pump_token_account(self.mint, self.pool, 500_000),
+            self.user_ata: _pump_token_account(self.mint, self.wallet, 1_000_000),
+        }
+        self.blockhash = _pump_key(43)
+        self.quote = {
+            "protocol": "pumpfun_legacy",
+            "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
+            "pool_id": self.pool,
+            "input_mint": chain.SOL_MINT,
+            "output_mint": self.mint,
+            "input_amount": 10_000,
+            "out_amount": 4_913,
+            "minimum_out_amount": 4_863,
+            "slot": 654,
+            "slippage_bps": 100,
+            "fee_rates_bps": [0, 95, 30],
+            "market_cap_lamports": 2_000_000,
+            "creator": self.creator,
+            "curve_complete": False,
+            "is_mayhem_mode": False,
+            "is_cashback_coin": False,
+            "is_holder_reward": False,
+            "creator_fee_bps": 0,
+            "virtual_token_reserves": 1_000_000,
+            "virtual_quote_reserves": 2_000_000,
+            "real_token_reserves": 500_000,
+            "real_quote_reserves": 400_000,
+            "token_total_supply": 1_000_000,
+            "quote_mint": chain.DEFAULT_PUBKEY,
+            "token_decimals": 6,
+        }
+
+    def build(self, quote=None, account_map=None, slot=657):
+        account_map = account_map or self.account_map
+        def fresh(pool, input_mint, output_mint, amount, slippage):
+            result = dict(self.quote)
+            result.update({
+                "input_mint": input_mint, "output_mint": output_mint,
+                "input_amount": amount, "slippage_bps": slippage,
+            })
+            return result
+        selected = quote or self.quote
+        user_input = _pump_key(50) if selected["input_mint"] == chain.SOL_MINT else self.user_ata
+        user_output = self.user_ata if selected["input_mint"] == chain.SOL_MINT else _pump_key(51)
+        with (
+            patch.object(chain, "quote_pumpfun_legacy_pool", side_effect=fresh),
+            patch.object(chain, "_account", return_value=self.account_map[self.pool]),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         side_effect=lambda keys: ([account_map.get(k) for k in keys], slot)),
+            patch.object(chain, "_rpc", return_value={"value": {
+                "blockhash": self.blockhash, "lastValidBlockHeight": 123456
+            }}),
+        ):
+            return builder.build_pumpfun_legacy_swap(
+                selected, self.wallet, user_input, user_output
+            )
+
+    def test_builds_buy_exact_sol_in_with_creator_v2_and_buyback_accounts(self):
+        result = self.build()
+        data = base64.b64decode(result["instruction_data_base64"])
+        tx = base64.b64decode(result["transaction"])
+        accounts = result["instruction_accounts"]
+        self.assertEqual(data[:8], builder.BUY_EXACT_SOL_IN)
+        self.assertEqual(struct.unpack("<QQ", data[8:]), (10_000, 4_863))
+        self.assertEqual(len(accounts), 19)
+        self.assertEqual(accounts[:8], [
+            self.global_address, self.fee_recipient, self.mint, self.pool,
+            self.curve_ata, self.user_ata, self.wallet, builder.SYSTEM_PROGRAM_ID,
+        ])
+        self.assertEqual(accounts[8], chain.TOKEN_PROGRAM)
+        self.assertEqual(accounts[14], self.fee_config_address)
+        self.assertEqual(accounts[15], builder.FEE_PROGRAM_ID)
+        self.assertEqual(accounts[16:], [self.curve_v2, self.buyback_one, self.buyback_two])
+        self.assertEqual(tx[0], 1)
+        self.assertEqual(tx[1:65], bytes(64))
+        self.assertEqual(result["execution"], "LOCKED")
+        self.assertFalse(result["live_trading_ready"])
+
+    def test_builds_sell_with_exact_token_input_and_sell_account_order(self):
+        quote = dict(self.quote, input_mint=self.mint, output_mint=chain.SOL_MINT)
+        result = self.build(quote)
+        data = base64.b64decode(result["instruction_data_base64"])
+        accounts = result["instruction_accounts"]
+        self.assertEqual(data[:8], builder.SELL)
+        self.assertEqual(struct.unpack("<QQ", data[8:]), (10_000, 4_863))
+        self.assertEqual(len(accounts), 17)
+        self.assertEqual(accounts[5], self.user_ata)
+        self.assertEqual(accounts[8], accounts[8])
+        self.assertEqual(accounts[13:], [self.curve_v2, self.buyback_one, self.buyback_two])
+
+    def test_rejects_noncanonical_user_ata(self):
+        with self.assertRaisesRegex(ValueError, "canonical associated token account"):
+            self.build(account_map={**self.account_map, _pump_key(51): self.account_map[self.user_ata]})
+
+    def test_rejects_token2022_mint_and_curve_balance_mismatch(self):
+        accounts = dict(self.account_map)
+        accounts[self.mint] = dict(accounts[self.mint], owner=chain.TOKEN_2022_PROGRAM)
+        with self.assertRaisesRegex(ValueError, "legacy SPL Token"):
+            self.build(account_map=accounts)
+        accounts = dict(self.account_map)
+        accounts[self.curve_ata] = _pump_token_account(self.mint, self.pool, 499_999)
+        with self.assertRaisesRegex(ValueError, "does not match real token reserves"):
+            self.build(account_map=accounts)
+
+    def test_rejects_stale_snapshot_and_fee_tier_change(self):
+        with self.assertRaisesRegex(ValueError, "stale relative"):
+            self.build(slot=700)
+        accounts = dict(self.account_map)
+        fee = bytearray(accounts[self.fee_config_address]["data"])
+        fee[65 + 4 + 16 + 8:65 + 4 + 16 + 16] = (200).to_bytes(8, "little")
+        accounts[self.fee_config_address] = {"owner": builder.FEE_PROGRAM_ID, "data": bytes(fee)}
+        with self.assertRaisesRegex(ValueError, "fee tier changed"):
+            self.build(account_map=accounts)
+
