@@ -1246,6 +1246,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
             _u64(global_raw, 105),
             _u64(global_raw, 154),
         ]
+    # The creator component is only charged when the curve names a creator.
+    # The on-chain fee tier is shared across curves, but a default creator has
+    # no creator vault to receive that component.
+    if curve.get("creator") == DEFAULT_PUBKEY:
+        fee_rates[2] = 0
     if any(rate > 10_000 for rate in fee_rates) or sum(fee_rates) >= 10_000:
         raise ValueError("Pump.fun fee schedule is invalid or consumes the full trade")
 
