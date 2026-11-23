@@ -134,7 +134,7 @@ The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, an
 
 ## Automated safety tests
 
-Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. During the current file-by-file ScreenerBot parity audit, GitHub Actions test and validation workflows are restricted to manual dispatch; the complete suite is intentionally deferred until the whole bot review is finished. Live trading remains locked.
+Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. During the current ScreenerBot parity audit, GitHub Actions tests are manual-only; the complete suite is intentionally deferred until the whole bot review is finished. See [TEST_READINESS.md](docs/TEST_READINESS.md) for the final test gate and safety requirements. Live trading remains locked.
 
 
 ## Pre-entry routing, unsigned simulation and token security
