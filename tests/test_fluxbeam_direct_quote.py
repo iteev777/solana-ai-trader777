@@ -128,7 +128,7 @@ class FluxbeamDirectQuoteTests(unittest.TestCase):
         raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
         accounts = list(self.accounts)
         accounts[3] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
-        accounts[1] = token_account(
+        accounts[1] = self.token_account(
             self.base_mint, 1_000_000, owner=chain.TOKEN_2022_PROGRAM
         )
         with patch.object(chain, "_account", return_value={
