@@ -158,6 +158,52 @@ def _direct_pool_quote(pool_address, input_mint, output_mint, amount, slippage_b
     return quote
 
 
+def discover_pool_addresses(input_mint, output_mint, limit=MAX_POOL_CANDIDATES):
+    """Find fresh registry pools for the exact mint pair, from either token index."""
+    import pool_registry
+
+    discovered = {}
+    for mint in (input_mint, output_mint):
+        try:
+            # Refresh is queued and rate-limited by the registry; the current
+            # cached snapshot remains available for this quote request.
+            pool_registry.enqueue_dex_pool_refresh(mint)
+        except Exception:
+            pass
+        try:
+            rows = pool_registry.get_pool_candidates(mint)
+        except Exception:
+            rows = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            base = row.get("baseToken")
+            quote = row.get("quoteToken")
+            if not isinstance(base, dict) or not isinstance(quote, dict):
+                continue
+            pair_mints = {base.get("address"), quote.get("address")}
+            if pair_mints != {input_mint, output_mint}:
+                continue
+            address = row.get("pairAddress") or row.get("poolAddress") or row.get("address")
+            if not isinstance(address, str) or not address.strip():
+                continue
+            liquidity = row.get("liquidity")
+            liquidity_usd = 0.0
+            if isinstance(liquidity, dict):
+                try:
+                    candidate = float(liquidity.get("usd") or 0)
+                    if math.isfinite(candidate) and candidate > 0:
+                        liquidity_usd = candidate
+                except (TypeError, ValueError, OverflowError):
+                    pass
+            old = discovered.get(address.strip())
+            if old is None or liquidity_usd > old:
+                discovered[address.strip()] = liquidity_usd
+
+    ordered = sorted(discovered.items(), key=lambda item: (-item[1], item[0]))
+    return [address for address, _ in ordered[:max(0, min(int(limit), MAX_POOL_CANDIDATES))]]
+
+
 def build_routes(input_mint, output_mint, amount, pool_addresses=None,
                  slippage_bps=None, network_fee_output_amounts=None):
     """Compare aggregator routes and multiple verified native pools.
@@ -174,7 +220,11 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
     if input_mint == output_mint:
         raise ValueError("Input and output mints must differ")
     amount = _uint(amount, "amount")
-    pools = _validate_pool_addresses(pool_addresses)
+    auto_discovery = pool_addresses is None
+    pools = (
+        discover_pool_addresses(input_mint, output_mint)
+        if auto_discovery else _validate_pool_addresses(pool_addresses)
+    )
     network_fee_output_amounts = network_fee_output_amounts or {}
     if not isinstance(network_fee_output_amounts, dict):
         raise ValueError("network_fee_output_amounts must be an object")
@@ -255,6 +305,8 @@ def build_routes(input_mint, output_mint, amount, pool_addresses=None,
         "input_amount": amount,
         "slippage_bps": aggregate.get("slippage_bps"),
         "pool_candidates_requested": len(pools),
+        "pool_discovery": "AUTOMATIC_REGISTRY_PAIR_MATCH" if auto_discovery else "EXPLICIT_POOL_LIST",
+        "pool_discovery_complete": not auto_discovery or len(pools) < MAX_POOL_CANDIDATES,
         "routes_eligible": candidates,
         "routes_rejected": rejected,
         "selected_route": selected,
@@ -298,7 +350,7 @@ def get_engine_status():
 def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
     """Backward-compatible dashboard entry point; accepts one or many pools."""
     if pool_address is None:
-        pools = []
+        pools = None
     elif isinstance(pool_address, str):
         pools = [part.strip() for part in pool_address.split(",") if part.strip()]
     elif isinstance(pool_address, (list, tuple)):
