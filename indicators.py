@@ -1,12 +1,15 @@
 """GeckoTerminal OHLCV retrieval and lightweight technical indicators."""
 import math
+import os
 import time
 import threading
 from api_client import get_json
+from ohlcv_integrity import normalize_ohlcv_rows
 
 _cache = {}
 _fetch_lock = threading.Lock()
 _last_fetch = 0.0
+_last_prune = 0.0
 MIN_FETCH_INTERVAL = float(__import__('os').getenv('TROJAN_OHLCV_MIN_INTERVAL', '7.2'))
 TIMEFRAME = "minute"
 AGGREGATE = 1
@@ -22,16 +25,7 @@ def _finite(value):
 
 
 def calculate_indicators(candles):
-    rows = []
-    for item in candles or []:
-        if not isinstance(item, (list, tuple)) or len(item) < 6:
-            continue
-        ts = _finite(item[0])
-        o, h, low, close, volume = (_finite(x) for x in item[1:6])
-        if None in (ts, o, h, low, close, volume) or min(o, h, low, close) <= 0 or volume < 0:
-            continue
-        rows.append({"timestamp": int(ts), "open": o, "high": h, "low": low, "close": close, "volume": volume})
-    rows.sort(key=lambda x: x["timestamp"])
+    rows, _quality = normalize_ohlcv_rows(candles)
     if len(rows) < 22:
         return {"ready": False, "candle_count": len(rows), "reason": "Need at least 22 valid candles"}
     closes = [row["close"] for row in rows]
@@ -206,12 +200,20 @@ def calculate_multi_timeframe_indicators(candles):
     Higher timeframes remain explicitly not-ready until enough complete
     aggregate candles exist; no synthetic history or forward filling is used.
     """
+    normalized, quality = normalize_ohlcv_rows(candles)
+    arrays = [
+        [row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"]]
+        for row in normalized
+    ]
     frames = {}
     ready_trends = []
     for name, seconds in TIMEFRAMES.items():
-        aggregated = candles if name == "1m" else aggregate_candles(candles, seconds)
+        aggregated = arrays if name == "1m" else aggregate_candles(arrays, seconds)
         result = calculate_indicators(aggregated)
         result["timeframe"] = name
+        if result.get("ready") and not quality["ready"]:
+            result["ready"] = False
+            result["reason"] = quality["reason"]
         frames[name] = result
         if result.get("ready"):
             ready_trends.append(result.get("trend"))
@@ -231,12 +233,13 @@ def calculate_multi_timeframe_indicators(candles):
         "trend_consensus": consensus,
         "bullish_timeframes": bullish,
         "bearish_timeframes": bearish,
-        "source": "geckoterminal_ohlcv_multi_timeframe"
+        "source": "geckoterminal_ohlcv_multi_timeframe",
+        "ohlcv_quality": quality
     }
 
 
 def fetch_pool_indicators(pool_address, force=False):
-    global _last_fetch
+    global _last_fetch, _last_prune
     if not pool_address:
         return {"ready": False, "reason": "Pool address unavailable"}
     key = str(pool_address)
@@ -270,19 +273,24 @@ def fetch_pool_indicators(pool_address, force=False):
         data = payload.get("data", {}) if isinstance(payload, dict) else {}
         attributes = data.get("attributes", {}) if isinstance(data, dict) else {}
         raw = attributes.get("ohlcv_list", [])
-        indicators = calculate_multi_timeframe_indicators(raw)
+        normalized, _quality = normalize_ohlcv_rows(raw)
+        indicators = calculate_multi_timeframe_indicators(normalized)
         indicators["pool_address"] = key
         _cache[key] = {"time": time.time(), "data": indicators}
-        if indicators.get("ready"):
+        if normalized:
             try:
                 import database
-                database.save_market_candles(key, "1m", [
-                    {"timestamp": row["timestamp"], "open": row["open"], "high": row["high"],
-                     "low": row["low"], "close": row["close"], "volume": row["volume"]}
-                    for row in _normalize(raw)
-                ])
-            except Exception:
-                pass
+                database.save_market_candles(key, "1m", normalized)
+                if time.time() - _last_prune >= 3600:
+                    try:
+                        removed = database.prune_market_candles()
+                        if removed:
+                            print("[TROJAN V2] OHLCV RETENTION PRUNED:", removed, flush=True)
+                    except Exception as error:
+                        print("[TROJAN V2] OHLCV RETENTION WARNING:", type(error).__name__, flush=True)
+                    _last_prune = time.time()
+            except Exception as error:
+                print("[TROJAN V2] OHLCV STORAGE WARNING:", type(error).__name__, flush=True)
         return indicators
     except Exception as error:
         return {"ready": False, "pool_address": key, "reason": str(error)[:220]}
@@ -292,16 +300,17 @@ def fetch_pool_indicators(pool_address, force=False):
 
 
 def _normalize(raw):
-    rows = []
-    for item in raw or []:
-        if not isinstance(item, (list, tuple)) or len(item) < 6:
-            continue
-        values = [_finite(x) for x in item[:6]]
-        if all(value is not None for value in values):
-            rows.append(dict(zip(("timestamp", "open", "high", "low", "close", "volume"), values)))
+    rows, _quality = normalize_ohlcv_rows(raw)
     return rows
 
 
 def get_indicator_status():
     ready = sum(1 for item in _cache.values() if item["data"].get("ready"))
-    return {"cached_pools": len(_cache), "ready_pools": ready, "timeframe": "1m"}
+    stale = sum(1 for item in _cache.values()
+                if (item["data"].get("ohlcv_quality") or {}).get("stale"))
+    return {
+        "cached_pools": len(_cache), "ready_pools": ready,
+        "stale_pools": stale, "timeframe": "1m",
+        "max_candle_age_seconds": int(os.getenv("TROJAN_OHLCV_MAX_AGE_SECONDS", "180")),
+        "max_gap_seconds": int(os.getenv("TROJAN_OHLCV_MAX_GAP_SECONDS", "300"))
+    }
