@@ -37,10 +37,10 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `candidate_observer.py` | Ei vielä kartoitettu | PENDING |  |
 | `candidate_quality.py` | Ei vielä kartoitettu | PENDING |  |
 | `clmm_quote_math.py` | Ei vielä kartoitettu | PENDING |  |
-| `copy_event_parser.py` | Ei vielä kartoitettu | PENDING |  |
-| `copy_freshness.py` | Ei vielä kartoitettu | PENDING |  |
-| `copy_risk.py` | Ei vielä kartoitettu | PENDING |  |
-| `copy_trade.py` | Ei vielä kartoitettu | PENDING |  |
+| `copy_event_parser.py` | `src/wallets/watch/runtime.rs`, `src/wallets/watch/types.rs` | PARTIAL | Full parser read; validates wallet identity, successful tx, exact raw token balance deltas, loaded-address program IDs, recognized swap allowlist and ambiguous multi-leg cases. Focused parser tests read; complete reference decoder/runtime comparison remains open. |
+| `copy_freshness.py` | `src/trader/copy/guards.rs`, `src/trader/copy/analytics.rs` | UPDATED | Changed freshness to measure chain-to-observation arrival age using receipt timestamp, not downstream processing time; added future-receipt validation. Commit `7d5548d`; tests `f9b9445`, `17c003f`. Full validation pending. |
+| `copy_risk.py` | `src/trader/copy/risk.rs`, `src/trader/copy/sizing.rs` | PARTIAL | Full file and focused tests read. Trojan enforces wallet-isolated USD exposure/daily loss/position limits; reference enforces per-task target min/max, filter/self-copy, slippage, buy-once and SOL budget/sizing caps. These are complementary, not equivalent; task-level controls remain open. |
+| `copy_trade.py` | `src/wallets/watch/service.rs`, `src/wallets/watch/poller.rs`, `src/trader/copy/service.rs`, `src/trader/copy/guards.rs` | UPDATED | Full 520-line monitor read. Found and fixed null transaction RPC result being treated as a completed skip, which could advance the durable cursor past a transaction still indexing. Null now raises retryable error; deduplicated signatures and unclassifiable terminal transactions do not block progress. Commit `3969332`; test `4abfb91`. Full wallet-watch/copy-task architecture comparison remains open. |
 | `dashboard.py` | Ei vielä kartoitettu | PENDING |  |
 | `database.py` | `src/database/`, `src/positions/db.rs` | PARTIAL | Atomic paper DCA investment and partial-close transaction paths inspected; full database parity audit remains open. |
 | `devnet_e2e.py` | Ei vielä kartoitettu | PENDING |  |
