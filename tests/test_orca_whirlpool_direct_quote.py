@@ -246,6 +246,8 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
             token_program_output=chain.TOKEN_PROGRAM,
         )
         wallet = chain._b58encode(bytes([41]) * 32)
+        user_a_address = chain._b58encode(bytes([43]) * 32)
+        user_b_address = chain._b58encode(bytes([44]) * 32)
         user_a = self.token_account(self.mint_a, 0)
         user_a["data"] = bytearray(user_a["data"])
         user_a["data"][32:64] = chain._b58decode(wallet)
@@ -296,8 +298,7 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
             }}),
         ):
             result = orca_builder.build_orca_whirlpool_swap(
-                quote, wallet, chain._b58encode(bytes([43]) * 32),
-                chain._b58encode(bytes([44]) * 32),
+                quote, wallet, user_b_address, user_a_address,
             )
         data = __import__("base64").b64decode(result["transaction"])
         self.assertEqual(result["instruction"], "SwapV2")
