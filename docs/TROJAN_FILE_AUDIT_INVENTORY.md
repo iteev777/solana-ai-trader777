@@ -110,7 +110,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `rpc_transport.py` | Ei vielä kartoitettu | PENDING |  |
 | `rugcheck.py` | Ei vielä kartoitettu | PENDING |  |
 | `scanner.py` | Ei vielä kartoitettu | PENDING |  |
-| `service_health.py` | Ei vielä kartoitettu | PENDING |  |
+| `service_health.py` | `src/services/health.rs`, `src/services/startup.rs`, `src/global/state.rs` | PARTIAL | Koko readiness-report moduuli luettu. Trojan aggregoi heartbeat-, database-, RPC-, market-data-, Telegram- ja copy-monitor -tarkistukset ja pitää live readinessin lukittuna. Reference tarjoaa per-service Healthy/Degraded/Unhealthy/Starting/Stopping/Disabled -tilat sekä start/ready/stopped-ajankohdat ja keston. Korjattu tulevan/virheellisen heartbeat-aikaleiman virheellinen hyväksyntä; `tests/test_service_health.py` lisätty (5 tapausta). Reference-tyyppinen per-service lifecycle/status manager puuttuu vielä. Commit `1c67eba`; testit odottavat CI:tä. |
 | `sniper_scanner.py` | `src/tokens/discovery_sources.rs` (new-token feed responsibility only); no PumpPortal trade stream equivalent | PARTIAL | Full module and focused stream tests read. One shared PumpPortal WebSocket handles new-token and optional metered trade subscriptions, bounded queue/dedupe and reconnect resubscription. ScreenerBot uses different feed/runtime architecture; PumpPortal observer is Trojan-specific. |
 | `solana_onchain.py` | Ei vielä kartoitettu | PENDING |  |
 | `strategy.py` | Ei vielä kartoitettu | PENDING |  |
@@ -214,6 +214,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_rugcheck_feed_parity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_holder_lp_controls.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_rugcheck_report_propagation.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_service_health.py` | `src/services/health.rs`, `src/services/startup.rs` | PARTIAL | Uusi testitiedosto: fresh/stale/future/missing/non-finite heartbeat ja täsmällinen 30 s staleness-raja. CI odottaa. |
 | `tests/test_safety_and_market_data.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_screenerbot_discovery_sources.py` | `src/tokens/discovery_sources.rs` | PARTIAL | Testaa RugCheck/Jupiter feed mergeä, erillisiä Jupiter endpointteja, invalid payload errors sekä CoinGecko/DeFiLlama Solana contract filters. Full parameter/rate-limit parity review avoin. |
 | `tests/test_screenerbot_parity_foundation.py` | Ei vielä kartoitettu | PENDING |  |
