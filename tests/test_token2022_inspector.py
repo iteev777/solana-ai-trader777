@@ -53,6 +53,27 @@ class Token2022InspectorTests(unittest.TestCase):
         self.assertEqual(result["execution_enabled"], False)
         self.assertEqual(result["signing"], "NOT_PERFORMED")
 
+    def test_inspects_extended_token_account_without_approving_swaps(self):
+        raw = bytearray(166)
+        raw[:32] = chain._b58decode(key(8))
+        raw[32:64] = chain._b58decode(key(9))
+        raw[64:72] = (1234).to_bytes(8, "little")
+        raw[108] = 1
+        raw[165] = inspector.TOKEN_ACCOUNT_TYPE
+        raw.extend(tlv(2, bytes(8)))
+        with patch("token2022_inspector._read_account",
+                   return_value={"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}):
+            result = inspector.inspect_token2022_account(key(7))
+        self.assertEqual(result["raw_balance"], 1234)
+        self.assertEqual(result["extensions"][0]["name"], "TRANSFER_FEE_AMOUNT")
+        self.assertFalse(result["execution_enabled"])
+
+    def test_rejects_non_token2022_account(self):
+        with patch("token2022_inspector._read_account",
+                   return_value={"owner": chain.TOKEN_PROGRAM, "data": bytes(165)}):
+            with self.assertRaisesRegex(ValueError, "not owned"):
+                inspector.inspect_token2022_account(key(7))
+
     def test_rejects_wrong_account_discriminator(self):
         raw = bytearray(mint_data(tlv(1, bytes(108))))
         raw[165] = inspector.TOKEN_ACCOUNT_TYPE
