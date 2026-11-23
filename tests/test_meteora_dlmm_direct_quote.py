@@ -16,7 +16,7 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         self.bitmap = chain._b58encode(bytes([66]) * 32)
         self.array_addresses = {
             index: chain._b58encode(bytes([70 + i]) * 32)
-            for i, index in enumerate((1, 0, -1, 2, 3))
+            for i, index in enumerate((1, 0, -1, -2, -3, -4, -5, -6, 2, 3, 4, 5, 6, 7, 8))
         }
 
         pair = bytearray(904)
