@@ -64,6 +64,27 @@ class TokenAggregatorMergeTests(unittest.TestCase):
             self.assertEqual(aggregator._coingecko_scanners_from_env(), [])
         with patch.dict(os.environ, {"TROJAN_DEFILLAMA_PROTOCOLS_ENABLED": "false"}, clear=True):
             self.assertEqual(aggregator._defillama_scanners_from_env(), [])
+    def test_geckoterminal_provider_and_each_feed_can_be_disabled(self):
+        with patch.dict(os.environ, {"TROJAN_GECKOTERMINAL_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._geckoterminal_scanners_from_env(), [])
+        with patch.dict(os.environ, {"TROJAN_GECKOTERMINAL_RECENTLY_UPDATED_ENABLED": "0"}, clear=True):
+            names = [name for name, _ in aggregator._geckoterminal_scanners_from_env()]
+        self.assertEqual(names, ["geckoterminal_new_pools", "geckoterminal_trending_pools"])
+
+    def test_pumpfun_and_birdeye_sources_have_independent_switches(self):
+        with patch.dict(os.environ, {"TROJAN_PUMPFUN_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._pumpfun_scanners_from_env(), [])
+        with patch.dict(os.environ, {"TROJAN_BIRDEYE_ENABLED": "0"}, clear=True):
+            self.assertEqual(aggregator._birdeye_scanners_from_env(), [])
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual([name for name, _ in aggregator._pumpfun_scanners_from_env()], ["pumpfun"])
+            self.assertEqual([name for name, _ in aggregator._birdeye_scanners_from_env()], ["birdeye"])
+
+    def test_global_discovery_switch_prevents_all_source_execution(self):
+        with patch.dict(os.environ, {"TROJAN_DISCOVERY_ENABLED": "false"}, clear=True):
+            with patch.object(aggregator, "SCANNERS", [("should_not_run", lambda: self.fail("scanner ran"))]):
+                self.assertEqual(aggregator.collect_tokens(), [])
+
     def test_pumpfun_is_counted_as_its_own_provider_family(self):
         self.assertEqual(aggregator._provider_family("pumpfun"), "pumpfun")
         self.assertEqual(aggregator._provider_family("pumpfun_curve"), "pumpfun")
