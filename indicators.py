@@ -9,6 +9,7 @@ from ohlcv_integrity import normalize_ohlcv_rows
 _cache = {}
 _fetch_lock = threading.Lock()
 _last_fetch = 0.0
+_last_prune = 0.0
 MIN_FETCH_INTERVAL = float(__import__('os').getenv('TROJAN_OHLCV_MIN_INTERVAL', '7.2'))
 TIMEFRAME = "minute"
 AGGREGATE = 1
@@ -238,7 +239,7 @@ def calculate_multi_timeframe_indicators(candles):
 
 
 def fetch_pool_indicators(pool_address, force=False):
-    global _last_fetch
+    global _last_fetch, _last_prune
     if not pool_address:
         return {"ready": False, "reason": "Pool address unavailable"}
     key = str(pool_address)
@@ -280,6 +281,14 @@ def fetch_pool_indicators(pool_address, force=False):
             try:
                 import database
                 database.save_market_candles(key, "1m", normalized)
+                if time.time() - _last_prune >= 3600:
+                    try:
+                        removed = database.prune_market_candles()
+                        if removed:
+                            print("[TROJAN V2] OHLCV RETENTION PRUNED:", removed, flush=True)
+                    except Exception as error:
+                        print("[TROJAN V2] OHLCV RETENTION WARNING:", type(error).__name__, flush=True)
+                    _last_prune = time.time()
             except Exception as error:
                 print("[TROJAN V2] OHLCV STORAGE WARNING:", type(error).__name__, flush=True)
         return indicators
