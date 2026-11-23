@@ -15,15 +15,15 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 
 | Trojanin tiedosto | ScreenerBot-vastine-ehdokkaat (ei vahvistettu) | Tila | Havainnot / commit / testit |
 |---|---|---|---|
-| `.github/workflows/create-playground-token2022-share.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/deploy-token2022-signer.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/devnet-e2e.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/devnet-token2022-e2e.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/devnet-token2022-readonly.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/devnet-token2022-signed-e2e.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/pool-parity-benchmark.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/tests.yml` | Ei vielä kartoitettu | PENDING |  |
-| `.github/workflows/trojan-full-validation.yml` | Ei vielä kartoitettu | PENDING |  |
+| `.github/workflows/create-playground-token2022-share.yml` | No direct equivalent; reference release/share automation | UPDATED | Trojan-only Solana Playground share-link publisher. Compared with ScreenerBot manual/tagged build workflow; restricted to `workflow_dispatch` so pushes during the audit cannot create shares or write back to the branch. Existing key-free share behavior retained. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/deploy-token2022-signer.yml` | No direct equivalent; reference release workflow | UPDATED | Trojan-only GitHub Pages deployment for the mobile signer page. Compared with reference tagged/manual release workflow; restricted to manual dispatch to prevent deployment during the audit. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/devnet-e2e.yml` | No direct equivalent | UPDATED | Trojan-only signed Devnet E2E; retained as manual-only. Push trigger removed to prevent unrequested network/signing activity during the audit. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/devnet-token2022-e2e.yml` | No direct equivalent | UPDATED | Trojan-only read-only Token-2022 Devnet E2E; manual-only trigger retained. Automatic push execution removed. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/devnet-token2022-readonly.yml` | No direct equivalent | UPDATED | Trojan-only read-only Devnet preflight; manual-only trigger retained. Automatic push execution removed. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/devnet-token2022-signed-e2e.yml` | No direct equivalent | COMPARED | Manual-only source-presence check for Solana Playground signing; no CI wallet or private key. No change needed. |
+| `.github/workflows/pool-parity-benchmark.yml` | No direct ScreenerBot benchmark workflow | UPDATED | Trojan-specific RPC parity benchmark; compared with reference CI build/test workflow. Network benchmark retained but changed to manual-only so it cannot issue mainnet RPC workload during this audit. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/tests.yml` | `.github/workflows/ci.yml` | UPDATED | Compared with ScreenerBot CI. Unit-test workflow retained, but push and pull-request triggers removed; manual dispatch only so tests wait until the complete audit is finished. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
+| `.github/workflows/trojan-full-validation.yml` | `.github/workflows/ci.yml` | UPDATED | Trojan-specific full validation includes compileall, unit tests, live-execution lock checks and dashboard authentication/route checks. Compared with reference CI; automatic push trigger removed and manual dispatch retained. Commit headline `ci: restrict workflow to manual dispatch during audit`. |
 | `.gitignore` | `.gitignore`<br>`electron/.gitignore` | PENDING |  |
 | `DEX_EXECUTION.md` | Ei vielä kartoitettu | PENDING |  |
 | `README.md` | `README.md`<br>`electron/README.md`<br>`electron/assets/README.md`<br>`src/apis/README.md`<br>`src/apis/llm/deepseek/README.md`<br>`src/ohlcvs/README.md`<br>`src/tokens/README.md` | UPDATED | Documented durable copy-wallet signature catch-up, page size, poll interval, bounded skip-to-head and stale-event behavior. Commit `4672227`; full validation `45254436959`. ScreenerBot docs comparison remains pending. |
