@@ -222,6 +222,7 @@ def api_overview():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": "PAPER TRADING",
         "live_execution": "LOCKED",
+        "trading_control": __import__("trading_control").get_force_stop_status(),
         "native_execution": native_execution.get_native_execution_status(),
         "account": account,
         "stats": stats,
@@ -242,6 +243,28 @@ def api_overview():
         "api": get_api_status(),
         "candidate_observation": candidate_observer.get_status(),
     })
+
+
+@app.get("/api/force-stop")
+def api_force_stop_status():
+    import trading_control
+    return jsonify(trading_control.get_force_stop_status())
+
+
+@app.post("/api/force-stop")
+def api_set_force_stop():
+    import trading_control
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("stopped"), bool):
+        return jsonify({"error": "Expected JSON object with boolean 'stopped'"}), 400
+    try:
+        return jsonify(trading_control.set_force_stopped(
+            payload["stopped"], payload.get("reason")
+        ))
+    except (TypeError, ValueError) as error:
+        return jsonify({"error": str(error)}), 400
 
 
 @app.get("/api/observation")
@@ -1243,7 +1266,7 @@ main{max-width:1440px;padding-top:16px}
 
 </style></head><body>
 <header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
-<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadHome();loadWallet()">Refresh</button></div></header>
+<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><span id="force-stop-label" class="muted">Trading active</span><button id="force-stop-button" class="refresh" type="button" onclick="toggleForceStop()">Force stop</button><button class="refresh" onclick="loadHome();loadWallet()">Refresh</button></div></header>
 <main id="overview"><section class="app-view active" id="view-home"><div class="grid">
 <div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric wallet-metric"><small>Phantom wallet · SOL</small><strong id="wallet-sol">—</strong><span class="sub" id="wallet-usd">Loading wallet…</span></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
@@ -1324,9 +1347,42 @@ async function runRouteComparison(){
   target.innerHTML=rows+'<div class="muted">Best: '+esc(result.best_provider||'No valid route')+' · execution '+esc(result.execution)+'</div>';
  }catch(err){target.textContent='Quote comparison failed: '+err.message;}
 }
+
+function renderForceStop(status){
+ const stopped=!!(status&&status.is_stopped);
+ const label=document.getElementById('force-stop-label');
+ const button=document.getElementById('force-stop-button');
+ if(label)label.textContent=stopped?'FORCE STOP ACTIVE':'Trading active';
+ if(label)label.className=stopped?'bad':'good';
+ if(button)button.textContent=stopped?'Resume trading':'Force stop';
+ if(button)button.disabled=false;
+}
+async function toggleForceStop(){
+ const button=document.getElementById('force-stop-button');
+ const label=document.getElementById('force-stop-label');
+ if(button)button.disabled=true;
+ if(label)label.textContent='Updating safety control…';
+ try{
+  const current=await get('/api/force-stop');
+  const stopped=!current.is_stopped;
+  const response=await fetch('/api/force-stop',{
+   method:'POST',
+   headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},
+   body:JSON.stringify({stopped:stopped,reason:stopped?'Dashboard emergency stop':null})
+  });
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Could not update force stop');
+  renderForceStop(data);
+  await loadHome();
+ }catch(err){
+  if(label)label.textContent='Safety control error: '+err.message;
+  if(button)button.disabled=false;
+ }
+}
 async function loadHome(){
  try{
   const o=await get('/api/overview'),a=o.account,s=o.stats;
+  renderForceStop(o.trading_control||{});
   document.getElementById('balance').textContent=usd(a.balance);
   document.getElementById('pnl').textContent=usd(s.total_profit);
   document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
@@ -1340,7 +1396,7 @@ async function loadHome(){
   document.getElementById('positions').innerHTML=positionRows;
   document.getElementById('positions-copy').innerHTML=positionRows;
   const m=o.market_data,r=o.runtime,pr=m.pool_registry||{};
-  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['DexScreener pool queue',pr.dex_pending||0],['Gecko pool queue',pr.gecko_pending||0],['Pool source jobs completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Native broadcast',o.native_execution&&o.native_execution.code_hard_lock?'HARD LOCKED':'CHECK CONFIG'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
+  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['DexScreener pool queue',pr.dex_pending||0],['Gecko pool queue',pr.gecko_pending||0],['Pool source jobs completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Force stop',o.trading_control&&o.trading_control.is_stopped?'ACTIVE':'Inactive'],['Live execution','LOCKED'],['Native broadcast',o.native_execution&&o.native_execution.code_hard_lock?'HARD LOCKED':'CHECK CONFIG'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
   document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
   document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
  }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}
