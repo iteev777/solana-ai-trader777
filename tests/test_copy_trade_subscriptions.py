@@ -155,6 +155,22 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
         fake_main.queue_copy_signal.assert_called_once_with(event)
         alert.assert_called_once()
 
+    def test_full_paper_queue_keeps_wallet_signature_retryable(self):
+        now = time.time()
+        event = self._event(now, now - 5)
+        fake_main = types.SimpleNamespace(queue_copy_signal=Mock(side_effect=[False, True]))
+        with patch.object(copy_trade, "_fetch_wallet_transaction", return_value=event), \
+             patch.object(copy_trade.database, "record_copy_trade_event", side_effect=[True, False]) as record, \
+             patch.object(copy_trade, "send_alert") as alert, \
+             patch.dict("os.environ", {"TROJAN_COPY_PAPER_ENABLED": "true"}), \
+             patch.dict(sys.modules, {"main": fake_main}):
+            with self.assertRaisesRegex(RuntimeError, "dispatch is pending"):
+                copy_trade._process_wallet_signature("wallet-A", "sig-fresh")
+            self.assertTrue(copy_trade._process_wallet_signature("wallet-A", "sig-fresh"))
+        self.assertEqual(record.call_count, 2)
+        self.assertEqual(fake_main.queue_copy_signal.call_count, 2)
+        alert.assert_called_once()
+
     def test_stale_recovered_wallet_event_is_recorded_but_never_copied_or_alerted(self):
         now = time.time()
         event = self._event(now, now - 600)
