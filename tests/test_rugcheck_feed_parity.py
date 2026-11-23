@@ -29,6 +29,23 @@ class RugcheckFeedParityTests(unittest.TestCase):
                 self.assertEqual(result[0]["name"], "Token")
                 self.assertEqual(result[0]["symbol"], "TKN")
 
+    def test_new_feed_preserves_token_decimals(self):
+        with patch.object(sources, "get_json", return_value=[
+            {"mint": MINT, "symbol": "TKN", "decimals": 9}
+        ]):
+            result = sources.scan_rugcheck_new()
+        self.assertEqual(result[0]["decimals"], 9)
+
+    def test_recent_feed_uses_metadata_object_and_skips_missing_metadata(self):
+        with patch.object(sources, "get_json", return_value=[
+            {"mint": MINT, "metadata": {"name": "Recent Token", "symbol": "REC"}},
+            {"mint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"},
+        ]):
+            result = sources.scan_rugcheck_recent()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["name"], "Recent Token")
+        self.assertEqual(result[0]["symbol"], "REC")
+
     def test_null_stats_response_is_a_valid_empty_feed(self):
         with patch.object(sources, "get_json", return_value=None):
             self.assertEqual(sources.scan_rugcheck_trending(), [])
