@@ -80,15 +80,32 @@ def wait_finalized(signature, last_valid_height):
         values = (result or {}).get("value")
         status = values[0] if isinstance(values, list) and len(values) == 1 else None
         if status:
-            if status.get("err") is not None:
+            if not isinstance(status, dict) or "err" not in status:
+                raise RuntimeError("Devnet returned a malformed signature status")
+            if status["err"] is not None:
                 raise RuntimeError("Token-2022 ATA transaction failed: " + str(status["err"])[:300])
             if status.get("confirmationStatus") == "finalized":
                 return status
         height = rpc("getBlockHeight", [{"commitment": "confirmed"}])
-        if isinstance(height, int) and height > last_valid_height:
-            raise RuntimeError("Transaction blockhash expired before finality")
+        if isinstance(height, bool) or not isinstance(height, int):
+            raise RuntimeError("Devnet returned an invalid block height while waiting for finality")
+        if height > last_valid_height:
+            raise RuntimeError(
+                "Transaction blockhash expired before finality; signature outcome must be checked manually"
+            )
         time.sleep(2)
-    raise TimeoutError("Token-2022 ATA transaction did not finalize within 90 seconds")
+    # One final status lookup avoids treating a slow status index as proof of failure.
+    result = rpc("getSignatureStatuses", [[signature], {"searchTransactionHistory": True}])
+    values = (result or {}).get("value")
+    status = values[0] if isinstance(values, list) and len(values) == 1 else None
+    if isinstance(status, dict) and "err" in status:
+        if status["err"] is not None:
+            raise RuntimeError("Token-2022 ATA transaction failed: " + str(status["err"])[:300])
+        if status.get("confirmationStatus") == "finalized":
+            return status
+    raise TimeoutError(
+        "Token-2022 ATA finality is unknown; do not resubmit. Check signature " + signature
+    )
 
 
 def read_account(address, commitment="confirmed"):
@@ -124,6 +141,18 @@ def main():
         raise RuntimeError("Configured mint is missing or not owned by Token-2022")
     if len(mint_account["data"]) != 278:
         raise RuntimeError("Configured Token-2022 mint data size changed; review before proceeding")
+    mint_inspection = token2022.inspect_token2022_mint(str(MINT))
+    mint_compatibility = token2022.validate_swap_compatible_mint_data(mint_account["data"])
+    transfer_fee_config = mint_compatibility.get("transfer_fee_config")
+    if mint_inspection.get("decimals") != 6 or transfer_fee_config is None:
+        raise RuntimeError("Configured Token-2022 mint extension/decimal layout is not the expected test mint")
+    epoch_info = rpc("getEpochInfo", [{"commitment": "confirmed"}])
+    epoch = (epoch_info or {}).get("epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int):
+        raise RuntimeError("Devnet returned an invalid epoch for transfer-fee verification")
+    active_fee = token2022.select_transfer_fee_schedule(transfer_fee_config, epoch)
+    if active_fee.get("basis_points") != 100:
+        raise RuntimeError("Configured mint's active transfer fee is not the expected 100 bps")
 
     payer = Keypair()
     payer_pubkey = payer.pubkey()
@@ -173,7 +202,9 @@ def main():
         },
     ])
     unsigned_value = (unsigned_sim or {}).get("value")
-    if not isinstance(unsigned_value, dict) or unsigned_value.get("err") is not None:
+    if not isinstance(unsigned_value, dict) or "err" not in unsigned_value:
+        raise RuntimeError("Unsigned ATA simulation response is malformed")
+    if unsigned_value["err"] is not None:
         raise RuntimeError("Unsigned ATA simulation failed: " + str(unsigned_value)[:300])
 
     signed = Transaction.new_unsigned(message)
@@ -189,25 +220,55 @@ def main():
         },
     ])
     signed_value = (signed_sim or {}).get("value")
-    if not isinstance(signed_value, dict) or signed_value.get("err") is not None:
+    if not isinstance(signed_value, dict) or "err" not in signed_value:
+        raise RuntimeError("Signed ATA simulation response is malformed")
+    if signed_value["err"] is not None:
         raise RuntimeError("Signed ATA simulation failed: " + str(signed_value)[:300])
 
     current_height = rpc("getBlockHeight", [{"commitment": "confirmed"}])
-    if not isinstance(current_height, int) or current_height > last_valid_height:
+    if isinstance(current_height, bool) or not isinstance(current_height, int) or current_height > last_valid_height:
         raise RuntimeError("Transaction blockhash expired before submission")
 
-    signature = rpc("sendTransaction", [
-        signed_b64,
-        {
-            "encoding": "base64",
-            "skipPreflight": False,
-            "preflightCommitment": "confirmed",
-            "maxRetries": 0,
-        },
-    ])
+    expected_signature = str(signed.signatures[0])
+    try:
+        signature = rpc("sendTransaction", [
+            signed_b64,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "preflightCommitment": "confirmed",
+                "maxRetries": 0,
+            },
+        ])
+    except Exception as send_error:
+        # The RPC may have accepted the transaction even if its response timed out.
+        # Query the locally-derived signature; never blindly submit it again.
+        try:
+            status_result = rpc(
+                "getSignatureStatuses",
+                [[expected_signature], {"searchTransactionHistory": True}],
+            )
+            status_values = (status_result or {}).get("value")
+            status = status_values[0] if isinstance(status_values, list) and len(status_values) == 1 else None
+            if isinstance(status, dict) and "err" in status:
+                if status["err"] is not None:
+                    raise RuntimeError("Submitted ATA transaction failed: " + str(status["err"])[:300])
+                signature = expected_signature
+            else:
+                raise RuntimeError(
+                    "Send outcome is unknown; do not resubmit. Check signature "
+                    + expected_signature + ". RPC detail: " + str(send_error)[:240]
+                )
+        except RuntimeError:
+            raise
+        except Exception as status_error:
+            raise RuntimeError(
+                "Send outcome is unknown; do not resubmit. Check signature "
+                + expected_signature + ". Send detail: " + str(send_error)[:180]
+                + "; status lookup: " + str(status_error)[:180]
+            )
     if not isinstance(signature, str) or not signature:
         raise RuntimeError("Devnet did not return a transaction signature")
-    expected_signature = str(signed.signatures[0])
     if signature != expected_signature:
         raise RuntimeError("RPC signature does not match the locally signed transaction")
 
