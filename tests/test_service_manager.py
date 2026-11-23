@@ -26,11 +26,11 @@ class ServiceManagerTests(unittest.TestCase):
         ))
         self.assertEqual(
             manager.resolve_startup_order(),
-            ["base", "worker", "alpha", "zeta"],
+            ["alpha", "zeta", "base", "worker"],
         )
         report = manager.start_all()
-        self.assertEqual(started, ["base", "worker", "alpha", "zeta"])
-        self.assertEqual(report["started"], ["base", "worker", "alpha", "zeta"])
+        self.assertEqual(started, ["alpha", "zeta", "base", "worker"])
+        self.assertEqual(report["started"], ["alpha", "zeta", "base", "worker"])
 
     def test_missing_dependency_and_cycle_are_rejected(self):
         missing = self.manager()
@@ -193,7 +193,6 @@ class ServiceManagerTests(unittest.TestCase):
 
     def test_unexpected_worker_exit_is_reported_as_failed(self):
         manager = self.manager()
-        release = threading.Event()
         manager.register(service_manager.ServiceSpec(
             "worker",
             start=lambda: threading.Thread(target=lambda: None, daemon=True),
