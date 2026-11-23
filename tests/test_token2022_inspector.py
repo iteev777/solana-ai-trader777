@@ -267,5 +267,44 @@ class Token2022InspectorTests(unittest.TestCase):
         self.assertEqual(inspector.conservative_net_amount(None, 123), 123)
 
 
+    def test_token_account_extension_lengths_are_validated(self):
+        mint = key(21)
+        owner = key(22)
+        raw = bytearray(170)
+        raw[:32] = chain._b58decode(mint)
+        raw[32:64] = chain._b58decode(owner)
+        raw[108] = 1
+        raw[165] = inspector.TOKEN_ACCOUNT_TYPE
+        raw[166:168] = (7).to_bytes(2, "little")
+        raw[168:170] = (0).to_bytes(2, "little")
+        account = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+        self.assertEqual(
+            inspector.validate_token2022_account_data(account, mint, owner), 0
+        )
+
+        bad = bytearray(raw)
+        bad[168:170] = (1).to_bytes(2, "little")
+        bad.extend(b"\\x00")
+        with self.assertRaisesRegex(ValueError, "ImmutableOwner extension length"):
+            inspector.validate_token2022_account_data(
+                {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(bad)}, mint, owner
+            )
+
+    def test_transfer_fee_amount_extension_must_be_eight_bytes(self):
+        mint = key(23)
+        owner = key(24)
+        raw = bytearray(178)
+        raw[:32] = chain._b58decode(mint)
+        raw[32:64] = chain._b58decode(owner)
+        raw[108] = 1
+        raw[165] = inspector.TOKEN_ACCOUNT_TYPE
+        raw[166:168] = (2).to_bytes(2, "little")
+        raw[168:170] = (7).to_bytes(2, "little")
+        with self.assertRaisesRegex(ValueError, "TransferFeeAmount extension length"):
+            inspector.validate_token2022_account_data(
+                {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}, mint, owner
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
