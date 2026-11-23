@@ -339,8 +339,13 @@ class ServiceManager:
         try:
             if spec.stop is not None:
                 spec.stop(handle)
-            if handle is not None and callable(getattr(handle, "join", None)):
-                handle.join(self.stop_grace_seconds)
+            join = getattr(handle, "join", None) if handle is not None else None
+            is_thread_like = callable(getattr(handle, "is_alive", None)) if handle is not None else False
+            # Many non-thread handles expose an unrelated join method (for
+            # example, str.join). Only invoke a timed join for worker-like
+            # handles that also expose is_alive.
+            if callable(join) and is_thread_like:
+                join(self.stop_grace_seconds)
                 alive = _is_alive(handle)
                 if alive is True:
                     raise TimeoutError("service thread did not stop within grace period")
