@@ -146,7 +146,9 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
     input_mint = quote.get("input_mint")
     output_mint = quote.get("output_mint")
     amount_in = _u64(quote.get("input_amount"), "quote input amount")
-    minimum_out = _u64(quote.get("minimum_out_amount"), "quote minimum output")
+    requested_slippage = quote.get("slippage_bps", 100)
+    if isinstance(requested_slippage, bool) or not isinstance(requested_slippage, int) or not 0 <= requested_slippage <= 300:
+        raise ValueError("Quote slippage must be an integer between 0 and 300 bps")
     quote_slot = quote.get("slot")
     if isinstance(quote_slot, bool) or not isinstance(quote_slot, int) or quote_slot <= 0:
         raise ValueError("Quote must include a confirmed positive slot")
@@ -162,6 +164,21 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("Input and output mints must differ")
     if user_input_token_account == user_output_token_account:
         raise ValueError("Input and output token accounts must differ")
+
+    # Never trust a client-supplied minimum output. Recompute it from a fresh,
+    # confirmed on-chain CPMM quote using the same pool, mint, amount and bounded
+    # user-selected slippage. The fresh quote supplies the min-out instruction arg.
+    fresh_quote = chain.quote_raydium_cpmm_pool(
+        pool_id, input_mint, amount_in, requested_slippage
+    )
+    if (not isinstance(fresh_quote, dict)
+            or fresh_quote.get("status") != "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT"
+            or fresh_quote.get("output_mint") != output_mint):
+        raise ValueError("Fresh Raydium CPMM quote did not validate the requested pair")
+    minimum_out = _u64(fresh_quote.get("minimum_out_amount"), "fresh quote minimum output")
+    fresh_quote_slot = fresh_quote.get("slot")
+    if isinstance(fresh_quote_slot, bool) or not isinstance(fresh_quote_slot, int) or fresh_quote_slot < quote_slot:
+        raise ValueError("Fresh Raydium CPMM quote is older than the supplied quote")
 
     first = chain._account(pool_id)
     if first.get("owner") != CPMM_PROGRAM_ID:
@@ -195,8 +212,8 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
                   "quote_mint", "open_time", "status"):
         if current.get(field) != discovered.get(field):
             raise ValueError("Raydium CPMM pool relationships changed during snapshot")
-    if slot < quote_slot or slot - quote_slot > max_quote_slot_lag:
-        raise ValueError("Raydium CPMM quote is stale relative to the transaction snapshot")
+    if slot < fresh_quote_slot or slot - fresh_quote_slot > max_quote_slot_lag:
+        raise ValueError("Fresh Raydium CPMM quote is stale relative to the transaction snapshot")
     if current["status"] != "active" or current["open_time"] > int(time.time()):
         raise ValueError("Raydium CPMM pool is paused or not yet open")
 
@@ -265,7 +282,8 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         "pool_id": pool_id,
         "slot": slot,
         "quote_slot": quote_slot,
-        "quote_slot_lag": slot - quote_slot,
+        "fresh_quote_slot": fresh_quote_slot,
+        "quote_slot_lag": slot - fresh_quote_slot,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
@@ -282,4 +300,41 @@ def build_raydium_cpmm_swap(quote, wallet, user_input_token_account,
         "signing": "DISABLED_ON_SERVER",
         "broadcast": "DISABLED",
         "live_trading_ready": False,
+    }
+
+
+def simulate_raydium_cpmm_transaction(transaction_base64):
+    """Simulate an unsigned native transaction; never sign or broadcast it."""
+    if not isinstance(transaction_base64, str) or not transaction_base64:
+        raise ValueError("Unsigned transaction base64 is required")
+    try:
+        raw = base64.b64decode(transaction_base64, validate=True)
+    except (ValueError, TypeError):
+        raise ValueError("Unsigned transaction is not valid base64")
+    if len(raw) < 100 or len(raw) > 1232:
+        raise ValueError("Unsigned transaction size is outside Solana packet limits")
+    result = chain._rpc("simulateTransaction", [
+        transaction_base64,
+        {
+            "encoding": "base64",
+            "sigVerify": False,
+            "replaceRecentBlockhash": True,
+            "commitment": "confirmed",
+            "innerInstructions": False,
+        },
+    ])
+    value = (result or {}).get("value")
+    if not isinstance(value, dict):
+        raise ValueError("Solana RPC returned a malformed simulation result")
+    error = value.get("err")
+    logs = value.get("logs")
+    if logs is not None and not isinstance(logs, list):
+        raise ValueError("Solana RPC returned malformed simulation logs")
+    return {
+        "status": "PASS" if error is None else "REJECT",
+        "error": error,
+        "units_consumed": value.get("unitsConsumed"),
+        "logs": [str(line)[:300] for line in (logs or [])[-30:]],
+        "signature_verification": "DISABLED_UNSIGNED_SIMULATION",
+        "broadcast": "DISABLED",
     }
