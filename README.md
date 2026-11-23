@@ -400,3 +400,9 @@ Every address is validated as a 32-byte base58 Solana public key. Entries are so
 ## Raydium CLMM direct quote adapter
 
 The read-only Raydium CLMM adapter reads the pool state, AmmConfig, vaults, legacy SPL mints and initialized tick arrays in one confirmed RPC context. It walks the concentrated-liquidity curve with integer Q64.64 price math, charges the configured input fee per step, updates active liquidity at crossed initialized ticks and caps output at the actual vault balance. It refuses unsupported dynamic-fee and fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and amounts that exceed the fetched tick-array coverage. It does not build or sign swap instructions.
+
+## Paper fill slippage model
+
+Paper entries, DCA adds, partial exits and full exits apply a conservative price slippage estimate in addition to the existing paper fee accounting. Configure `TROJAN_PAPER_SLIPPAGE_BPS` (default 25 bps, bounded to 0–300 bps). For the initial entry, the applied buy slippage is the larger of this setting and the approved Jupiter route's reported price impact. Sell fills use the configured or persisted exit allowance. Fill results expose the market mark, effective fill price, slippage basis points and model name. This is a deterministic paper estimate, not a quote-settled execution simulator; no live transaction is sent.
+
+
