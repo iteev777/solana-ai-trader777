@@ -1149,7 +1149,7 @@ src/filtering/engine.rs	source	unreviewed	Pending review
 src/filtering/engine_tests.rs	source	unreviewed	Pending review
 src/filtering/error.rs	source	unreviewed	Pending review
 src/filtering/mod.rs	source	unreviewed	Pending review
-src/filtering/sources/bounds.rs	source	unreviewed	Pending review
+src/filtering/sources/bounds.rs	source	reviewed	filter_pipeline.py preserves optional ranges and requires usable age evidence for positive floors. Trojan can retry WAIT decisions.
 src/filtering/sources/dexscreener.rs	source	unreviewed	Pending review
 src/filtering/sources/geckoterminal.rs	source	unreviewed	Pending review
 src/filtering/sources/llm_analysis.rs	source	unreviewed	Pending review
@@ -1160,7 +1160,7 @@ src/filtering/sources/rejection.rs	source	unreviewed	Pending review
 src/filtering/sources/rejection/tests.rs	source	unreviewed	Pending review
 src/filtering/sources/rugcheck.rs	source	unreviewed	Pending review
 src/filtering/sources/symbols.rs	source	unreviewed	Pending review
-src/filtering/stage.rs	source	unreviewed	Pending review
+src/filtering/stage.rs	source	reviewed	filter_pipeline.py now evaluates in order and stops on first non-pass; chain-specific and async profiles remain distinct.
 src/filtering/store.rs	source	unreviewed	Pending review
 src/filtering/store_helpers.rs	source	unreviewed	Pending review
 src/filtering/store_helpers_tests.rs	source	unreviewed	Pending review
@@ -1652,7 +1652,7 @@ src/trader/paper/run.rs	source	unreviewed	Pending review
 src/trader/paper/types.rs	source	unreviewed	Pending review
 src/trader/paper/types/tests.rs	source	unreviewed	Pending review
 src/trader/policy.rs	source	unreviewed	Pending review
-src/trader/safety/blacklist.rs	source	unreviewed	Pending review
+src/trader/safety/blacklist.rs	source	reviewed	blacklist.py uses authoritative DB and typed keys. Emergency exit policy awaits exit-module review.
 src/trader/safety/cooldown.rs	source	unreviewed	Pending review
 src/trader/safety/limits.rs	source	unreviewed	Pending review
 src/trader/safety/loss_limit.rs	source	unreviewed	Pending review

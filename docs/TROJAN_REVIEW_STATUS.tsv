@@ -5,7 +5,7 @@ README.md	other	unreviewed
 adaptive_learning.py	production	unreviewed
 ai_analyzer.py	production	unreviewed
 api_client.py	production	unreviewed
-blacklist.py	production	unreviewed
+blacklist.py	production	reviewed
 candidate_quality.py	production	reviewed
 clmm_quote_math.py	production	unreviewed
 copy_event_parser.py	production	unreviewed
@@ -30,7 +30,7 @@ docs/TROJAN_REVIEW_STATUS.tsv	other	unreviewed
 docs/screenerbot-file-inventory.tsv	other	unreviewed
 entry_intelligence.py	production	unreviewed
 exit_policy.py	production	unreviewed
-filter_pipeline.py	production	unreviewed
+filter_pipeline.py	production	reviewed
 indicators.py	production	unreviewed
 liquidity_monitor.py	production	unreviewed
 live_execution.py	production	unreviewed

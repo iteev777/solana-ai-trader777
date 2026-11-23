@@ -28,21 +28,24 @@ status in this review.
 | `rugcheck.py` | `src/tokens/security/rugcheck.rs` | Trojan uses a bounded in-memory cache and rejects unsafe/incomplete reports. Reference also persists reports and has optional shared caching. Persistent and shared caches remain open. | `d0490d8` Reconcile competing authority values conservatively and match creator public keys case-sensitively. Integrate normalized risk bands into report output. | 580 tests passed. |
 | `rugcheck_risk_band.py` (new) | `src/tokens/security/risk_band.rs` | Explicit bands were missing. The independent Python module validates provider scores and supplies low, medium and high reporting labels. | `d0490d8` Integrated through the existing RugCheck analysis entry point. Existing admission thresholds are retained. | Boundary and invalid-input tests pass through the report entry point. |
 
+| `filter_pipeline.py` | `src/filtering/stage.rs`, `src/filtering/sources/{market,bounds}.rs` | Reference short-circuits in stage order and distinguishes optional ranges from required floors. Trojan has separate WAIT outcomes, but evaluated every stage eagerly and could pass a missing age with a positive floor. | `94f38b6` Run only reached stages, compare market base mint to the requested mint, and require valid age evidence for positive age floors. | Regression tests pass. |
+| `blacklist.py` | `src/trader/safety/blacklist.rs` | Both consult authoritative DB state; Trojan separates token, pool and account matches. Reference position-exit policy belongs to the exit review. | `04ca872` Bound base58 decoding and skip malformed rows while deduplicating typed checks. | Regression tests pass. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Thirteen of 61 production
+path in this branch, including review artifacts. Fifteen of 61 production
 Python files have completed this review. The last completed file is
-`rugcheck.py` and its new dependency `rugcheck_risk_band.py`. Resume at `filter_pipeline.py` for pre-entry risk gates.
+`blacklist.py`. Resume at `risk_manager.py` for position admission.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Twenty source files are reviewed and 1,991 remain
+are listed as well. Twenty-three source files are reviewed and 1,988 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 580 tests passed, including the process-level paper/dashboard and live
+All 584 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.
