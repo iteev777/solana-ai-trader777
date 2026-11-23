@@ -473,3 +473,13 @@ instruction. Transfer-hook pools and unsupported mint extensions remain
 blocked. Existing flat-fee and non-migrated pool restrictions are unchanged;
 this does not imply support for all DBC scheduler/dynamic-fee modes. Signing and
 broadcasting remain disabled.
+
+
+## Token-2022 handling: FluxBeam
+
+FluxBeam now accepts Token-2022 mints only when the transfer-fee schedules are
+zero and the transfer-fee authority is permanently disabled. It validates the
+mint's Token-2022 layout, vault token-program ownership and the canonical
+FluxBeam vault authority before quoting. Non-zero TransferFeeConfig mints and
+unsupported extensions remain blocked, matching the reference venue's
+conservative limitation rather than assuming the AMM's fee interaction.
