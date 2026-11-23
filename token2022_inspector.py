@@ -245,6 +245,10 @@ def inspect_token2022_account(address):
         layout = "EXTENDED_TOKEN_ACCOUNT"
     if len(raw) < 165 or raw[108] not in (1, 2):
         raise Token2022LayoutError("Token-2022 token account base state is invalid")
+    delegate_option = int.from_bytes(raw[72:76], "little")
+    close_authority_option = int.from_bytes(raw[129:133], "little")
+    if delegate_option not in (0, 1) or close_authority_option not in (0, 1):
+        raise Token2022LayoutError("Token-2022 token account authority option is invalid")
     return {
         "status": "INSPECTED_NOT_SWAP_APPROVED",
         "address": address,
@@ -254,6 +258,8 @@ def inspect_token2022_account(address):
         "authority": chain._key(raw, 32),
         "raw_balance": int.from_bytes(raw[64:72], "little"),
         "state": "INITIALIZED" if raw[108] == 1 else "FROZEN",
+        "delegate_present": delegate_option == 1,
+        "close_authority_present": close_authority_option == 1,
         "layout": layout,
         "extensions": extensions,
         "extension_count": len(extensions),
@@ -328,6 +334,14 @@ def validate_token2022_account_data(account, mint, authority, label="Token-2022 
         raise Token2022LayoutError(label + " authority does not match")
     if raw[108] != 1:
         raise Token2022LayoutError(label + " is not initialized or is frozen")
+    delegate_option = int.from_bytes(raw[72:76], "little")
+    close_authority_option = int.from_bytes(raw[129:133], "little")
+    if delegate_option not in (0, 1) or close_authority_option not in (0, 1):
+        raise Token2022LayoutError(label + " authority option is invalid")
+    if delegate_option == 1:
+        raise Token2022LayoutError(label + " has an active delegate authority")
+    if close_authority_option == 1:
+        raise Token2022LayoutError(label + " has an active close authority")
     if len(raw) > 165:
         extensions = parse_tlv_extensions(raw, TOKEN_ACCOUNT_TYPE)
         if any(extension["type"] not in {2, 7} for extension in extensions):
@@ -370,6 +384,14 @@ def validate_token_account_for_program(account, token_program, mint, authority,
         raise Token2022LayoutError(label + " authority does not match")
     if raw[108] != 1:
         raise Token2022LayoutError(label + " is not initialized or is frozen")
+    delegate_option = int.from_bytes(raw[72:76], "little")
+    close_authority_option = int.from_bytes(raw[129:133], "little")
+    if delegate_option not in (0, 1) or close_authority_option not in (0, 1):
+        raise Token2022LayoutError(label + " authority option is invalid")
+    if delegate_option == 1:
+        raise Token2022LayoutError(label + " has an active delegate authority")
+    if close_authority_option == 1:
+        raise Token2022LayoutError(label + " has an active close authority")
     balance = int.from_bytes(raw[64:72], "little")
     if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
         raise ValueError("Minimum token balance must be a non-negative integer")
