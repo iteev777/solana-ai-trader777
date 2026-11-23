@@ -233,6 +233,7 @@ def get_discovery_status():
                 sources = []
                 for row in rows:
                     item = dict(row)
+                    item["name"] = item.get("source")
                     item["count"] = item.get("last_count", 0)
                     item["ok"] = bool(item.get("last_ok", 0))
                     item["completed_at"] = item.get("updated_at")
