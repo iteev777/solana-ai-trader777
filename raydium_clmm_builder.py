@@ -39,7 +39,7 @@ def _token_account(account, owner, mint, label, minimum=0):
     raw = account.get("data", b"")
     if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
         raise ValueError(label + " has an invalid token account layout")
-    if chain._key(raw, 0) != mint or chain._key(raw, 32) != owner:
+    if chain._key(raw, 0) != mint or (owner is not None and chain._key(raw, 32) != owner):
         raise ValueError(label + " mint or owner does not match")
     if raw[108] != 1:
         raise ValueError(label + " is not initialized or is frozen")
@@ -146,10 +146,10 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM vaults must use legacy SPL Token")
     if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
         raise ValueError("CLMM mint account layout is invalid")
-    _token_account(vault0_acc, None, current["mint_0"], "CLMM vault 0")
-    _token_account(vault1_acc, None, current["mint_1"], "CLMM vault 1")
+    _token_account(vault0_acc, authority, _key(current["mint_0"], "mint 0"), "CLMM vault 0")
+    _token_account(vault1_acc, authority, _key(current["mint_1"], "mint 1"), "CLMM vault 1")
     # Vault authority is the canonical CLMM pool PDA authority.
-    authority, _ = chain._find_program_address([b"vault_and_lp_mint_auth_seed"], PROGRAM_ID)
+    authority = pool
     if (chain._key(vault0_acc["data"], 32) != authority
             or chain._key(vault1_acc["data"], 32) != authority):
         raise ValueError("CLMM vault authority does not match canonical PDA")
