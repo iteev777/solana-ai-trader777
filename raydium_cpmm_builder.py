@@ -29,7 +29,10 @@ def _u64(value, label):
 def _pubkey(value, label):
     if not isinstance(value, str) or not value:
         raise ValueError(label + " is required")
-    raw = chain._b58decode(value)
+    try:
+        raw = chain._b58decode(value)
+    except (ValueError, IndexError):
+        raise ValueError(label + " must be a valid 32-byte Solana public key")
     if len(raw) != 32:
         raise ValueError(label + " must be a valid 32-byte Solana public key")
     return raw
