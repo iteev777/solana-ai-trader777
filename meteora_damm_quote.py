@@ -3,6 +3,7 @@ import math
 import time
 
 PROGRAM = "meteora_damm_v2"
+POOL_AUTHORITY = "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
 FEE_DENOMINATOR = 1_000_000_000
 MAX_SNAPSHOT_AGE_SECONDS = 8.0
 MAX_SLIPPAGE_BPS = 300
@@ -161,39 +162,67 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         if state[field] != first[field]:
             raise ValueError("Meteora DAMM pool state changed between discovery and confirmed snapshot")
 
-    if mint_a_acc.get("owner") != chain.TOKEN_PROGRAM or mint_b_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DAMM Token-2022 mints are refused until transfer fees and hooks are modelled")
-    if vault_a_acc.get("owner") != chain.TOKEN_PROGRAM or vault_b_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DAMM vaults must use the legacy SPL Token program")
-    reserve_a = chain._token_amount(vault_a_acc, state["mint_a"])
-    reserve_b = chain._token_amount(vault_b_acc, state["mint_b"])
+    import token2022_inspector as token2022
+    token_program_a = mint_a_acc.get("owner")
+    token_program_b = mint_b_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_a not in supported_programs or token_program_b not in supported_programs:
+        raise ValueError("Meteora DAMM mint uses an unsupported token program")
+    if vault_a_acc.get("owner") != token_program_a or vault_b_acc.get("owner") != token_program_b:
+        raise ValueError("Meteora DAMM vault token program does not match its mint")
+    mint_a_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_a_acc.get("data", b""))
+        if token_program_a == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint_b_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_b_acc.get("data", b""))
+        if token_program_b == chain.TOKEN_2022_PROGRAM else None
+    )
+    reserve_a = token2022.validate_token_account_for_program(
+        vault_a_acc, token_program_a, state["mint_a"], POOL_AUTHORITY,
+        "Meteora DAMM vault A",
+    )
+    reserve_b = token2022.validate_token_account_for_program(
+        vault_b_acc, token_program_b, state["mint_b"], POOL_AUTHORITY,
+        "Meteora DAMM vault B",
+    )
     if reserve_a <= 0 or reserve_b <= 0:
         raise ValueError("Meteora DAMM vault reserves are empty")
 
     # OnlyB (mode 1) charges token B when it is the input; other modes charge
     # the output token. Fees are rounded upward in the token they are collected.
+    input_token2022 = mint_a_token2022 if input_is_a else mint_b_token2022
+    output_token2022 = mint_b_token2022 if input_is_a else mint_a_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire DAMM input")
     fee_on_input = state["collect_fee_mode"] == 1 and not input_is_a
     if fee_on_input:
-        fee_amount = _ceil_div(amount_in * state["fee_numerator"], FEE_DENOMINATOR)
-        if fee_amount >= amount_in:
+        fee_amount = _ceil_div(received_by_pool * state["fee_numerator"], FEE_DENOMINATOR)
+        if fee_amount >= received_by_pool:
             raise ValueError("Meteora DAMM fee consumes the entire input")
-        curve_input = amount_in - fee_amount
+        curve_input = received_by_pool - fee_amount
         sqrt_after, gross_output = _curve_step(state, input_is_a, curve_input)
-        output_amount = gross_output
+        after_trade_fee = gross_output
         fee_mint = input_mint
     else:
-        sqrt_after, gross_output = _curve_step(state, input_is_a, amount_in)
+        sqrt_after, gross_output = _curve_step(state, input_is_a, received_by_pool)
         fee_amount = _ceil_div(gross_output * state["fee_numerator"], FEE_DENOMINATOR)
         if fee_amount >= gross_output:
             raise ValueError("Meteora DAMM output fee consumes the entire output")
-        output_amount = gross_output - fee_amount
+        after_trade_fee = gross_output - fee_amount
         fee_mint = expected_output
+    output_amount = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), after_trade_fee
+    )
 
     output_reserve = (
         reserve_b - min(reserve_b, state["protocol_fee_b"])
         if input_is_a else reserve_a - min(reserve_a, state["protocol_fee_a"])
     )
-    if output_amount >= output_reserve:
+    if gross_output >= output_reserve:
         raise ValueError("Meteora DAMM quote exceeds the swappable output vault balance")
 
     before = state["sqrt_price"]
@@ -234,6 +263,12 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "slippage_bps": slippage_bps,
         "output_amount_gross": gross_output,
         "out_amount": output_amount,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < after_trade_fee,
+        "token2022_output_gross_amount": after_trade_fee,
+        "token_program_input": token_program_a if input_is_a else token_program_b,
+        "token_program_output": token_program_b if input_is_a else token_program_a,
         "minimum_out_amount": minimum_out,
         "fee_mint": fee_mint,
         "fee_amount": fee_amount,
