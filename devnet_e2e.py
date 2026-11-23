@@ -18,7 +18,7 @@ from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 
 DEVNET_URL = os.getenv("SOLANA_DEVNET_RPC_URL", "https://api.devnet.solana.com").strip()
-DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 LAMPORTS_PER_SOL = 1_000_000_000
 TEST_TRANSFER_LAMPORTS = 1
 REQUEST_TIMEOUT = 20
