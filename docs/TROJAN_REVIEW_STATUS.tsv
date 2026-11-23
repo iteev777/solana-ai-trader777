@@ -7,7 +7,7 @@ ai_analyzer.py	production	unreviewed
 api_client.py	production	reviewed
 blacklist.py	production	reviewed
 candidate_quality.py	production	reviewed
-clmm_quote_math.py	production	unreviewed
+clmm_quote_math.py	production	reviewed
 copy_event_parser.py	production	unreviewed
 copy_freshness.py	production	unreviewed
 copy_risk.py	production	unreviewed
@@ -41,7 +41,7 @@ meteora_damm_quote.py	production	unreviewed
 meteora_dbc_quote.py	production	unreviewed
 meteora_dlmm_quote.py	production	unreviewed
 ohlcv_integrity.py	production	unreviewed
-onchain_stream.py	production	unreviewed
+onchain_stream.py	production	reviewed
 orca_whirlpool_quote.py	production	unreviewed
 paper_fill_model.py	production	unreviewed
 paper_trading.py	production	unreviewed
@@ -51,8 +51,8 @@ pool_registry.py	production	reviewed
 pool_selection.py	production	reviewed
 position_policy.py	production	unreviewed
 protocol_quotes.py	production	unreviewed
-protocol_validation.py	production	unreviewed
-raydium_clmm_quote.py	production	unreviewed
+protocol_validation.py	production	reviewed
+raydium_clmm_quote.py	production	reviewed
 requirements.txt	other	unreviewed
 risk_manager.py	production	reviewed
 route_comparison.py	production	unreviewed

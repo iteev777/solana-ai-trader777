@@ -44,21 +44,26 @@ status in this review.
 | `pool_selection.py` | `src/chains/solana/pools/selection.rs` | Reference records a single selected pool after analysis and removes superseded subscriptions via its directory. Trojan selects from base-side market data with hysteresis; release on re-selection belongs to the stream review. | `1bd1f00` Exclude malformed and foreign-chain rows before ranking; ignore nonfinite implied SOL prices. | Regression tests pass. |
 | `pool_registry.py` | `src/tokens/pool_data/cache.rs` (targeted TTL and hydration comparison) | Both bound freshness and hydrate persisted pool snapshots. Reference has priority prefetch lanes and optional server cache. Full reference cache review remains open. | `4d84a3f` Empty/foreign-chain updates cannot refresh pool age, future SQLite snapshots are ignored, and stale readers no longer delete persisted rows that could have been concurrently replaced. Persistent stale-row cleanup remains open. | Regression tests pass. |
 
+| `protocol_validation.py` | `src/services/implementations/pool_pricing_service.rs`; targeted `src/chains/solana/pools/analyzer.rs` | Reference reports component-level health and operation totals. Trojan records per-protocol decoder outcomes. | `0e2bd61` Keep conflicting and transient outcomes out of verified-success telemetry and report whether persistence succeeded. | Regression coverage passes. |
+| `onchain_stream.py` | `src/chains/solana/rpc/subscriptions/frames.rs` | Reference ignores malformed frames and separates RPC failures from confirmations. Trojan shares upstream subscriptions across watched pools. Shutdown and complete reference subscription lifecycle review remain open. | `80251bd` Ignore malformed frames, reject contradictory acknowledgements and slot regressions, protect nested snapshots and use a monotonic candidate TTL. | Mock stream tests pass. |
+| `clmm_quote_math.py` | `src/chains/solana/swaps/direct/venues/clmm_ticks.rs` (targeted tick-walk comparison) | Both round input and fees conservatively and stop at coverage limits. Full reference tick-array traversal review remains open. | `4cfd422` Reject fractional fee rates, duplicate or out-of-coverage ticks and incorrect coverage direction. | Mock quote tests pass. |
+| `raydium_clmm_quote.py` | `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` (targeted snapshot/config comparison) | Both check layout and calculate from loaded accounts. Reference also models transfer fees and extension arrays. Trojan retains its read-only restrictions. | `15370ea` Require account discriminators for config and tick arrays. | 601 tests passed. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Twenty-four of 61 production
+path in this branch, including review artifacts. Twenty-eight of 61 production
 Python files have completed this review. The last completed file is
-`pool_registry.py`. Resume at `protocol_validation.py` for decoder validation telemetry.
+`raydium_clmm_quote.py`. Resume at `orca_whirlpool_quote.py` for its read-only venue adapter.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Thirty-one source files are reviewed and 1,980 remain
+are listed as well. Thirty-three source files are reviewed and 1,978 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 598 tests passed, including the process-level paper/dashboard and live
+All 601 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

@@ -945,7 +945,7 @@ src/chains/solana/rpc/global.rs	source	unreviewed	Pending review
 src/chains/solana/rpc/helpers.rs	source	unreviewed	Pending review
 src/chains/solana/rpc/mod.rs	source	unreviewed	Pending review
 src/chains/solana/rpc/subscriptions/client.rs	source	unreviewed	Pending review
-src/chains/solana/rpc/subscriptions/frames.rs	source	unreviewed	Pending review
+src/chains/solana/rpc/subscriptions/frames.rs	source	reviewed	onchain_stream.py ignores malformed frames and separates error and confirmation. Reference also decodes logs notifications and typed slot context.
 src/chains/solana/rpc/subscriptions/mod.rs	source	unreviewed	Pending review
 src/chains/solana/rpc/subscriptions/payloads.rs	source	unreviewed	Pending review
 src/chains/solana/rpc/subscriptions/registry.rs	source	unreviewed	Pending review
@@ -1366,7 +1366,7 @@ src/services/implementations/filtering_service.rs	source	unreviewed	Pending revi
 src/services/implementations/llm_analysis_service.rs	source	unreviewed	Pending review
 src/services/implementations/mod.rs	source	unreviewed	Pending review
 src/services/implementations/ohlcv_service.rs	source	unreviewed	Pending review
-src/services/implementations/pool_pricing_service.rs	source	unreviewed	Pending review
+src/services/implementations/pool_pricing_service.rs	source	reviewed	protocol_validation.py and pool live status expose outcomes. Reference also owns stage health, startup rollback and aggregate counters.
 src/services/implementations/pools_service.rs	source	unreviewed	Pending review
 src/services/implementations/positions_service.rs	source	unreviewed	Pending review
 src/services/implementations/referral_service.rs	source	unreviewed	Pending review
