@@ -525,6 +525,8 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         first["vault_base"], first["vault_quote"], first["base_mint"], first["quote_mint"],
     ]
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("PumpSwap snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("PumpSwap confirmed snapshot is missing a required account")
     pool_acc, global_acc, fee_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -669,8 +671,13 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     execution_price = impact_output_amount / impact_basis_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("PumpSwap confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("PumpSwap account snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("PumpSwap price impact is invalid")
@@ -1021,8 +1028,9 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         raise ValueError("FluxBeam direct quotes support only verified ConstantProduct pools")
     keys = [pool_address, first["vault_base"], first["vault_quote"],
             first["base_mint"], first["quote_mint"]]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("FluxBeam snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("FluxBeam snapshot is missing a required account")
     pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -1091,8 +1099,13 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("FluxBeam confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("FluxBeam snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("FluxBeam price impact is invalid")
@@ -1325,8 +1338,9 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         raise ValueError("Custom creator-fee curves require a separate fee model")
 
     keys = [pool_address, PUMP_GLOBAL_CONFIG, PUMP_FEE_CONFIG, token_mint]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Pump.fun snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Pump.fun confirmed snapshot is missing a required account")
     curve_acc, global_acc, fee_acc, mint_acc = accounts
@@ -1445,8 +1459,13 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     execution_price = impact_output / impact_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Pump.fun confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("Pump.fun curve snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Pump.fun price impact is invalid")
