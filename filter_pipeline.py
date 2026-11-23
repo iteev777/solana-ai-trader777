@@ -150,6 +150,64 @@ def _market_stage(token, strategy):
     })
 
 
+
+def _pool_metrics_stage(token):
+    """Apply optional pool-count and reserve floors to observed registry data."""
+    raw_count = _first_value(token.get("pool_count"), token.get("poolCount"))
+    count = _number(raw_count)
+    min_count = _env_int("TROJAN_FILTER_MIN_POOL_COUNT", 0, 0, 100000)
+    max_count = _env_int("TROJAN_FILTER_MAX_POOL_COUNT", 0, 0, 100000)
+
+    if raw_count is not None and (
+        count is None or count < 0 or int(count) != count
+    ):
+        return _result("REJECT", "pool_metrics", "INVALID_POOL_COUNT", {
+            "pool_count": raw_count
+        })
+    if min_count > 0 and count is None:
+        return _result("WAIT", "pool_metrics", "POOL_COUNT_UNKNOWN", {
+            "minimum": min_count
+        })
+    if count is not None and min_count > 0 and count < min_count:
+        return _result("REJECT", "pool_metrics", "POOL_COUNT_BELOW_MINIMUM", {
+            "pool_count": int(count), "minimum": min_count
+        })
+    if count is not None and max_count > 0 and count > max_count:
+        return _result("REJECT", "pool_metrics", "POOL_COUNT_ABOVE_MAXIMUM", {
+            "pool_count": int(count), "maximum": max_count
+        })
+
+    raw_reserve = _first_value(
+        token.get("reserve_in_usd"),
+        token.get("reserveInUsd"),
+        _get(token, "pool_metrics", "reserve_in_usd"),
+    )
+    reserve = _number(raw_reserve)
+    min_reserve = _env_float(
+        "TROJAN_FILTER_MIN_POOL_RESERVE_USD", 0.0, 0.0, 1e15
+    )
+    if raw_reserve is not None and (reserve is None or reserve < 0):
+        return _result("REJECT", "pool_metrics", "INVALID_POOL_RESERVE", {
+            "reserve_in_usd": raw_reserve
+        })
+    if min_reserve > 0 and reserve is None:
+        return _result("WAIT", "pool_metrics", "POOL_RESERVE_UNKNOWN", {
+            "minimum_usd": min_reserve
+        })
+    if reserve is not None and min_reserve > 0 and reserve < min_reserve:
+        return _result("REJECT", "pool_metrics", "POOL_RESERVE_BELOW_MINIMUM", {
+            "reserve_in_usd": reserve, "minimum_usd": min_reserve
+        })
+
+    return _result("PASS", "pool_metrics", "POOL_METRICS_WITHIN_BOUNDS", {
+        "pool_count": int(count) if count is not None else None,
+        "reserve_in_usd": reserve,
+        "minimum_pool_count": min_count,
+        "maximum_pool_count": max_count,
+        "minimum_reserve_usd": min_reserve,
+    })
+
+
 def _activity_stage(token):
     """Validate independent activity windows without treating missing data as zero."""
     windows = (
@@ -411,6 +469,7 @@ def evaluate_token(token, mint, strategy="main"):
         _market_stage(token, strategy),
         _age_stage(token),
         _valuation_stage(token),
+        _pool_metrics_stage(token),
         _activity_stage(token),
         _momentum_stage(token),
         _provenance_stage(token),
