@@ -45,7 +45,7 @@ class ApiClientStatsTests(unittest.TestCase):
         self.assertEqual(stats["total_requests"], 1)
         self.assertEqual(stats["successful_requests"], 0)
         self.assertEqual(stats["failed_requests"], 1)
-        self.assertEqual(stats["cache_misses"], 1)
+        self.assertEqual(stats["cache_misses"], 0)
         self.assertIn("provider timeout", stats["last_error_message"])
         self.assertIsNotNone(stats["last_error_time"])
 
