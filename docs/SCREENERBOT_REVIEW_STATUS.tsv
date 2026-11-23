@@ -791,9 +791,9 @@ src/apis/coingecko/mod.rs	unreviewed
 src/apis/coingecko/types.rs	unreviewed	
 src/apis/defillama/mod.rs	unreviewed	
 src/apis/defillama/types.rs	unreviewed	
-src/apis/dexscreener/endpoints.rs	unreviewed	
-src/apis/dexscreener/mod.rs	unreviewed	
-src/apis/dexscreener/types.rs	unreviewed	
+src/apis/dexscreener/endpoints.rs	reviewed	scanner.py and discovery/dexscreener_scanner.py cover latest profiles/boosts and top boosts; pool/batch paths belong to market-data review; search, orders and chain listing not verified.
+src/apis/dexscreener/mod.rs	reviewed	api_client.py and scanner.py overlap in timeout and rate controls; dedicated endpoint buckets and tracked request metrics remain for API-client review.
+src/apis/dexscreener/types.rs	reviewed	scanner.py uses partial dictionaries and row-level mint checks; typed pool/metadata conversion belongs to market-data review.
 src/apis/error.rs	unreviewed	
 src/apis/geckoterminal/endpoints.rs	unreviewed	
 src/apis/geckoterminal/mod.rs	unreviewed	
