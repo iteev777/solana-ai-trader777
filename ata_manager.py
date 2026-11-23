@@ -119,6 +119,22 @@ def create_ata_order(wallet, mint, min_sol_reserve_lamports=None):
     else:
         reserve = min_sol_reserve_lamports
 
+    wallet_account = _rpc_account(wallet)
+    if wallet_account is None:
+        raise ValueError("Wallet account does not exist on Solana")
+    if wallet_account.get("owner") != SYSTEM_PROGRAM_ID:
+        raise ValueError("ATA payer must be a system-owned wallet account")
+    wallet_data = wallet_account.get("data", b"")
+    if not isinstance(wallet_data, bytes) or wallet_data:
+        raise ValueError("ATA payer must be a standard system wallet with no account data")
+    wallet_lamports_on_account = wallet_account.get("lamports")
+    if (
+        isinstance(wallet_lamports_on_account, bool)
+        or not isinstance(wallet_lamports_on_account, int)
+        or wallet_lamports_on_account < 0
+    ):
+        raise ValueError("RPC returned an invalid wallet account balance")
+
     mint_account = _rpc_account(mint)
     if mint_account is None:
         raise ValueError("Mint account does not exist")
