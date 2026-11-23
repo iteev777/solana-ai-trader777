@@ -220,7 +220,9 @@ class ServiceManager:
                     (enabled if self._enabled(spec) else disabled).append(name)
                 for name in disabled:
                     runtime = self._runtime[name]
-                    if runtime.state not in (ServiceState.RUNNING, ServiceState.STARTING):
+                    if runtime.state not in (
+                        ServiceState.RUNNING, ServiceState.STARTING, ServiceState.FAILED
+                    ):
                         runtime.state = ServiceState.DISABLED
                         runtime.message = "disabled by configuration"
                 self._invalidate_cache()
