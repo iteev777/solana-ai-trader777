@@ -130,8 +130,13 @@ def _fetch_wallet_transaction(signature, wallet):
     if payload.get("error"):
         raise RuntimeError(str(payload["error"])[:200])
     tx = payload.get("result")
+    if tx is None:
+        # Solana RPC can briefly return null while a confirmed transaction is
+        # still being indexed. Treat it as retryable so the durable watch cursor
+        # cannot move past a signature whose details were not yet available.
+        raise RuntimeError("copy transaction is not indexed yet")
     if not isinstance(tx, dict):
-        return None
+        raise ValueError("copy transaction RPC returned an invalid result shape")
     return parse_wallet_transaction(
         tx, wallet, signature=signature, received_at=time.time()
     )
@@ -190,7 +195,9 @@ def _process_wallet_signature(wallet, signature):
     """Persist a deduplicated wallet event; only fresh events can reach paper-copy."""
     event = _fetch_wallet_transaction(signature, wallet)
     if not isinstance(event, dict):
-        return False
+        # A structurally valid transaction that cannot be classified is a
+        # terminal non-signal; the RPC-null case raises above and remains retryable.
+        return True
     inserted = database.record_copy_trade_event(
         event["wallet"], event["signature"], event["action"],
         event["token_mint"], event["token_delta"], event["sol_delta"],
@@ -203,7 +210,8 @@ def _process_wallet_signature(wallet, signature):
         })
     )
     if not inserted:
-        return False
+        # Signature-level persistence dedupe means this event was already handled.
+        return True
     _status["events_seen"] += 1
     _status["last_event"] = time.time()
     freshness = copy_freshness.evaluate_event_freshness(
