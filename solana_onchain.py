@@ -298,15 +298,22 @@ def _decode_pool(protocol, raw):
     if protocol == "pumpfun_legacy":
         if len(raw) < 49 or raw[:8] != bytes([23, 183, 248, 55, 96, 216, 172, 96]):
             raise ValueError("invalid Pump.fun bonding curve discriminator/layout")
-        if raw[48] != 0:
-            raise ValueError("Pump.fun bonding curve is complete/migrated")
+        complete = bool(raw[48])
         return {
             "virtual_token_reserves": _u64(raw, 8),
             "virtual_quote_reserves": _u64(raw, 16),
             "real_token_reserves": _u64(raw, 24),
             "real_quote_reserves": _u64(raw, 32),
             "token_total_supply": _u64(raw, 40),
-            "status": "active", "price_mode": "pump_curve"
+            "complete": complete,
+            "creator": _key(raw, 49) if len(raw) >= 81 else None,
+            "is_mayhem_mode": bool(raw[81]) if len(raw) >= 82 else False,
+            "is_cashback_coin": bool(raw[82]) if len(raw) >= 83 else False,
+            "quote_mint": _key(raw, 83) if len(raw) >= 115 else DEFAULT_PUBKEY,
+            "creator_fee_bps": _u64(raw, 115) if len(raw) >= 123 else 0,
+            "is_holder_reward": bool(raw[124]) if len(raw) >= 125 else False,
+            "status": "complete" if complete else "active",
+            "price_mode": "pump_curve"
         }
     if protocol == "moonit_amm":
         if len(raw) < 82 or raw[:8] != bytes([8, 91, 83, 28, 132, 216, 248, 22]):
