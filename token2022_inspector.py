@@ -321,6 +321,12 @@ def validate_token2022_account_data(account, mint, authority, label="Token-2022 
         extensions = parse_tlv_extensions(raw, TOKEN_ACCOUNT_TYPE)
         if any(extension["type"] not in {2, 7} for extension in extensions):
             raise Token2022LayoutError(label + " has an unsupported Token-2022 account extension")
+        expected_lengths = {2: 8, 7: 0}
+        for extension in extensions:
+            if extension["length"] != expected_lengths[extension["type"]]:
+                raise Token2022LayoutError(
+                    label + " has an invalid " + extension["name"] + " extension length"
+                )
     balance = int.from_bytes(raw[64:72], "little")
     if isinstance(min_balance, bool) or not isinstance(min_balance, int) or min_balance < 0:
         raise ValueError("Minimum token balance must be a non-negative integer")
