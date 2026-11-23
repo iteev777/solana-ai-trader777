@@ -124,6 +124,32 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
                 output_mint=output_mint or self.mint_y,
             )
 
+    def test_input_fee_inverse_rounding_covers_net_amount(self):
+        for rate in (1, 400_000, 10_000_000, dlmm.MAX_FEE_RATE):
+            for net in (1, 2, 3, 999, 1_000_000):
+                with self.subTest(rate=rate, net=net):
+                    gross = dlmm._input_fee_gross_for_net(net, rate)
+                    received = gross - dlmm._ceil_div(
+                        gross * rate, dlmm.FEE_PRECISION
+                    )
+                    self.assertGreaterEqual(received, net)
+                    if gross > 0:
+                        previous = gross - 1
+                        self.assertLess(
+                            previous - dlmm._ceil_div(
+                                previous * rate, dlmm.FEE_PRECISION
+                            ),
+                            net,
+                        )
+
+    def test_output_fee_never_exceeds_gross_output(self):
+        pair = bytearray(self.pair_data)
+        pair[36] = 1
+        result = self.quote(pair_data=bytes(pair))
+        self.assertFalse(result["fee_on_input"])
+        self.assertGreater(result["fee_amount"], 0)
+        self.assertLess(result["fee_amount"], result["out_amount"] + result["fee_amount"])
+
     def test_bin_price_is_derived_from_id_not_lazy_stored_field(self):
         self.assertEqual(dlmm._bin_price(0, 4), 1 << 64)
         self.assertGreater(dlmm._bin_price(100, 4), 1 << 64)
