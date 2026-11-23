@@ -710,6 +710,8 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium CPMM mint uses an unsupported token program")
     if (decoded["token_program_base"] != token_program_base
             or decoded["token_program_quote"] != token_program_quote):
+        if TOKEN_2022_PROGRAM in (token_program_base, token_program_quote):
+            raise ValueError("Token-2022 mint owner does not match the token program recorded in the Raydium CPMM pool")
         raise ValueError("Pool token program does not match its mint account owner")
     if token_program_base == TOKEN_2022_PROGRAM:
         token2022.validate_zero_fee_mint_data(mint_base_acc["data"])
