@@ -1,12 +1,6 @@
 name: Deploy Token-2022 mobile signer
 
 on:
-  push:
-    branches:
-      - feature/dex-jupiter-noncustodial-execution-current
-    paths:
-      - docs/token2022-signer.html
-      - .github/workflows/deploy-token2022-signer.yml
   workflow_dispatch:
 
 permissions:
