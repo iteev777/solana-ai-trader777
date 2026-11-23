@@ -227,13 +227,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_token2022_inspector_api.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_token_aggregator.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_trading_control.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_wallet_preflight.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_wallet_preflight_api.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_wallet_balances.py` | `src/chains/solana/accounts/balances.rs` tests | TESTED | Uudet testit tyhjälle syötteelle, järjestykselle, invalid-keylle, 50-koon erärajalle, tuntemattomalle saldolle, virheelliselle vastaukselle ja eräkohtaiselle RPC-virheelle. Commit `f71e667`; validointi odottaa. |\n| `tests/test_wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs` | PARTIAL | Wallet preflight -testit luettu; testaa legacy-token-tilien omistajuuden, mintin, määrän, reserve-vaatimuksen ja yhden confirmed-snapshotin. Batch SOL-balance -ominaisuus katetaan erillisessä uudessa moduulissa. |
+| `tests/test_wallet_preflight_api.py` | `src/chains/solana/accounts/balances.rs` | PENDING | API-reitin ja virhetilanteiden tiedostokohtainen tarkastus avoin. |
 | `token2022_inspector.py` | Ei vielä kartoitettu | PENDING |  |
 | `token_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `trading_control.py` | Ei vielä kartoitettu | PENDING |  |
 | `trading_manager.py` | Ei vielä kartoitettu | PENDING |  |
-| `wallet_preflight.py` | Ei vielä kartoitettu | PENDING |  |
+| `wallet_balances.py` | `src/chains/solana/accounts/balances.rs` | NEW-IMPLEMENTATION | Lisätty 50 osoitteen erissä tapahtuva SOL-saldohaku; säilyttää järjestyksen, erottaa puuttuvan tilin (0 SOL) tuntemattomasta (None), hylkää virheelliset osoitteet ja rajaa RPC-virheen eräkohtaiseksi. Commit `b58a806`; testit `f71e667`; validointi odottaa. |\n| `wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs`, `src/chains/solana/swaps/presend.rs` | PARTIAL | Koko 208-rivinen tiedosto ja testit luettu. Yhden confirmed getMultipleAccounts -snapshotin lompakko-, mintti- ja token-tilitarkastus; base58/u64/layout/omistajuus/frozen/reserve/ATA-tarkistus fail-closed. Rajattu legacy SPL -token-ohjelmaan nykyisten native builderien vuoksi; Token-2022 ei ole tämän moduulin kattama. Referenssin batch-saldohaku toteutettu erikseen `wallet_balances.py`:ssä. Tarkempi fee/rent/presend-gate-pariteetti avoin. |
 
 | `quote_errors.py` | `src/swaps/error.rs` | TESTED | Independent typed quote failure classifier for timeout, rate limit, no route, not tradable, rejected quote and unavailable; retry policy/HTTP status exposed. Tests `test_quote_errors.py`; full validation `45254436959`. |
 | `tests/test_quote_errors.py` | `src/swaps/error.rs` behavior tests | TESTED | Covers timeout, rate limit/retry-after, no-route vs not-tradable distinction, rejected payload and provider 5xx; full validation `45254436959`. |
