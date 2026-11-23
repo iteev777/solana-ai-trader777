@@ -1,6 +1,7 @@
 import base64
-
-import pytest
+import time
+import unittest
+from unittest.mock import patch
 
 import dex_execution
 
@@ -16,14 +17,18 @@ class FakeResponse:
         return self.payload
 
 
-def test_order_returns_unsigned_transaction_and_route(monkeypatch):
-    transaction = base64.b64encode(bytes([0]) * 120).decode()
-    captured = {}
+class DexExecutionTests(unittest.TestCase):
+    input_mint = "11111111111111111111111111111111"
+    output_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    taker = "11111111111111111111111111111111"
 
-    def fake_get(url, params, headers, timeout):
-        captured.update({"url": url, "params": params, "headers": headers})
-        return FakeResponse({
-            "transaction": transaction,
+    def setUp(self):
+        dex_execution._simulated_orders.clear()
+        self.transaction = base64.b64encode(bytes([0]) * 120).decode()
+
+    def _order_payload(self, **overrides):
+        payload = {
+            "transaction": self.transaction,
             "requestId": "req-123",
             "inAmount": "1000",
             "outAmount": "2500",
@@ -31,131 +36,115 @@ def test_order_returns_unsigned_transaction_and_route(monkeypatch):
             "router": "metis",
             "transactionVersion": 0,
             "routePlan": [{"swapInfo": {"label": "Raydium"}}],
-        })
+        }
+        payload.update(overrides)
+        return payload
 
-    monkeypatch.setattr(dex_execution.requests, "get", fake_get)
-    result = dex_execution.create_order(
-        "11111111111111111111111111111111",
-        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        1000,
-        "11111111111111111111111111111111",
-    )
-
-    assert result["request_id"] == "req-123"
-    assert result["output_amount"] == 2500
-    assert result["minimum_output_amount"] == 2400
-    assert result["signing"] == "USER_WALLET_REQUIRED"
-    assert result["execution"] == "LOCKED"
-    assert captured["params"]["taker"] == "11111111111111111111111111111111"
-
-
-def test_order_rejects_missing_transaction(monkeypatch):
-    monkeypatch.setattr(
-        dex_execution.requests, "get",
-        lambda *args, **kwargs: FakeResponse({"transaction": None, "errorMessage": "No route"}),
-    )
-    with pytest.raises(ValueError, match="did not build"):
-        dex_execution.create_order(
-            "11111111111111111111111111111111",
-            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            1000,
-            "11111111111111111111111111111111",
+    def _create_order(self, simulate=False):
+        return dex_execution.create_order(
+            self.input_mint, self.output_mint, 1000, self.taker,
+            simulate=simulate,
         )
 
+    def test_order_returns_unsigned_transaction_and_route(self):
+        captured = {}
 
-def test_order_rejects_mismatched_input_amount(monkeypatch):
-    transaction = base64.b64encode(bytes([0]) * 120).decode()
-    monkeypatch.setattr(
-        dex_execution.requests, "get",
-        lambda *args, **kwargs: FakeResponse({
-            "transaction": transaction, "requestId": "req",
-            "inAmount": "999", "outAmount": "2000",
-        }),
-    )
-    with pytest.raises(ValueError, match="does not match"):
-        dex_execution.create_order(
-            "11111111111111111111111111111111",
-            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-            1000,
-            "11111111111111111111111111111111",
-        )
+        def fake_get(url, params, headers, timeout):
+            captured.update({"url": url, "params": params, "headers": headers})
+            return FakeResponse(self._order_payload())
 
+        with patch.object(dex_execution.requests, "get", side_effect=fake_get):
+            result = self._create_order()
 
-def test_execute_is_locked_by_default(monkeypatch):
-    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", False)
-    with pytest.raises(dex_execution.ExecutionLocked, match="disabled"):
-        dex_execution.execute_signed_order("AAAA", "req", confirmed=True)
+        self.assertEqual(result["request_id"], "req-123")
+        self.assertEqual(result["output_amount"], 2500)
+        self.assertEqual(result["minimum_output_amount"], 2400)
+        self.assertEqual(result["signing"], "USER_WALLET_REQUIRED")
+        self.assertEqual(result["execution"], "LOCKED")
+        self.assertEqual(captured["params"]["taker"], self.taker)
 
+    def test_order_rejects_missing_transaction(self):
+        with patch.object(
+            dex_execution.requests, "get",
+            return_value=FakeResponse({"transaction": None, "errorMessage": "No route"}),
+        ):
+            with self.assertRaisesRegex(ValueError, "did not build"):
+                self._create_order()
 
-def test_execute_requires_explicit_confirmation(monkeypatch):
-    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
-    signed = base64.b64encode(bytes([0]) * 120).decode()
-    with pytest.raises(dex_execution.ExecutionLocked, match="confirmation"):
-        dex_execution.execute_signed_order(signed, "req", confirmed=False)
+    def test_order_rejects_mismatched_input_amount(self):
+        with patch.object(
+            dex_execution.requests, "get",
+            return_value=FakeResponse(self._order_payload(inAmount="999")),
+        ):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                self._create_order()
 
+    def test_execute_is_locked_by_default(self):
+        with patch.object(dex_execution, "EXECUTE_ENABLED", False):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "disabled"):
+                dex_execution.execute_signed_order(self.transaction, "req-123", confirmed=True)
 
-def test_execute_posts_only_signed_transaction_and_request_id(monkeypatch):
-    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
-    signed = base64.b64encode(bytes([0]) * 120).decode()
-    captured = {}
+    def test_execute_requires_explicit_confirmation(self):
+        with patch.object(dex_execution, "EXECUTE_ENABLED", True):
+            with self.assertRaisesRegex(dex_execution.ExecutionLocked, "confirmation"):
+                dex_execution.execute_signed_order(self.transaction, "req-123", confirmed=False)
 
-    def fake_post(url, json, headers, timeout):
-        captured.update({"url": url, "json": json})
-        return FakeResponse({
-            "status": "Success", "signature": "signature123",
-            "code": 0, "outputAmountResult": "2500",
+    def test_execute_posts_only_signed_transaction_and_request_id(self):
+        captured = {}
+
+        def fake_post(url, json, headers, timeout):
+            captured.update({"url": url, "json": json})
+            return FakeResponse({
+                "status": "Success", "signature": "signature123",
+                "code": 0, "outputAmountResult": "2500",
+            })
+
+        dex_execution._simulated_orders["req-123"] = {
+            "simulation_status": "PASS", "created_at": time.time()
+        }
+        with patch.object(dex_execution, "EXECUTE_ENABLED", True), patch.object(
+            dex_execution.requests, "post", side_effect=fake_post
+        ):
+            result = dex_execution.execute_signed_order(
+                self.transaction, "req-123", confirmed=True
+            )
+
+        self.assertEqual(captured["json"], {
+            "signedTransaction": self.transaction, "requestId": "req-123"
         })
+        self.assertEqual(result["status"], "Success")
+        self.assertTrue(result["explorer_url"].endswith("signature123"))
 
-    monkeypatch.setattr(dex_execution.requests, "post", fake_post)
-    dex_execution._simulated_orders["req-123"] = {
-        "simulation_status": "PASS", "created_at": dex_execution.time.time()
-    }
-    result = dex_execution.execute_signed_order(signed, "req-123", confirmed=True)
+    def test_execution_status_reports_locked_and_non_custodial(self):
+        with patch.object(dex_execution, "EXECUTE_ENABLED", False):
+            status = dex_execution.get_execution_status()
+        self.assertTrue(status["execution_locked"])
+        self.assertFalse(status["wallet_secret_required_on_server"])
+        self.assertTrue(status["simulation_required_for_execution"])
 
-    assert captured["json"] == {
-        "signedTransaction": signed, "requestId": "req-123"
-    }
-    assert result["status"] == "Success"
-    assert result["explorer_url"].endswith("signature123")
+    def test_order_simulation_pass_marks_order_execution_eligible(self):
+        with patch.object(
+            dex_execution.requests, "get",
+            return_value=FakeResponse(self._order_payload()),
+        ), patch.object(
+            dex_execution, "_simulate_transaction",
+            return_value={"status": "PASS", "signed": False, "broadcast": False},
+        ):
+            result = self._create_order(simulate=True)
 
+        self.assertEqual(result["simulation"]["status"], "PASS")
+        self.assertTrue(result["execution_eligible"])
+        self.assertIn("req-123", dex_execution._simulated_orders)
 
-def test_execution_status_reports_locked_and_non_custodial(monkeypatch):
-    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", False)
-    status = dex_execution.get_execution_status()
-    assert status["execution_locked"] is True
-    assert status["wallet_secret_required_on_server"] is False
-
-
-
-def test_order_simulation_pass_marks_order_execution_eligible(monkeypatch):
-    transaction = base64.b64encode(bytes([0]) * 120).decode()
-    monkeypatch.setattr(
-        dex_execution.requests, "get",
-        lambda *args, **kwargs: FakeResponse({
-            "transaction": transaction, "requestId": "simulated-req",
-            "inAmount": "1000", "outAmount": "2500",
-            "otherAmountThreshold": "2400",
-        }),
-    )
-    monkeypatch.setattr(
-        dex_execution, "_simulate_transaction",
-        lambda tx: {"status": "PASS", "signed": False, "broadcast": False},
-    )
-    result = dex_execution.create_order(
-        "11111111111111111111111111111111",
-        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        1000,
-        "11111111111111111111111111111111",
-        simulate=True,
-    )
-    assert result["simulation"]["status"] == "PASS"
-    assert result["execution_eligible"] is True
-    assert "simulated-req" in dex_execution._simulated_orders
+    def test_execute_rejects_order_without_successful_simulation(self):
+        with patch.object(dex_execution, "EXECUTE_ENABLED", True):
+            with self.assertRaisesRegex(
+                dex_execution.ExecutionLocked, "successful unsigned simulation"
+            ):
+                dex_execution.execute_signed_order(
+                    self.transaction, "not-simulated", confirmed=True
+                )
 
 
-def test_execute_rejects_order_without_successful_simulation(monkeypatch):
-    monkeypatch.setattr(dex_execution, "EXECUTE_ENABLED", True)
-    signed = base64.b64encode(bytes([0]) * 120).decode()
-    dex_execution._simulated_orders.pop("not-simulated", None)
-    with pytest.raises(dex_execution.ExecutionLocked, match="successful unsigned simulation"):
-        dex_execution.execute_signed_order(signed, "not-simulated", confirmed=True)
+if __name__ == "__main__":
+    unittest.main()
