@@ -3,7 +3,7 @@ import os
 import time
 from datetime import datetime, timezone
 import database
-from position_policy import get_dca_policy, get_exit_steps
+from position_policy import get_dca_policy, get_dca_steps, get_exit_steps
 import exit_policy
 import paper_fill_model
 
@@ -367,7 +367,8 @@ def update_position(token_address, current_price, price_timestamp=None):
         # Parse every configured policy before mutating position state.
         try:
             dca_policy = get_dca_policy()
-            dca_steps = dca_policy["steps"]
+            dca_steps = get_dca_steps()
+            dca_policy["steps"] = dca_steps
             exit_config = exit_policy.get_exit_policy()
             exit_steps = get_exit_steps() if PARTIAL_TAKE_PROFIT_ENABLED else []
         except (TypeError, ValueError, OverflowError) as policy_error:
