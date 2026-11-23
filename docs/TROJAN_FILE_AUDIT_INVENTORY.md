@@ -3,7 +3,7 @@
 - Trojan-haara: `feature/dex-jupiter-noncustodial-execution-current`
 - Vertailurepositorio: `farfary/ScreenerBot` @ `9cc0b74f9136c9cc5a4fe6b806471268c9b5ce1`
 - Inventaarion muodostus: 2026-11-23
-- Trojanin seurattavat tiedostot: 230
+- Trojanin seurattavat tiedostot: 232
 - ScreenerBotin vertailutiedostot: 3043
 - Tila: kaikki rivit aloittavat tilasta PENDING; samanniminen polku on vain hakuvihje, ei vahvistettu vastine.
 
@@ -234,10 +234,9 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `token_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `trading_control.py` | Ei vielä kartoitettu | PENDING |  |
 | `trading_manager.py` | Ei vielä kartoitettu | PENDING |  |
-| `wallet_balances.py` | `src/chains/solana/accounts/balances.rs` | NEW-IMPLEMENTATION | Lisätty 50 osoitteen erissä tapahtuva SOL-saldohaku; säilyttää järjestyksen, erottaa puuttuvan tilin (0 SOL) tuntemattomasta (None), hylkää virheelliset osoitteet ja rajaa RPC-virheen eräkohtaiseksi. Commit `b58a806`; testit `f71e667`; validointi odottaa. |\n| `wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs`, `src/chains/solana/swaps/presend.rs` | PARTIAL | Koko 208-rivinen tiedosto ja testit luettu. Yhden confirmed getMultipleAccounts -snapshotin lompakko-, mintti- ja token-tilitarkastus; base58/u64/layout/omistajuus/frozen/reserve/ATA-tarkistus fail-closed. Rajattu legacy SPL -token-ohjelmaan nykyisten native builderien vuoksi; Token-2022 ei ole tämän moduulin kattama. Referenssin batch-saldohaku toteutettu erikseen `wallet_balances.py`:ssä. Tarkempi fee/rent/presend-gate-pariteetti avoin. |
+| `wallet_balances.py` | `src/chains/solana/accounts/balances.rs` | NEW-IMPLEMENTATION | Lisätty 50 osoitteen erissä tapahtuva SOL-saldohaku; säilyttää järjestyksen, erottaa puuttuvan tilin (0 SOL) tuntemattomasta (None), hylkää virheelliset osoitteet ja rajaa RPC-virheen eräkohtaiseksi. Commit `b58a806`; testit `f71e667`; validointi odottaa. |
+| `wallet_preflight.py` | `src/chains/solana/accounts/balances.rs`, `src/chains/solana/assets/ata/balance.rs`, `src/chains/solana/swaps/presend.rs` | PARTIAL | Koko 208-rivinen tiedosto ja testit luettu. Yhden confirmed getMultipleAccounts -snapshotin lompakko-, mintti- ja token-tilitarkastus; base58/u64/layout/omistajuus/frozen/reserve/ATA-tarkistus fail-closed. Rajattu legacy SPL -token-ohjelmaan nykyisten native builderien vuoksi; Token-2022 ei ole tämän moduulin kattama. Referenssin batch-saldohaku toteutettu erikseen `wallet_balances.py`:ssä. Tarkempi fee/rent/presend-gate-pariteetti avoin. |
 
-| `quote_errors.py` | `src/swaps/error.rs` | TESTED | Independent typed quote failure classifier for timeout, rate limit, no route, not tradable, rejected quote and unavailable; retry policy/HTTP status exposed. Tests `test_quote_errors.py`; full validation `45254436959`. |
-| `tests/test_quote_errors.py` | `src/swaps/error.rs` behavior tests | TESTED | Covers timeout, rate limit/retry-after, no-route vs not-tradable distinction, rejected payload and provider 5xx; full validation `45254436959`. |
 | `transaction_deltas.py` | `src/chains/solana/transactions/deltas.rs`, `src/transactions/deltas.rs` | PARTIAL | Verrattu koko olennaiseen delta-extraction-logiikkaan: kaikki subject-owned mintit raw-yksiköissä, native SOL + non-wSOL token-tilien rent-korjaus, fee metadata, venue/kind, slot/block time/tx index ja fail-closed epäselville tiedoille. Trojan käyttää omaa Python-toteutusta ja säilyttää fee-metadatan myös silloin kun seurattu lompakko ei ole fee payer (kuten referenssi). Kytketty copy-eventin mukana tallennettavaksi, mutta yleisen transaktiohistorian ja backfillin vastaavuus avoin. |
 | `tests/test_transaction_deltas.py` | `src/chains/solana/transactions/deltas.rs` tests | PARTIAL | Testaa raw mint-deltat, native SOL, fee metadata myös ei-fee-payer-subjectille, ATA rent -korjauksen, epäselvän/failed transactionin ja serialisoinnin. Unit-test-ajot tarkistetaan viimeisimmästä commitista; durable transaction history/backfill -pariteetti avoin. |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
