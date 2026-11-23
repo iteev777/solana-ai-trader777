@@ -172,7 +172,7 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
 
     # OnlyB (mode 1) charges token B when it is the input; other modes charge
     # the output token. Fees are rounded upward in the token they are collected.
-    fee_on_input = state["collect_fee_mode"] == 1 and not input_is_a
+    fee_on_input = state["collect_fee_mode"] in (1, 2) and not input_is_a
     if fee_on_input:
         fee_amount = _ceil_div(amount_in * state["fee_numerator"], FEE_DENOMINATOR)
         if fee_amount >= amount_in:
