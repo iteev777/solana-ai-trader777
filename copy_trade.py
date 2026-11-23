@@ -23,11 +23,13 @@ _poll_catchup = {}
 _COPY_SIGNATURE_PAGE_SIZE = 100
 _COPY_MAX_PAGES_PER_POLL = 5
 _COPY_MAX_CATCHUP_SIGNATURES = 5000
+_COPY_MAX_CATCHUP_POLLS = 20
 _status = {
     "running": False, "configured": False, "wallet_count": 0,
     "last_event": None, "last_error": None, "events_seen": 0,
     "polls": 0, "last_poll": None, "last_poll_error": None,
-    "stale_events_observed": 0
+    "stale_events_observed": 0, "catchup_skips": 0,
+    "skipped_signatures": 0
 }
 
 
@@ -231,6 +233,29 @@ def _process_wallet_signature(wallet, signature):
     return True
 
 
+def _skip_catchup_to_head(wallet, state):
+    """Move a persistently oversized backlog to its newest known signature.
+
+    Old transactions are intentionally not replayed as copy signals. The cursor
+    is advanced only after the durable write succeeds, and the skipped count is
+    exposed in monitor status for operator visibility.
+    """
+    newest = state.get("newest_signature") if isinstance(state, dict) else None
+    if not isinstance(newest, str) or not newest:
+        raise RuntimeError("cannot skip wallet catch-up without a known head signature")
+    skipped = len(state.get("newest_first", []))
+    database.set_copy_watch_cursor(wallet, newest)
+    _status["catchup_skips"] = int(_status.get("catchup_skips", 0)) + 1
+    _status["skipped_signatures"] = int(_status.get("skipped_signatures", 0)) + skipped
+    _poll_catchup.pop(wallet, None)
+    print(
+        "COPY WATCH CATCH-UP SKIPPED:",
+        wallet[:8], "| SIGNATURES:", skipped, "| CURSOR:", newest,
+        flush=True,
+    )
+    return skipped
+
+
 def _poll_wallet_activity(wallets):
     """Recover WS gaps with bounded paging and a durable per-wallet cursor.
 
@@ -253,7 +278,7 @@ def _poll_wallet_activity(wallets):
                 state = {
                     "until": cursor, "before": None, "newest_signature": None,
                     "newest_first": [], "seen": set(), "complete": False,
-                    "initial_window": cursor is None,
+                    "initial_window": cursor is None, "polls": 0,
                 }
                 _poll_catchup[wallet] = state
 
@@ -276,9 +301,8 @@ def _poll_wallet_activity(wallets):
                         if item["signature"] not in state["seen"]
                     ]
                     if len(state["newest_first"]) + len(new_items) > _COPY_MAX_CATCHUP_SIGNATURES:
-                        raise RuntimeError(
-                            "signature catch-up exceeded its safe memory cap; durable cursor not advanced"
-                        )
+                        state["overflowed"] = True
+                        break
                     for item in new_items:
                         state["seen"].add(item["signature"])
                         state["newest_first"].append(item)
@@ -293,11 +317,17 @@ def _poll_wallet_activity(wallets):
                         state["complete"] = True
                         break
                     if len(state["newest_first"]) >= _COPY_MAX_CATCHUP_SIGNATURES:
-                        raise RuntimeError(
-                            "signature catch-up reached its safe memory cap; durable cursor not advanced"
-                        )
+                        state["overflowed"] = True
+                        break
 
             if not state["complete"]:
+                state["polls"] = int(state.get("polls", 0)) + 1
+                if (
+                    state.get("overflowed")
+                    or len(state["newest_first"]) >= _COPY_MAX_CATCHUP_SIGNATURES
+                    or state["polls"] >= _COPY_MAX_CATCHUP_POLLS
+                ):
+                    _skip_catchup_to_head(wallet, state)
                 continue
 
             # Every signature in the fetched range has been collected. Failed
