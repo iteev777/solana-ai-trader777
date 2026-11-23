@@ -67,7 +67,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `docs/playground-token2022-share.txt` | Ei vielä kartoitettu | PENDING |  |
 | `docs/token2022-signer.html` | Ei vielä kartoitettu | PENDING |  |
 | `entry_intelligence.py` | Ei vielä kartoitettu | PENDING |  |
-| `exit_policy.py` | Ei vielä kartoitettu | PENDING |  |
+| `exit_policy.py` | `src/trader/evaluators/exit_rules.rs`, `exit_stop_loss.rs`, `exit_trailing.rs`, `exit_break_even.rs`, `exit_take_profit.rs`, `exit_time.rs`, `exit_time_stagnation.rs` | PARTIAL | Koko moduuli ja `tests/test_exit_policy.py` luettu. Trojan vastaa stop-loss/trailing/break-even/take-profit/time-loss/stagnation/max-hold -säännöistä, mutta ei vielä reference-tyyppistä exit-prioriteettikoordinaatiota, emergency safety exit -erottelua, LLM/strategy-exit -arviointia tai stop-loss partial/min-hold -asetuksia. Löydettiin take-profit-ladderin semanttinen ero: Trojanin `sell_fraction` on jäljellä olevasta positiosta, ScreenerBotin `sell_pct` alkuperäisestä positiosta. Lisätty yhteensopiva `sell_pct`-syöte ja lopullisen 100 % jäljellä olevan osuuden täysi sulku; CI-testit odottavat. |
 | `filter_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
 | `fluxbeam_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `indicators.py` | `src/ohlcvs/` and indicator consumers | TESTED | Aligned supported frames to `1m, 5m, 15m, 1h, 4h, 12h, 1d`; persisted-history validation preserves original malformed counters. Tests `test_ohlcv_indicators.py`; full validation `45254436959`.  |
@@ -89,13 +89,13 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `orca_whirlpool_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `orca_whirlpool_quote.py` | Ei vielä kartoitettu | PENDING |  |
 | `paper_fill_model.py` | Ei vielä kartoitettu | PENDING |  |
-| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/positions/operations/dca.rs` | PARTIAL | DCA gate now requires fresh provider timestamp, cooldown/min-hold, first-entry/average basis, bounded size and in-flight guard; atomic add/partial close reviewed. Full position/exit lifecycle, daily-loss DCA gate and live transaction reconciliation remain open. Full validation `45254436959`.
+| `paper_trading.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit.rs`, `src/trader/evaluators/exit_rules.rs`, `src/positions/operations/dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | DCA paper add käyttää fresh-price/cooldown/min-hold/basis/size/in-flight -gateja ja atomic database-operaatiota. Exit ladder käyttää jäljellä olevan position osuutta; lisätty reitti viimeisen 100 % osuuden atomiseen full close -operaatioon. Täysi lifecycle-, safety-exit-, live reconciliation- ja copy-position-omistajuuspariteetti avoin; uudet testit odottavat CI:tä. |
 | `playground_token2022_ata.ts` | Ei vielä kartoitettu | PENDING |  |
 | `pool_account_fetcher.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_analysis.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_registry.py` | Ei vielä kartoitettu | PENDING |  |
 | `pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
-| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs` | TESTED | Pure DCA evaluator covers cooldown, min hold, basis selection, fresh-price gate, hard stop and first-buy multiplier while retaining legacy `add_usd`; tests `test_position_policy.py`; full validation `45254436959` (998 tests).
+| `position_policy.py` | `src/trader/policy.rs`, `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs` | PARTIAL | DCA evaluator vastaa cooldown/min-hold/freshness/basis/hard-stop/first-buy sizing -portteihin ja säilyttää legacy `add_usd`; exit ladder normalisoi nyt ScreenerBot-tyylisen alkuperäisen position `sell_pct`-osuuden jäljellä olevan position osuudeksi, sallien viimeisen täyden sulun. Uudet exit ladder -testit odottavat CI:tä. |
 | `protocol_quotes.py` | Ei vielä kartoitettu | PENDING |  |
 | `protocol_validation.py` | Ei vielä kartoitettu | PENDING |  |
 | `pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
@@ -151,7 +151,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_discovery_source_failures.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_discovery_source_health.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_entry_intelligence.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_exit_policy.py` | Ei vielä kartoitettu | PENDING |  |
+| `tests/test_exit_policy.py` | `src/trader/evaluators/exit_rules.rs` and individual exit rule tests | PARTIAL | Testit luettu; stop-loss-prioriteetti, peak-based trailing, break-even, take-profit, stagnation, max-hold, invalid price/config ja trailing bands. Verrattava vielä koko referenssin edge-case testimatriisiin. |
 | `tests/test_expanded_rugcheck_risk.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_extended_market_filter_bounds.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_filter_pipeline.py` | Ei vielä kartoitettu | PENDING |  |
@@ -192,7 +192,7 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_pool_selection.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_snapshot_integrity.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pool_watch_parity.py` | Ei vielä kartoitettu | PENDING |  |
-| `tests/test_position_management.py` | `tests/trader_dca.rs`, position database tests | PARTIAL | Atomic DCA/partial/full close accounting test reviewed; broader lifecycle parity remains open. |
+| `tests/test_position_management.py` | `tests/trader_dca.rs`, `src/positions/operations/exit_ladder.rs` | PARTIAL | Atomic DCA/partial/full close accounting test reviewed; lisätty testi, että viimeinen original-share exit-ladder tier käyttää full-close polkua. CI odottaa; laajempi lifecycle parity avoin. |
 | `tests/test_pre_strategy_security.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_builder.py` | Ei vielä kartoitettu | PENDING |  |
 | `tests/test_pumpfun_legacy_direct_quote.py` | Ei vielä kartoitettu | PENDING |  |
@@ -241,6 +241,6 @@ Tilarajat: PENDING = ei tarkastettu; REVIEWED = sisältö ja toiminta luettu; CO
 | `tests/test_transaction_deltas.py` | `src/chains/solana/transactions/deltas.rs` tests | TESTED | Covers raw mint deltas, native SOL, fee payer attribution, ATA-rent correction, failed/ambiguous transactions and serialization; full validation `45256464329` (1,020 tests). |
 | `docs/TROJAN_FILE_AUDIT_INVENTORY.md` | Self-inventory | PARTIAL | Inventory generated from repository tree; this row records its own tracking file. |
 | `docs/SCREENERBOT_FILE_COVERAGE.md` | ScreenerBot full-tree inventory | PARTIAL | Cross-repository file coverage inventory; per-file dispositions remain pending. |
-| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `tests/trader_dca.rs` | TESTED | Pure DCA gate tests cover legacy and multiplier sizing, price freshness, min-hold, cooldown, basis and hard-stop failures; full validation `45254436959` (998 tests).
+| `tests/test_position_policy.py` | `src/trader/evaluators/dca.rs`, `src/trader/evaluators/exit_take_profit.rs`, `tests/trader_dca.rs` | PARTIAL | DCA gate testit sekä uudet exit ladder -testit kattavat legacy-fractionin, alkuperäisen position osuuden normalisoinnin, 100 % lopputason, ylijakautumisen ja sizing-basis-mixauksen. CI odottaa. |
 | `quote_errors.py` | `src/swaps/error.rs` | PARTIAL | Compared typed quote-error vocabulary and retry policy. Trojan distinguishes timeout/rate-limit/no-route/not-tradable/router rejection/unavailable, but some classes still depend on provider text and registry/no-router/not-offered/severity/permanent-verdict variants are absent. |
 | `tests/test_quote_errors.py` | `src/swaps/error.rs` tests | TESTED | Covers timeout, rate-limit, no-route vs not-tradable, invalid quote, server failure and route-comparison propagation; included in 998-test validation. |
