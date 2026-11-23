@@ -347,6 +347,11 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if pool_acc is None or pool_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Meteora DLMM pool account is unavailable or has invalid owner")
     state = _decode_pair(pool_acc.get("data"), chain)
+    account_keys = (pool_address, state["mint_x"], state["mint_y"], state["reserve_x"], state["reserve_y"])
+    if len(set(account_keys)) != len(account_keys):
+        raise ValueError("Meteora DLMM pool, mints and reserves must have distinct addresses")
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Meteora DLMM confirmed snapshot slot is invalid")
     for field in (
         "base_factor", "filter_period", "decay_period", "reduction_factor",
         "variable_fee_control", "max_volatility_accumulator", "min_bin_id",
