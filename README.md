@@ -384,3 +384,8 @@ The read-only direct quote path supports legacy SOL-paired Pump.fun curves using
 ## Pool-count and reserve filtering
 
 The candidate filter can optionally enforce the number of distinct pools known to the multi-source pool registry with `TROJAN_FILTER_MIN_POOL_COUNT` and `TROJAN_FILTER_MAX_POOL_COUNT`. A stale or empty registry is treated as unknown, not as zero. GeckoTerminal normalized market snapshots preserve `reserve_in_usd`; an optional `TROJAN_FILTER_MIN_POOL_RESERVE_USD` floor returns WAIT if that measurement is unavailable and rejects a measured reserve below the floor. All three controls are disabled by default.
+
+
+## Paper fill slippage model
+
+Paper entries, DCA adds, partial exits and full exits apply a conservative price slippage estimate in addition to the existing paper fee accounting. Configure `TROJAN_PAPER_SLIPPAGE_BPS` (default 25 bps, bounded to 0–300 bps). For the initial entry, the applied buy slippage is the larger of this setting and the approved Jupiter route's reported price impact. Sell fills use the configured or persisted exit allowance. Fill results expose the market mark, effective fill price, slippage basis points and model name. This is a deterministic paper estimate, not a quote-settled execution simulator; no live transaction is sent.
