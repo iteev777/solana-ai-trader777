@@ -34,6 +34,7 @@ class CandidateMetadataMergeTests(unittest.TestCase):
             "name": "Verified Pair Name",
             "symbol": "VERIFIED",
             "logoURI": "https://market.example/logo.png",
+            "websites": [{"url": "https://market.example/top-level"}],
             "info": {"websites": [{"url": "https://market.example"}]},
         }
         candidate = {
@@ -47,6 +48,7 @@ class CandidateMetadataMergeTests(unittest.TestCase):
         self.assertEqual(merged["name"], "Verified Pair Name")
         self.assertEqual(merged["symbol"], "VERIFIED")
         self.assertEqual(merged["logoURI"], "https://market.example/logo.png")
+        self.assertEqual(merged["websites"], pair["websites"])
         self.assertEqual(merged["info"]["websites"], pair["info"]["websites"])
         self.assertNotIn("website", merged)
 
