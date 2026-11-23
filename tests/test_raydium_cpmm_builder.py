@@ -196,13 +196,16 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
             quote=quote, account_map=accounts,
             user_input_token_account=token2022_user_ata,
         )
-        self.assertTrue(result["token2022_zero_fee_supported"])
+        self.assertTrue(result["token2022_fee_aware_supported"])
         self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
 
-    def test_rejects_nonzero_token2022_transfer_fee(self):
+    def test_onchain_quote_accounts_for_nonzero_token2022_transfer_fees(self):
         from token2022_inspector import MINT_ACCOUNT_TYPE
         config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
         config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
         tlv = (1).to_bytes(2, "little") + (108).to_bytes(2, "little") + bytes(config)
         mint_data = bytearray(166)
         mint_data[44] = 6
@@ -216,9 +219,21 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         accounts[self.mint_a] = {
             "owner": chain.TOKEN_2022_PROGRAM, "data": bytes(mint_data)
         }
-        quote = dict(self.quote, token_program_base=chain.TOKEN_2022_PROGRAM)
-        with self.assertRaisesRegex(ValueError, "transfer fees must be zero"):
-            self.call_builder(quote=quote, account_map=accounts)
+        accounts[self.vault_a] = token_account(
+            self.mint_a, self.authority, 1_000_000, chain.TOKEN_2022_PROGRAM
+        )
+        with (
+            patch.object(chain, "_account", return_value=accounts[self.pool]),
+            patch.object(chain, "_multiple_accounts_with_context",
+                         side_effect=lambda keys: ([accounts.get(k) for k in keys], 506)),
+            patch.object(chain, "_find_program_address", return_value=(self.authority, 255)),
+        ):
+            quote = chain.quote_raydium_cpmm_pool(self.pool, self.mint_a, 10_000, 100)
+        self.assertTrue(quote["token2022_input_transfer_fee"])
+        self.assertEqual(quote["token2022_input_received_by_pool"], 9_900)
+        self.assertLess(quote["out_amount"], 10_000)
+        self.assertEqual(quote["execution"], "DISABLED")
+
 
     def test_rejects_quote_from_another_protocol(self):
         quote = dict(self.quote, protocol="raydium_clmm")
