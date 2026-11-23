@@ -56,6 +56,29 @@ class NativeDashboardExecutionApiTests(unittest.TestCase):
         register.assert_called_once_with("dGVzdA==", "pumpswap", 123, self.simulation)
         self.assertEqual(response.get_json()["request_id"], "pump")
 
+    def test_orca_order_registers_only_orca_approval_after_simulation(self):
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}), \
+             patch("orca_whirlpool_builder.build_orca_whirlpool_swap", return_value=dict(self.order)), \
+             patch("orca_whirlpool_builder.simulate_orca_whirlpool_transaction", return_value=self.simulation), \
+             patch("native_execution.register_native_approval", return_value={"request_id": "orca"}) as register:
+            response = self.client.post(
+                "/api/orca-whirlpool-order",
+                json={"quote": {}, "wallet": "wallet",
+                      "user_input_token_account": "input",
+                      "user_output_token_account": "output"},
+                headers=self.headers,
+            )
+        self.assertEqual(response.status_code, 200)
+        register.assert_called_once_with("dGVzdA==", "orca_whirlpool", 123, self.simulation)
+        self.assertEqual(response.get_json()["request_id"], "orca")
+
+    def test_orca_order_requires_action_header(self):
+        headers = dict(self.headers)
+        headers.pop("X-Trojan-Action")
+        with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}):
+            response = self.client.post("/api/orca-whirlpool-order", json={}, headers=headers)
+        self.assertEqual(response.status_code, 400)
+
     def test_failed_unsigned_simulation_does_not_register_approval(self):
         failed = {"status": "REJECT", "error": "simulation failed"}
         with patch.dict(os.environ, {"TROJAN_DASHBOARD_TOKEN": "secret"}), \
