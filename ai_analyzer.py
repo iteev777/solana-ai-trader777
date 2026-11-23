@@ -62,12 +62,36 @@ def watch(reason):
     }
 
 
+_SOURCE_FAMILIES = {
+    "geckoterminal": "geckoterminal",
+    "dexscreener": "dexscreener",
+    "birdeye": "birdeye",
+    "pumpportal": "pumpportal",
+    "pumpfun": "pumpfun",
+    "rugcheck": "rugcheck",
+    "jupiter": "jupiter",
+    "coingecko": "coingecko",
+    "defillama": "defillama",
+    "helius": "helius",
+    "solana_rpc": "solana_rpc",
+}
+
+
+def _source_family(source):
+    value = source.strip().lower().replace("-", "_")
+    for prefix, family in sorted(_SOURCE_FAMILIES.items(), key=lambda pair: -len(pair[0])):
+        if value == prefix or value.startswith(prefix + "_"):
+            return family
+    return value.split("_", 1)[0]
+
+
 def get_discovery_sources(token):
+    """Return independent provider families, not individual provider feeds."""
     sources = token.get("discovery_sources", [])
     if not isinstance(sources, list):
         return []
     return sorted({
-        source.strip().lower()
+        _source_family(source)
         for source in sources
         if isinstance(source, str) and source.strip()
     })
