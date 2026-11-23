@@ -13,6 +13,7 @@ from raydium_cpmm_builder import _compile_legacy_message
 
 PROGRAM_ID = chain.PROGRAMS["meteora_dbc"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
+ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 POOL_AUTHORITY = "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
 EVENT_AUTHORITY_SEED = b"__event_authority"
 SWAP = bytes([248, 198, 158, 145, 225, 117, 135, 200])
@@ -145,8 +146,8 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         raise ValueError("Meteora DBC mint account layout is invalid")
 
     pool_authority = POOL_AUTHORITY
-    _token_account(base_vault_acc, pool_authority, current["base_mint"], "DBC base vault")
-    _token_account(quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault")
+    _token_account(base_vault_acc, pool_authority, current["base_mint"], "DBC base vault", 1)
+    _token_account(quote_vault_acc, pool_authority, config["quote_mint"], "DBC quote vault", 1)
     _token_account(user_in_acc, wallet, input_mint, "User input token account", amount)
     _token_account(user_out_acc, wallet, output_mint, "User output token account")
     for mint, account_address in ((input_mint, user_input_token_account),
@@ -154,7 +155,7 @@ def build_meteora_dbc_swap(quote, wallet, user_input_token_account,
         expected_ata, _ = chain._find_program_address(
             [_key(wallet, "wallet"), _key(TOKEN_PROGRAM_ID, "token program"),
              _key(mint, "mint")],
-            "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+            ASSOCIATED_TOKEN_PROGRAM_ID,
         )
         if account_address != expected_ata:
             raise ValueError("Meteora DBC user token account is not the canonical associated token account")
