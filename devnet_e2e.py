@@ -46,7 +46,7 @@ def require_devnet_endpoint():
         raise RuntimeError("E2E is restricted to https://api.devnet.solana.com")
     genesis = rpc("getGenesisHash", [])
     if genesis != DEVNET_GENESIS_HASH:
-        raise RuntimeError("RPC genesis hash does not match Solana devnet")
+        raise RuntimeError("RPC genesis hash does not match Solana devnet: " + str(genesis))
 
 
 def wait_for_signature(signature, last_valid_block_height):
