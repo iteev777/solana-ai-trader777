@@ -37,19 +37,36 @@ def _scan_pools(url, source_name, cache_ttl=CACHE_TTL):
             attributes, relationships = pool.get("attributes"), pool.get("relationships")
             if not isinstance(attributes, dict) or not isinstance(relationships, dict):
                 continue
-            base = relationships.get("base_token")
-            base_data = base.get("data") if isinstance(base, dict) else None
-            token_address = extract_solana_address(base_data.get("id")) if isinstance(base_data, dict) else None
             pool_address = attributes.get("address")
-            if not token_address or not isinstance(pool_address, str) or not pool_address.strip() or token_address in seen:
+            if not isinstance(pool_address, str) or not pool_address.strip():
                 continue
-            seen.add(token_address)
+
+            # ScreenerBot nominates both sides of each pool. Keep that behavior:
+            # quote-side assets can be real candidates too (the aggregator later
+            # removes native SOL and configured quote assets).
             snapshot = normalize_gecko_pool(pool)
-            item = {"tokenAddress": token_address, "chainId": "solana", "poolAddress": pool_address.strip(),
-                    "poolName": attributes.get("name"), "discovery_sources": [source_name]}
-            if snapshot and snapshot.get("baseToken", {}).get("address") == token_address:
-                item["market_data"] = snapshot
-            found_tokens.append(item)
+            for relationship_name in ("base_token", "quote_token"):
+                relationship = relationships.get(relationship_name)
+                token_data = relationship.get("data") if isinstance(relationship, dict) else None
+                token_address = (
+                    extract_solana_address(token_data.get("id"))
+                    if isinstance(token_data, dict) else None
+                )
+                if not token_address or token_address in seen:
+                    continue
+                seen.add(token_address)
+                item = {
+                    "tokenAddress": token_address,
+                    "chainId": "solana",
+                    "poolAddress": pool_address.strip(),
+                    "poolName": attributes.get("name"),
+                    "discovery_sources": [source_name],
+                }
+                # Gecko's normalized price belongs to the base token only.
+                # Never attach that price to a quote-side candidate.
+                if snapshot and snapshot.get("baseToken", {}).get("address") == token_address:
+                    item["market_data"] = snapshot
+                found_tokens.append(item)
         print("GECKOTERMINAL", source_name, "TOKENS:", len(found_tokens), flush=True)
     except requests.RequestException as error:
         print("GECKO REQUEST ERROR:", source_name, repr(error), flush=True)
