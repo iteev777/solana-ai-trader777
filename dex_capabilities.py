@@ -24,6 +24,7 @@ QUOTE_ADAPTERS = {
 NATIVE_BUILDERS = {
     "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_swap", "simulate_raydium_cpmm_transaction"),
     "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap", "simulate_pumpswap_v2_transaction"),
+    "orca_whirlpool": ("orca_whirlpool_builder", "build_orca_whirlpool_swap", "simulate_orca_whirlpool_transaction"),
 }
 
 
