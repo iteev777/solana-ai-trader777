@@ -1021,7 +1021,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/transactions/analyzer/patterns.rs` | PENDING |  |
 | `src/chains/solana/transactions/analyzer/pnl.rs` | PENDING |  |
 | `src/chains/solana/transactions/analyzer/wallet_view.rs` | PENDING |  |
-| `src/chains/solana/transactions/deltas.rs` | PENDING |  |
+| `src/chains/solana/transactions/deltas.rs` | IMPLEMENTED | `copy_event_parser.py`, `transaction_deltas.py`, `tests/test_transaction_deltas.py` | Independent Solana subject-delta extraction added and wired into copy events: all subject-owned token mint deltas, native SOL rent correction excluding wSOL, fee metadata, venue classification and timestamp/slot context. Commits `cd9dd0e` plus transaction-delta tests. Full transaction history manager/backfill remains outside this one-file mapping and is not claimed complete. |
 | `src/chains/solana/transactions/fetcher.rs` | PENDING |  |
 | `src/chains/solana/transactions/fetcher/tests.rs` | PENDING |  |
 | `src/chains/solana/transactions/mod.rs` | PENDING |  |
@@ -1694,7 +1694,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/transactions/database/types.rs` | PENDING |  |
 | `src/transactions/debug.rs` | PENDING |  |
 | `src/transactions/debug_helpers.rs` | PENDING |  |
-| `src/transactions/deltas.rs` | PENDING |  |
+| `src/transactions/deltas.rs` | IMPLEMENTED | `transaction_deltas.py` | Chain-neutral subject asset delta data shape and enum-like kind serialization represented in Trojan's Python dataclass; raw base-unit amounts, optional before/after, slot/time/index, venue, fee and success preserved. General multi-chain abstraction remains Solana-specific in Trojan. |
 | `src/transactions/direction_tests.rs` | PENDING |  |
 | `src/transactions/error.rs` | PENDING |  |
 | `src/transactions/label_tests.rs` | PENDING |  |
