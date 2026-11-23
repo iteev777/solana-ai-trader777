@@ -27,9 +27,12 @@ official PumpSwap IDL. The builder does not use a hand-invented account list.
 
 ## Deliberate limitations
 
-- Legacy SPL Token only. Token-2022 transfer-fee and hook extensions are
-  refused because their net-debit/net-credit behavior needs dedicated quote
-  math and transaction tests.
+- Legacy SPL Token and the audited Token-2022 subset are supported. Token-2022
+  `TransferFeeConfig` is accepted with epoch-aware quote math; supported metadata
+  extensions are allowed, and the corresponding `TransferFeeAmount` plus
+  `ImmutableOwner` token-account extensions are validated. Transfer hooks,
+  confidential transfers, pausable/non-transferable behavior and all other
+  unmodelled mint/account extensions are refused.
 - Current direct quote support refuses mayhem, cashback and holder-reward
   pools. Cashback coins are specifically not supported by PumpSwap V2.
 - User base and quote token accounts must already exist and belong to the
@@ -41,7 +44,10 @@ official PumpSwap IDL. The builder does not use a hand-invented account list.
 - The server never signs or receives private keys. A separate default-off,
   single-use external-signature broadcast gate is documented in
   `docs/NATIVE_EXECUTION.md`; it requires `TROJAN_NATIVE_EXECUTE_ENABLED=true`
-  and explicit confirmation. Live trading remains locked by default.
+  and explicit confirmation. The native broadcast path is hard locked in code;
+  setting `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. A separate
+  Jupiter V2 execute adapter has its own env gate and is not the PumpSwap native
+  path; the global live-lock audit remains a release blocker.
 - A successful simulation is not a guarantee of later inclusion or execution;
   pool state may change after simulation and on-chain min-out remains the final
   price guard.
