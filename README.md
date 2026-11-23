@@ -327,3 +327,10 @@ Liquidity can use both `TROJAN_FILTER_MIN_LIQUIDITY_USD` and `TROJAN_FILTER_MAX_
 
 
 RugCheck's structured `analysis` and `signals` are carried with each candidate's approval or rejection result. The same report object is evaluated and propagated, avoiding a second provider request and ensuring the dashboard/API can inspect the exact risk evidence behind the gate. Missing or invalid reports remain rejected; the propagation does not weaken the gate.
+
+## PumpSwap direct quote adapter
+
+The read-only direct quote router now recognises PumpSwap pools from the on-chain program owner. It reads the pool, GlobalConfig, Pump Fees FeeConfig, both vaults and both mint accounts at one confirmed RPC slot; validates the account owners, discriminators, pool/vault/mint relationships, trade-disable flags, effective quote reserve (vault amount plus signed virtual quote reserve), and fee configuration. It calculates both quote-in buys and base-in sells, includes the separate LP/protocol/creator fee components, and returns slippage-adjusted minimum output and snapshot telemetry.
+
+The current adapter deliberately uses the highest total fee found across the on-chain flat, standard-tier, stable-tier and exotic fee entries. This conservative policy avoids assuming an unverified pool classification or a cheaper market-cap tier, but can understate the output of pools whose actual fee tier is lower. Token-2022, cashback pools and holder-reward pools remain refused until their extra token/fee behavior is independently modelled. This is a quote-only adapter: signing, transaction construction and broadcast remain disabled.
+
