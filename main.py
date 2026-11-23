@@ -166,7 +166,9 @@ def merge_candidate_metadata(market_data, candidate):
     candidate_websites = candidate.get("websites")
     if isinstance(candidate_websites, list) and candidate_websites:
         existing_info = dict(info)
-        existing_websites = existing_info.get("websites")
+        existing_websites = merged.get("websites")
+        if not isinstance(existing_websites, list) or not existing_websites:
+            existing_websites = existing_info.get("websites")
         if not isinstance(existing_websites, list) or not existing_websites:
             existing_info["websites"] = candidate_websites
             merged["info"] = existing_info
