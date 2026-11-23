@@ -1,7 +1,7 @@
 """Real Solana devnet E2E: faucet -> unsigned simulation -> approval ->
 external client-side signature -> signed simulation -> broadcast -> finality.
 
-Uses a throwaway in-memory Keypair and a 1-lamport SystemProgram transfer.
+Uses a throwaway in-memory Keypair and a rent-exempt SystemProgram transfer.
 It never reads a wallet secret, never targets mainnet, and never unlocks the
 native live broadcast path.
 """
@@ -20,7 +20,9 @@ from solders.transaction import Transaction
 DEVNET_URL = os.getenv("SOLANA_DEVNET_RPC_URL", "https://api.devnet.solana.com").strip()
 DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 LAMPORTS_PER_SOL = 1_000_000_000
-TEST_TRANSFER_LAMPORTS = 1
+# Rent-exempt funding for a newly-created zero-data System account.
+TEST_TRANSFER_LAMPORTS = 1_000_000
+MIN_PAYER_BALANCE_LAMPORTS = TEST_TRANSFER_LAMPORTS + 100_000
 REQUEST_TIMEOUT = 20
 FINALITY_TIMEOUT = 60
 
@@ -83,7 +85,7 @@ def obtain_devnet_funding(payer_address):
     while time.monotonic() < deadline:
         balance = rpc("getBalance", [payer_address, {"commitment": "confirmed"}])
         lamports = (balance or {}).get("value")
-        if isinstance(lamports, int) and lamports >= 5_000_000:
+        if isinstance(lamports, int) and lamports >= MIN_PAYER_BALANCE_LAMPORTS:
             return "MANUAL_FAUCET_FUNDING", "manual_web_faucet"
         time.sleep(5)
     raise TimeoutError("Temporary devnet test wallet was not funded within 10 minutes")
@@ -147,8 +149,7 @@ def main():
     unsigned_bytes = bytes(unsigned_tx)
     unsigned_b64 = base64.b64encode(unsigned_bytes).decode("ascii")
 
-    # Stage 1: unsigned simulation. The only instruction is a 1-lamport
-    # SystemProgram transfer between two ephemeral devnet accounts.
+    # Stage 1: unsigned simulation. The transfer creates a rent-exempt zero-data recipient account.
     unsigned_sim = rpc("simulateTransaction", [
         unsigned_b64,
         {
@@ -222,7 +223,7 @@ def main():
     final_status = wait_for_signature(returned_signature, last_valid_height)
     recipient_balance = rpc("getBalance", [recipient_address, {"commitment": "finalized"}])
     if not isinstance(recipient_balance, dict) or recipient_balance.get("value") != TEST_TRANSFER_LAMPORTS:
-        raise RuntimeError("Finalized recipient balance does not match the 1-lamport test transfer")
+        raise RuntimeError("Finalized recipient balance does not match the rent-exempt test transfer")
 
     print({
         "result": "PASS",
