@@ -773,6 +773,16 @@ def api_raydium_cpmm_order():
                 "signing": "DISABLED",
                 "broadcast": "DISABLED",
             }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "raydium_cpmm", order["last_valid_block_height"]
+        )
+        order.update(approval)
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "pumpswap", order["last_valid_block_height"]
+        )
+        order.update(approval)
         order["simulation"] = simulation
         order["created"] = True
         order["execution"] = "LOCKED"
@@ -843,6 +853,38 @@ def api_pumpswap_v2_order():
         return jsonify({"error": str(error)[:240]}), 400
     except Exception as error:
         return jsonify({"error": "PumpSwap V2 native order failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/native-execution-status")
+def api_native_execution_status():
+    from native_execution import get_native_execution_status
+    return jsonify(get_native_execution_status())
+
+
+@app.post("/api/native-execute")
+def api_native_execute():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    if request.headers.get("X-Trojan-Confirm-Live") != "1":
+        return jsonify({"error": "Explicit live execution confirmation is required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from native_execution import (
+            execute_native_signed_transaction,
+            NativeExecutionLocked,
+        )
+        result = execute_native_signed_transaction(
+            payload.get("signed_transaction"),
+            payload.get("request_id"),
+            confirmed=True,
+        )
+        return jsonify(result)
+    except Exception as error:
+        from native_execution import NativeExecutionLocked
+        status = 403 if isinstance(error, NativeExecutionLocked) else 400
+        return jsonify({"error": str(error)[:240]}), status
 
 
 @app.get("/api/strategy-catalog")
