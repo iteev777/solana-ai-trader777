@@ -23,8 +23,8 @@ class WalletPreflightTests(unittest.TestCase):
         self.wallet = key(1)
         self.input_mint = key(2)
         self.output_mint = key(3)
-        self.input_account = key(4)
-        self.output_account = key(5)
+        self.input_account = wallet_preflight._associated_token_address(self.wallet, self.input_mint)
+        self.output_account = wallet_preflight._associated_token_address(self.wallet, self.output_mint)
 
         input_raw = bytearray(165)
         input_raw[0:32] = chain._b58decode(self.input_mint)
@@ -68,9 +68,25 @@ class WalletPreflightTests(unittest.TestCase):
         self.assertEqual(result["input_token_account"]["raw_balance"], 500)
         self.assertEqual(result["input_mint_info"]["decimals"], 6)
         self.assertEqual(result["output_mint_info"]["decimals"], 9)
+        self.assertTrue(result["input_token_account"]["is_associated_token_account"])
+        self.assertTrue(result["output_token_account"]["is_associated_token_account"])
+        self.assertEqual(result["expected_input_associated_token_account"], self.input_account)
+        self.assertEqual(result["expected_output_associated_token_account"], self.output_account)
         self.assertEqual(result["side_effects"], "NONE_READ_ONLY_RPC_ONLY")
         self.assertEqual(result["network_fee_estimate"], "NOT_ESTIMATED")
         rpc.assert_called_once()
+
+    @patch("solana_onchain._rpc")
+    def test_valid_non_ata_token_account_is_reported_without_being_rejected(self, rpc):
+        rpc.return_value = {"context": {"slot": 123}, "value": self.values}
+        non_ata = key(9)
+        result = wallet_preflight.preflight_wallet_swap(
+            self.wallet, self.input_mint, self.output_mint,
+            non_ata, self.output_account, 100, 10_000_000,
+        )
+        self.assertTrue(result["input_token_account"]["valid"])
+        self.assertFalse(result["input_token_account"]["is_associated_token_account"])
+        self.assertEqual(result["expected_input_associated_token_account"], self.input_account)
 
     @patch("solana_onchain._rpc")
     def test_insufficient_token_balance_blocks_preflight(self, rpc):
