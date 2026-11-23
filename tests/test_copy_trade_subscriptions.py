@@ -36,7 +36,7 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
 
     def test_stop_copy_monitor_closes_socket_and_joins_worker(self):
         thread = Mock()
-        thread.is_alive.side_effect = [True, False]
+        thread.is_alive.return_value = False
         ws = Mock()
         copy_trade._thread = thread
         copy_trade._active_ws = ws
