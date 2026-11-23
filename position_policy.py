@@ -141,6 +141,9 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
     }
     if not isinstance(position, dict) or not isinstance(step, dict) or not isinstance(policy, dict):
         return result
+    if policy.get("enabled", True) is not True:
+        result["reason"] = "DCA disabled in policy"
+        return result
     try:
         price = _number(current_price, "current price", 0.000000000001)
         average = _number(position.get("entry_price"), "average entry", 0.000000000001)
