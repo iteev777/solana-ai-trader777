@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -352,6 +352,35 @@ def initialize_database():
                 raw_summary TEXT,
                 timestamp TEXT NOT NULL
             )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS subject_asset_deltas (
+                chain TEXT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                slot INTEGER,
+                block_time INTEGER,
+                tx_index INTEGER NOT NULL,
+                delta_raw TEXT NOT NULL,
+                before_raw TEXT,
+                after_raw TEXT,
+                decimals INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('trade', 'transfer', 'defi', 'other')),
+                venue TEXT,
+                fee_native_raw TEXT,
+                success INTEGER NOT NULL CHECK(success IN (0, 1)),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(chain, wallet_address, signature, mint, tx_index)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subject_asset_deltas_wallet_time
+            ON subject_asset_deltas(wallet_address, block_time DESC, tx_index DESC)
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subject_asset_deltas_mint_time
+            ON subject_asset_deltas(mint, block_time DESC)
         """)
         connection.execute("""
             CREATE TABLE IF NOT EXISTS protocol_validation_events (
@@ -1757,17 +1786,117 @@ def delete_copy_watch_wallet(wallet):
 
 
 def record_copy_trade_event(wallet, signature, action=None, token_mint=None,
-                            token_delta=None, sol_delta=None, raw_summary=None):
+                            token_delta=None, sol_delta=None, raw_summary=None,
+                            asset_deltas=None):
     if not wallet or not signature:
         return False
+    if not isinstance(wallet, str) or not isinstance(signature, str):
+        raise ValueError("copy event wallet and signature must be strings")
+    if asset_deltas is None:
+        asset_deltas = []
+    if not isinstance(asset_deltas, (list, tuple)):
+        raise ValueError("asset_deltas must be a list")
+    normalized_deltas = [
+        _normalize_subject_asset_delta(item, wallet.strip(), signature.strip())
+        for item in asset_deltas
+    ]
     with connect() as connection:
         connection.execute("""
             INSERT OR IGNORE INTO copy_trade_events
             (wallet, signature, action, token_mint, token_delta, sol_delta, raw_summary, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (str(wallet), str(signature), action, token_mint,
+        """, (wallet.strip(), signature.strip(), action, token_mint,
               token_delta, sol_delta, str(raw_summary or "")[:1500], now()))
-        return connection.total_changes > 0
+        event_inserted = connection.total_changes > 0
+        if normalized_deltas:
+            connection.executemany("""
+                INSERT OR IGNORE INTO subject_asset_deltas (
+                    chain, wallet_address, signature, mint, slot, block_time,
+                    tx_index, delta_raw, before_raw, after_raw, decimals, kind,
+                    venue, fee_native_raw, success, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [row + (now(),) for row in normalized_deltas])
+        return event_inserted
+
+
+def _normalize_subject_asset_delta(item, wallet, signature):
+    if hasattr(item, "as_dict") and callable(item.as_dict):
+        item = item.as_dict()
+    if not isinstance(item, dict):
+        raise ValueError("subject asset delta must be an object")
+
+    def integer(value, label, minimum, maximum, optional=False):
+        if optional and value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError(label + " must be an integer")
+        try:
+            result = int(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError(label + " must be an integer") from error
+        if isinstance(value, float) and value != result:
+            raise ValueError(label + " must be an exact integer")
+        if result < minimum or result > maximum:
+            raise ValueError(label + " is outside the allowed range")
+        return result
+
+    chain = item.get("chain")
+    address = item.get("wallet_address")
+    row_signature = item.get("signature")
+    mint = item.get("mint")
+    kind = item.get("kind")
+    venue = item.get("venue")
+    success = item.get("success")
+    if not isinstance(chain, str) or not chain or len(chain) > 32:
+        raise ValueError("asset delta chain is invalid")
+    if address != wallet or row_signature != signature:
+        raise ValueError("asset delta subject or signature does not match its event")
+    if not isinstance(mint, str) or not mint or len(mint) > 128:
+        raise ValueError("asset delta mint is invalid")
+    if hasattr(kind, "value"):
+        kind = kind.value
+    if kind not in ("trade", "transfer", "defi", "other"):
+        raise ValueError("asset delta kind is invalid")
+    if venue is not None and (not isinstance(venue, str) or len(venue) > 128):
+        raise ValueError("asset delta venue is invalid")
+    if not isinstance(success, bool):
+        raise ValueError("asset delta success must be boolean")
+    return (
+        chain, address, row_signature, mint,
+        integer(item.get("slot"), "asset delta slot", 1, (1 << 64) - 1, True),
+        integer(item.get("block_time"), "asset delta block time", 0, (1 << 63) - 1, True),
+        integer(item.get("tx_index"), "asset delta tx index", 0, (1 << 32) - 1),
+        str(integer(item.get("delta_raw"), "asset delta amount", -(1 << 127), (1 << 127) - 1)),
+        None if item.get("before_raw") is None else str(integer(item.get("before_raw"), "asset delta before", 0, (1 << 128) - 1)),
+        None if item.get("after_raw") is None else str(integer(item.get("after_raw"), "asset delta after", 0, (1 << 128) - 1)),
+        integer(item.get("decimals"), "asset delta decimals", 0, 18),
+        kind, venue,
+        None if item.get("fee_native_raw") is None else str(integer(item.get("fee_native_raw"), "asset delta fee", 0, (1 << 128) - 1)),
+        1 if success else 0,
+    )
+
+
+def get_subject_asset_deltas(wallet, limit=100):
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    with connect() as connection:
+        rows = connection.execute("""
+            SELECT * FROM subject_asset_deltas
+            WHERE wallet_address = ?
+            ORDER BY COALESCE(block_time, 0) DESC, tx_index DESC
+            LIMIT ?
+        """, (wallet.strip(), limit)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["delta_raw"] = int(item["delta_raw"])
+        for field in ("before_raw", "after_raw", "fee_native_raw"):
+            item[field] = int(item[field]) if item[field] is not None else None
+        item["success"] = bool(item["success"])
+        result.append(item)
+    return result
 
 
 def get_recent_copy_trade_events(limit=50):
@@ -1941,7 +2070,9 @@ def restore_database(backup_name, backup_dir=None):
         ).fetchone()
         if not integrity or integrity[0] != "ok":
             raise sqlite3.DatabaseError("Selected backup failed SQLite integrity_check")
-        if not version or int(version[0]) != SCHEMA_VERSION:
+        # Schema 10 is the immediately previous compatible layout. Its tables
+        # are migrated by initialize_database after the verified restore.
+        if not version or int(version[0]) not in (SCHEMA_VERSION - 1, SCHEMA_VERSION):
             raise sqlite3.DatabaseError("Selected backup schema version is incompatible")
     finally:
         candidate.close()
@@ -1984,6 +2115,8 @@ def restore_database(backup_name, backup_dir=None):
         if os.path.exists(sidecar):
             os.remove(sidecar)
     os.replace(temporary, destination)
+    # Apply additive schema migrations while still in offline maintenance mode.
+    initialize_database()
     return {
         "restored": True,
         "backup": backup_name,
