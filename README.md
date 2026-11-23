@@ -471,4 +471,4 @@ state, verifies canonical pool/config PDAs, token accounts and the live
 buyback-recipient ATA, then simulates an unsigned transaction before returning
 it. This path currently refuses Token-2022, mayhem, cashback and holder-reward
 pools; it requires existing user token accounts and a pre-existing buyback ATA.
-Signing and broadcast remain disabled. See `docs/PUMPSWAP_V2_BUILDER.md`.
+Native signing is never performed by the server. An externally signed transaction can only be broadcast through the separate single-use, simulation-bound gate; `TROJAN_NATIVE_EXECUTE_ENABLED` defaults to false and explicit confirmation is required. See `docs/PUMPSWAP_V2_BUILDER.md` and `docs/NATIVE_EXECUTION.md`.
