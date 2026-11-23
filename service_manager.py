@@ -8,7 +8,6 @@ cached status reporting. It never force-kills Python threads.
 """
 from __future__ import annotations
 
-import inspect
 import logging
 import threading
 import time
@@ -130,6 +129,10 @@ class ServiceManager:
             raise ValueError("service initialize callback must be callable")
         if spec.health is not None and not callable(spec.health):
             raise ValueError("service health callback must be callable")
+        if not isinstance(spec.essential, bool) or not isinstance(spec.stops_alone, bool):
+            raise ValueError("essential and stops_alone must be booleans")
+        if not (isinstance(spec.enabled, bool) or callable(spec.enabled)):
+            raise ValueError("enabled must be a boolean or callable")
         if isinstance(spec.priority, bool) or not isinstance(spec.priority, int):
             raise ValueError("service priority must be an integer")
         dependencies = tuple(spec.dependencies)
@@ -141,8 +144,8 @@ class ServiceManager:
             name=name, start=spec.start, stop=spec.stop,
             initialize=spec.initialize, health=spec.health,
             dependencies=dependencies, priority=spec.priority,
-            essential=bool(spec.essential), enabled=spec.enabled,
-            stops_alone=bool(spec.stops_alone),
+            essential=spec.essential, enabled=spec.enabled,
+            stops_alone=spec.stops_alone,
         )
         with self._lock:
             if name in self._specs:
@@ -212,8 +215,9 @@ class ServiceManager:
     def start_all(self) -> dict[str, Any]:
         with self._operation_lock:
             with self._lock:
-                enabled = [name for name, spec in self._specs.items() if self._enabled(spec)]
-                disabled = [name for name, spec in self._specs.items() if not self._enabled(spec)]
+                enabled, disabled = [], []
+                for name, spec in self._specs.items():
+                    (enabled if self._enabled(spec) else disabled).append(name)
                 for name in disabled:
                     runtime = self._runtime[name]
                     if runtime.state not in (ServiceState.RUNNING, ServiceState.STARTING):
@@ -312,6 +316,8 @@ class ServiceManager:
                     return {"stopped": False, "reason": "service is not running"}
                 if not spec.stops_alone:
                     return {"stopped": False, "reason": "service cannot stop independently"}
+                if spec.stop is None:
+                    return {"stopped": False, "reason": "service has no independent stop callback"}
                 dependents = [
                     other for other, candidate in self._specs.items()
                     if name in candidate.dependencies
@@ -396,6 +402,9 @@ class ServiceManager:
                 alive = _is_alive(runtime.handle)
                 state = runtime.state
                 if state == ServiceState.RUNNING and alive is False:
+                    runtime.state = ServiceState.FAILED
+                    runtime.last_error = "service worker exited unexpectedly"
+                    runtime.error_count += 1
                     state = ServiceState.FAILED
                 result[item] = {
                     "name": item,
@@ -423,7 +432,7 @@ class ServiceManager:
         now = time.monotonic()
         with self._lock:
             if not refresh and self._health_cache and now - self._health_cache_at < self.cache_ttl_seconds:
-                return dict(self._health_cache)
+                return {key: dict(value) for key, value in self._health_cache.items()}
             specs = dict(self._specs)
             runtime_states = {name: state.state for name, state in self._runtime.items()}
         result = {}
