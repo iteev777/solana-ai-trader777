@@ -14,6 +14,28 @@ class ApiClientStatsTests(unittest.TestCase):
         with api_client.state_lock:
             api_client._api_stats.clear()
             api_client._inflight_cache_requests.clear()
+        previous_session = getattr(api_client._http_session_local, "session", None)
+        if previous_session is not None:
+            previous_session.close()
+        api_client._http_session_local.session = None
+
+    def test_http_session_is_reused_per_thread_but_not_shared_between_threads(self):
+        main_session = api_client.get_http_session()
+        self.assertIs(api_client.get_http_session(), main_session)
+
+        other_sessions = []
+        worker = threading.Thread(
+            target=lambda: other_sessions.append(api_client.get_http_session())
+        )
+        worker.start()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(other_sessions), 1)
+        self.assertIsNot(other_sessions[0], main_session)
+        self.assertIs(api_client.get_http_session(), main_session)
+        main_session.close()
+        other_sessions[0].close()
 
     def test_records_success_and_cache_hit_per_host_and_endpoint(self):
         url = "https://api.dexscreener.com/token-profiles/latest/v1"
