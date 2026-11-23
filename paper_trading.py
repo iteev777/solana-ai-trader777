@@ -310,6 +310,13 @@ def close_position(
         result["slippage_bps"] = exit_slippage_bps
         result["fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
         refresh_account()
+        # Liquidity high-water marks belong to an open token position. Clear
+        # them after a full close so a later re-entry starts with a fresh baseline.
+        try:
+            import liquidity_monitor
+            liquidity_monitor.reset_liquidity(token_address)
+        except Exception as error:
+            print("LIQUIDITY STATE RESET WARNING:", type(error).__name__, flush=True)
 
         print(
             "PAPER SELL:",
