@@ -222,7 +222,11 @@ def evaluate_dca_step(position, current_price, price_timestamp, step, policy, st
     drop_pct = ((price - basis) / basis) * 100.0
     result["basis_price"] = basis
     result["drop_pct"] = drop_pct
-    if drop_pct >= -drop_threshold:
+    # Compare prices at the exact trigger boundary instead of comparing a
+    # rounded percentage. For example, 0.95 / 1.0 - 1 can become
+    # -5.000000000000004%, which must not fire a strict 5% drop tier.
+    trigger_price = basis * (1.0 - drop_threshold / 100.0)
+    if price >= trigger_price:
         result["reason"] = "Price drop has not passed the configured DCA level"
         return result
 
