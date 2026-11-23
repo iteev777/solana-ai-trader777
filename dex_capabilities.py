@@ -22,8 +22,8 @@ QUOTE_ADAPTERS = {
 }
 
 NATIVE_BUILDERS = {
-    "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_transaction"),
-    "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_transaction"),
+    "raydium_cpmm": ("raydium_cpmm_builder", "build_raydium_cpmm_swap"),
+    "pumpswap_v2": ("pumpswap_v2_builder", "build_pumpswap_v2_swap"),
 }
 
 
