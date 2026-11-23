@@ -4,7 +4,7 @@ import time
 
 PROGRAM = "meteora_damm_v2"
 FEE_DENOMINATOR = 1_000_000_000
-MAX_SNAPSHOT_AGE_SECONDS = 5.0
+MAX_SNAPSHOT_AGE_SECONDS = 8.0
 MAX_SLIPPAGE_BPS = 300
 
 
@@ -58,11 +58,14 @@ def _decode_pool(raw, chain):
         "sqrt_min_price": chain._u128(raw, 424),
         "sqrt_max_price": chain._u128(raw, 440),
         "sqrt_price": chain._u128(raw, 456),
+        "activation_point": chain._u64(raw, 472),
         "activation_type": raw[480],
         "pool_status": raw[481],
         "collect_fee_mode": raw[484],
         "fee_version": raw[486],
     }
+    if state["activation_type"] not in (0, 1):
+        raise ValueError("Meteora DAMM activation type is unsupported")
     if state["pool_status"] != 0:
         raise ValueError("Meteora DAMM v2 pool is not enabled for trading")
     if state["collect_fee_mode"] not in (0, 1, 2):
@@ -141,7 +144,6 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["vault_a"], first["vault_b"],
         first["mint_a"], first["mint_b"],
     ]
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses) or any(item is None for item in accounts):
         raise ValueError("Meteora DAMM confirmed snapshot is missing a required account")
@@ -152,7 +154,8 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     for field in (
         "mint_a", "mint_b", "vault_a", "vault_b", "liquidity",
         "protocol_fee_a", "protocol_fee_b", "sqrt_min_price",
-        "sqrt_max_price", "sqrt_price", "pool_status", "collect_fee_mode",
+        "sqrt_max_price", "sqrt_price", "activation_point", "activation_type",
+        "pool_status", "collect_fee_mode",
         "fee_version", "fee_numerator",
     ):
         if state[field] != first[field]:
@@ -199,9 +202,19 @@ def quote_meteora_damm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     impact = abs(after_price - before_price) / before_price * 100.0 if before_price > 0 else float("nan")
     if not math.isfinite(impact):
         raise ValueError("Meteora DAMM price impact is invalid")
-    age = time.time() - snapshot_started
+    block_time = chain._rpc("getBlockTime", [slot])
+    if isinstance(block_time, bool) or not isinstance(block_time, (int, float)) or not math.isfinite(float(block_time)):
+        raise ValueError("Meteora DAMM confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DAMM confirmed snapshot is stale")
+
+    if state["activation_type"] == 0:
+        current_point = chain._rpc("getSlot", [])
+    else:
+        current_point = int(time.time())
+    if isinstance(current_point, bool) or not isinstance(current_point, (int, float)) or int(current_point) < state["activation_point"]:
+        raise ValueError("Meteora DAMM pool has not reached its activation point")
 
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     return {
