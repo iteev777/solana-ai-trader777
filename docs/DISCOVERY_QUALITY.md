@@ -38,8 +38,10 @@ python -m unittest discover -s tests -v
 The token aggregator records per-feed success/failure counts, consecutive failures,
 last error, result count and latency in SQLite. The last completed scan timestamp
 and unique-token count are persisted as well, so the dashboard can report feed
-health after a process restart. Pump.fun is tracked as its own provider family;
-it is not mislabeled as a Birdeye feed.
+health after a process restart. The legacy `pumpfun_scanner.py` module actually calls Birdeye's `new_listing`
+endpoint with `meme_platform_enabled=true`; it is not an official Pump.fun API
+feed. It is now attributed to the Birdeye provider family, so Birdeye's meme
+listing and token-list feeds cannot create two independent consensus votes.
 
 When multiple feeds return the same mint, later feeds can fill missing metadata,
 replace placeholder strings and replace non-positive numeric market metrics with
@@ -62,10 +64,11 @@ imports the discovery aggregator, so restart the process after changing them.
 | `TROJAN_GECKOTERMINAL_NEW_POOLS_ENABLED` | GeckoTerminal new pools |
 | `TROJAN_GECKOTERMINAL_TRENDING_ENABLED` | GeckoTerminal trending pools |
 | `TROJAN_GECKOTERMINAL_RECENTLY_UPDATED_ENABLED` | GeckoTerminal recently updated tokens |
-| `TROJAN_PUMPFUN_ENABLED` | Pump.fun discovery |
-| `TROJAN_BIRDEYE_ENABLED` | Birdeye discovery |
+| `TROJAN_BIRDEYE_MEME_LISTING_ENABLED` | Birdeye meme-platform new listings (legacy module path: `pumpfun_scanner.py`) |
+| `TROJAN_BIRDEYE_ENABLED` | Birdeye token-list discovery |
 
 Existing provider-level and per-feed controls for DexScreener, RugCheck, Jupiter,
-CoinGecko and DeFiLlama are also supported by the aggregator. Disabling one
+CoinGecko and DeFiLlama are also supported by the aggregator. The old `TROJAN_PUMPFUN_ENABLED` variable remains a fallback alias for
+`TROJAN_BIRDEYE_MEME_LISTING_ENABLED` to preserve existing deployments. Disabling one
 provider does not disable other providers. A provider failure is recorded against
 that feed and does not discard successful results from other feeds.
