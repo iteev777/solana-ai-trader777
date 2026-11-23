@@ -349,3 +349,6 @@ Paper entry and exit paths reject non-finite or non-positive prices before reach
 ## Advanced paper exit protection
 
 Trailing protection can use peak-profit tiers through `TROJAN_TRAILING_BANDS_JSON`, for example `[{"activation_pct":10,"distance_pct":5},{"activation_pct":20,"distance_pct":3}]`. Thresholds must increase and trailing distances may only stay equal or tighten as peak profit rises. The selected tier is based on the persisted peak since entry; trailing-profit exits only fire while the current mark remains above entry. An optional time-loss rule uses `TROJAN_TIME_LOSS_EXIT_SECONDS` (0 disables it) and `TROJAN_TIME_LOSS_THRESHOLD_PCT` (default -10%). Existing fixed stop, take-profit, break-even, stagnation and max-hold rules remain available.
+
+Moonit direct quotes are read-only and limited to the verified ConstantProductV1 native-SOL curve. The adapter validates the ConfigAccount discriminator and fee, uses conservative ceiling arithmetic for remaining virtual reserves, and caps buy output by the curve's actual remaining token amount. Unsupported curve/collateral modes and Token-2022 mints remain refused.
+
