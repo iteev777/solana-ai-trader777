@@ -6,9 +6,7 @@ and the curve's associated token account, and requires the wallet's existing
 base-token account. It never signs or broadcasts.
 """
 import base64
-import hashlib
 import struct
-import time
 
 import solana_onchain as chain
 from raydium_cpmm_builder import _compile_legacy_message
@@ -141,6 +139,13 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         ASSOCIATED_TOKEN_PROGRAM_ID,
     )
     user_base_account = user_output_token_account if buying else user_input_token_account
+    expected_user_base_account, user_ata_bump = chain._find_program_address(
+        [_pubkey(wallet, "wallet"), _pubkey(TOKEN_PROGRAM_ID, "token program"),
+         _pubkey(token_mint, "base mint")],
+        ASSOCIATED_TOKEN_PROGRAM_ID,
+    )
+    if user_base_account != expected_user_base_account:
+        raise ValueError("Moonit wallet base token account is not the canonical associated token account")
 
     keys = [pool, token_mint, config_address, curve_token_account, user_base_account]
     accounts, slot = chain._multiple_accounts_with_context(keys)
@@ -242,6 +247,7 @@ def build_moonit_swap(quote, wallet, user_input_token_account,
         "last_valid_block_height": last_valid,
         "config_bump": config_bump,
         "curve_token_bump": curve_token_bump,
+        "user_ata_bump": user_ata_bump,
         "compute_units": COMPUTE_UNITS,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
         "execution": "LOCKED",
