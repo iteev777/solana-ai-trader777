@@ -450,6 +450,15 @@ def update_position(token_address, current_price, price_timestamp=None):
             if step_index in completed:
                 continue
             if change >= step["profit_pct"] / 100.0:
+                exit_reason = "EXIT LADDER TIER " + str(step_index + 1)
+                fraction = step["sell_fraction"]
+                # A reference-style ladder can reserve the final share of the
+                # original position for a complete close. The database's
+                # partial-close primitive intentionally accepts only (0, 1),
+                # so route a 100% remaining share through the atomic full-close
+                # path rather than trying to persist a zero-sized position.
+                if fraction >= 1.0:
+                    return close_position(token_address, current_price, exit_reason)
                 try:
                     exit_fill_price, exit_slippage_bps = paper_fill_model.sell_fill_price(
                         current_price, metadata
@@ -458,8 +467,8 @@ def update_position(token_address, current_price, price_timestamp=None):
                     return "Invalid paper exit fill price"
                 result = database.partial_close_position_atomic(
                     MODE, token_address, exit_fill_price,
-                    fraction=step["sell_fraction"],
-                    reason="EXIT LADDER TIER " + str(step_index + 1)
+                    fraction=fraction,
+                    reason=exit_reason
                 )
                 if isinstance(result, dict):
                     completed.append(step_index)
