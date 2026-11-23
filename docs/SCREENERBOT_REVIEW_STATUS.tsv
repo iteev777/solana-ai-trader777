@@ -786,7 +786,7 @@ src/agent_control/tools/system.rs	source	unreviewed	Pending review
 src/agent_control/tools/trader.rs	source	unreviewed	Pending review
 src/agent_control/tools/trading.rs	source	unreviewed	Pending review
 src/apis/README.md	other	unreviewed	Pending review
-src/apis/client.rs	source	unreviewed	Pending review
+src/apis/client.rs	source	reviewed	api_client.py uses monotonic spacing and host serialization; reference also pools connections and wraps provider permits.
 src/apis/coingecko/mod.rs	source	reviewed	discovery/screenerbot_sources.py: Solana coins-list filtering and optional demo key match; provider runtime switch and request metrics not equivalent.
 src/apis/coingecko/types.rs	source	reviewed	discovery/screenerbot_sources.py: Coin name, symbol, and Solana platforms mapped; Trojan validates decoded mint size and tolerates individual malformed records.
 src/apis/defillama/mod.rs	source	reviewed	discovery/screenerbot_sources.py: Protocol listing and Solana selection implemented; Trojan also handles solana: prefix. Provider config and metrics remain gaps.
@@ -825,7 +825,7 @@ src/apis/mod.rs	source	unreviewed	Pending review
 src/apis/native_price.rs	source	unreviewed	Pending review
 src/apis/rugcheck/mod.rs	source	reviewed	discovery/screenerbot_sources.py: Discovery stats endpoints match; null-list semantics implemented. Security report/client budgeting awaits rugcheck.py review.
 src/apis/rugcheck/types.rs	source	reviewed	discovery/screenerbot_sources.py: Recent metadata and decimals retained for candidate records; security authority/holder conversions await rugcheck.py review.
-src/apis/stats.rs	source	unreviewed	Pending review
+src/apis/stats.rs	source	reviewed	api_client.py publishes per-host outcome totals and latency. Reference also counts cache hits and emits sampled API events.
 src/arguments/banner.rs	source	unreviewed	Pending review
 src/arguments/help.rs	source	unreviewed	Pending review
 src/arguments/mod.rs	source	unreviewed	Pending review
@@ -1326,7 +1326,7 @@ src/process/shutdown.rs	source	unreviewed	Pending review
 src/rpc/circuit_breaker/config.rs	source	unreviewed	Pending review
 src/rpc/circuit_breaker/mod.rs	source	unreviewed	Pending review
 src/rpc/circuit_breaker/state.rs	source	unreviewed	Pending review
-src/rpc/errors.rs	source	unreviewed	Pending review
+src/rpc/errors.rs	source	reviewed	rpc_transport.py distinguishes envelope failure and rate limits without exposing raw endpoint text. Reference has richer provider classifications and transaction outcomes.
 src/rpc/gateway.rs	source	unreviewed	Pending review
 src/rpc/manager.rs	source	unreviewed	Pending review
 src/rpc/mod.rs	source	unreviewed	Pending review

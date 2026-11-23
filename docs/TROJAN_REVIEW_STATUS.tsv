@@ -4,7 +4,7 @@ file	kind	status
 README.md	other	unreviewed
 adaptive_learning.py	production	unreviewed
 ai_analyzer.py	production	unreviewed
-api_client.py	production	unreviewed
+api_client.py	production	reviewed
 blacklist.py	production	reviewed
 candidate_quality.py	production	reviewed
 clmm_quote_math.py	production	unreviewed
@@ -45,7 +45,7 @@ onchain_stream.py	production	unreviewed
 orca_whirlpool_quote.py	production	unreviewed
 paper_fill_model.py	production	unreviewed
 paper_trading.py	production	unreviewed
-pool_account_fetcher.py	production	unreviewed
+pool_account_fetcher.py	production	reviewed
 pool_analysis.py	production	unreviewed
 pool_registry.py	production	unreviewed
 pool_selection.py	production	unreviewed
@@ -56,7 +56,7 @@ raydium_clmm_quote.py	production	unreviewed
 requirements.txt	other	unreviewed
 risk_manager.py	production	reviewed
 route_comparison.py	production	unreviewed
-rpc_transport.py	production	unreviewed
+rpc_transport.py	production	reviewed
 rugcheck.py	production	reviewed
 rugcheck_risk_band.py	production	reviewed
 scanner.py	production	reviewed
@@ -70,6 +70,7 @@ strategy_rules.py	production	unreviewed
 telegram_alerts.py	production	unreviewed
 test_discovery.py	test	unreviewed
 tests/test_advanced_security_validation.py	test	unreviewed
+tests/test_api_client.py	test	unreviewed
 tests/test_blacklist.py	test	unreviewed
 tests/test_bot_lifecycle.py	test	unreviewed
 tests/test_candidate_quality.py	test	unreviewed
