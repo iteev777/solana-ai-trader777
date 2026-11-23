@@ -88,7 +88,7 @@ def register_native_approval(unsigned_transaction, protocol, last_valid_block_he
             or simulation.get("status") != "PASS"
             or simulation.get("signature_verification") != "DISABLED_UNSIGNED_SIMULATION"):
         raise NativeExecutionRejected("A successful unsigned RPC simulation report is required")
-    if protocol not in ("raydium_cpmm", "pumpswap"):
+    if protocol not in ("raydium_cpmm", "pumpswap", "orca_whirlpool"):
         raise NativeExecutionRejected("Unsupported native transaction protocol")
     if isinstance(last_valid_block_height, bool) or not isinstance(last_valid_block_height, int) or last_valid_block_height <= 0:
         raise NativeExecutionRejected("Valid block height is required")
@@ -130,7 +130,7 @@ def get_native_execution_status():
         "requires_signed_rpc_simulation": True,
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
         "approval_cache": "process_local_single_use",
-        "supported_protocols": ["raydium_cpmm", "pumpswap"],
+        "supported_protocols": ["raydium_cpmm", "pumpswap", "orca_whirlpool"],
         "private_key_custody": False,
         "server_signing": False,
         "broadcast_available": _enabled(),
