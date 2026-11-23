@@ -9,6 +9,7 @@ import base64
 import struct
 
 import solana_onchain as chain
+import token2022_inspector as token2022
 from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 
 PROGRAM_ID = chain.PROGRAMS["pumpfun_legacy"]
@@ -49,22 +50,10 @@ def _u64(value, label):
     return value
 
 
-def _token_account(account, mint, authority, label, min_balance=0):
-    if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError(label + " must use legacy SPL Token")
-    raw = account.get("data", b"")
-    if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
-        raise ValueError(label + " token-account layout is invalid")
-    if chain._key(raw, 0) != mint:
-        raise ValueError(label + " mint does not match")
-    if chain._key(raw, 32) != authority:
-        raise ValueError(label + " authority does not match")
-    if raw[108] != 1:
-        raise ValueError(label + " is not initialized or is frozen")
-    balance = int.from_bytes(raw[64:72], "little")
-    if balance < min_balance:
-        raise ValueError(label + " has insufficient token balance")
-    return balance
+def _token_account(account, token_program, mint, authority, label, min_balance=0):
+    return token2022.validate_token_account_for_program(
+        account, token_program, mint, authority, label, min_balance
+    )
 
 
 def _fee_rates(curve, global_raw, fee_config_raw):
@@ -166,6 +155,11 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
     ):
         raise ValueError("Fresh Pump.fun quote does not validate curve, pair and amount")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
+    token_program = fresh.get("token_program")
+    if token_program not in (TOKEN_PROGRAM_ID, chain.TOKEN_2022_PROGRAM):
+        raise ValueError("Fresh Pump.fun quote contains an unsupported token program")
+    if quote.get("token_program") != token_program:
+        raise ValueError("Pump.fun token program changed since the supplied quote")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh Pump.fun quote is older than the supplied quote")
@@ -206,13 +200,13 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
     if fee_config_address != chain.PUMP_FEE_CONFIG:
         raise ValueError("Pump.fun FeeConfig PDA does not match the canonical address")
     curve_token_account, _ = chain._find_program_address(
-        [_pubkey(pool, "bonding curve"), _pubkey(TOKEN_PROGRAM_ID, "token program"),
+        [_pubkey(pool, "bonding curve"), _pubkey(token_program, "token program"),
          _pubkey(token_mint, "token mint")],
         ASSOCIATED_TOKEN_PROGRAM_ID,
     )
     user_token_account = user_output_token_account if buying else user_input_token_account
     user_ata, _ = chain._find_program_address(
-        [_pubkey(wallet, "wallet"), _pubkey(TOKEN_PROGRAM_ID, "token program"),
+        [_pubkey(wallet, "wallet"), _pubkey(token_program, "token program"),
          _pubkey(token_mint, "token mint")],
         ASSOCIATED_TOKEN_PROGRAM_ID,
     )
@@ -253,11 +247,14 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
             raise ValueError("Pump.fun curve state changed during transaction preparation")
     if slot < fresh_slot or slot - fresh_slot > max_quote_slot_lag:
         raise ValueError("Fresh Pump.fun quote is stale relative to transaction snapshot")
-    if mint_acc.get("owner") != TOKEN_PROGRAM_ID:
-        raise ValueError("Pump.fun native builder supports legacy SPL Token mints only")
-    mint_raw = mint_acc.get("data", b"")
-    if not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
-        raise ValueError("Pump.fun mint is not an initialized legacy SPL Token mint")
+    if mint_acc.get("owner") != token_program:
+        raise ValueError("Pump.fun mint owner changed during transaction preparation")
+    if token_program == chain.TOKEN_2022_PROGRAM:
+        token2022.validate_swap_compatible_mint_data(mint_acc.get("data", b""))
+    else:
+        mint_raw = mint_acc.get("data", b"")
+        if not isinstance(mint_raw, (bytes, bytearray)) or len(mint_raw) != 82 or mint_raw[45] != 1:
+            raise ValueError("Pump.fun mint is not an initialized legacy SPL Token mint")
     if chain._mint_decimals(mint_acc) != fresh.get("token_decimals"):
         raise ValueError("Pump.fun mint decimals changed since the fresh quote")
     global_raw = global_acc.get("data", b"")
@@ -274,13 +271,14 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
         raise ValueError("Pump.fun market cap changed since the fresh quote")
 
     curve_balance = _token_account(
-        curve_tokens, token_mint, pool, "Pump.fun associated bonding curve token account"
+        curve_tokens, token_program, token_mint, pool,
+        "Pump.fun associated bonding curve token account"
     )
     if curve_balance != current["real_token_reserves"]:
         raise ValueError("Pump.fun curve token-account balance does not match real token reserves")
     _token_account(
-        user_tokens, token_mint, wallet, "Pump.fun wallet token account",
-        min_balance=amount if selling else 0,
+        user_tokens, token_program, token_mint, wallet,
+        "Pump.fun wallet token account", min_balance=amount if selling else 0,
     )
 
     metas = [
@@ -295,7 +293,7 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
     ]
     if buying:
         metas.extend([
-            {"pubkey": TOKEN_PROGRAM_ID, "is_signer": False, "is_writable": False},
+            {"pubkey": token_program, "is_signer": False, "is_writable": False},
             {"pubkey": creator_vault, "is_signer": False, "is_writable": True},
             {"pubkey": event_authority, "is_signer": False, "is_writable": False},
             {"pubkey": PROGRAM_ID, "is_signer": False, "is_writable": False},
@@ -343,6 +341,8 @@ def build_pumpfun_legacy_swap(quote, wallet, user_input_token_account,
         "output_mint": output_mint,
         "input_amount": amount,
         "minimum_output_amount": minimum_out,
+        "token_program": token_program,
+        "token2022_fee_aware_supported": token_program == chain.TOKEN_2022_PROGRAM,
         "instruction": "buy_exact_sol_in" if buying else "sell",
         "instruction_data_base64": base64.b64encode(instruction_data).decode("ascii"),
         "instruction_accounts": [meta["pubkey"] for meta in metas],
