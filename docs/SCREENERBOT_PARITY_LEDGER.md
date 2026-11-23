@@ -138,3 +138,10 @@ A functional area can be marked complete only after:
 - resulting commit SHA and changed-file list are recorded here.
 
 The repositories are not considered parity-complete until every row and every file disposition is closed.
+
+## OHLCV validation follow-up (2026-11-23)
+
+- The first persisted-history test run exposed two issues. `calculate_multi_timeframe_indicators()` revalidated only normalized rows and lost the original malformed/duplicate counters; commit `31228949f44eb24a6102ba4282f524d57c9dba30` preserves the original input counters while evaluating freshness on the newest API-sized window.
+- The persisted-history test then exposed a fixture defect: it replaced the module's `OrderedDict` cache with a plain dict, but production cache insertion calls `move_to_end()`. The test now uses a fresh `OrderedDict` and an isolated fetch lock, and prints the returned error object if the expected multi-timeframe payload is absent.
+- Relevant test commit headlines: `test(ohlcv): isolate persisted-history fetch lock and expose failures`; `test(ohlcv): preserve ordered cache behavior in fetch fixture`.
+- Validation on the latest revision is pending; do not mark OHLCV complete until the persisted-history test and full validation both pass.
