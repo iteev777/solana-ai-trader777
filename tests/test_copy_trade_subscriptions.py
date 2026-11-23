@@ -26,10 +26,40 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
     def setUp(self):
         self._old_catchup = dict(copy_trade._poll_catchup)
         copy_trade._poll_catchup.clear()
+        copy_trade._stop_event.clear()
+        copy_trade._active_ws = None
+        copy_trade._thread = None
 
     def tearDown(self):
         copy_trade._poll_catchup.clear()
         copy_trade._poll_catchup.update(self._old_catchup)
+
+    def test_stop_copy_monitor_closes_socket_and_joins_worker(self):
+        thread = Mock()
+        thread.is_alive.side_effect = [True, False]
+        ws = Mock()
+        copy_trade._thread = thread
+        copy_trade._active_ws = ws
+
+        self.assertTrue(copy_trade.stop_copy_monitor(timeout=0.25))
+        self.assertTrue(copy_trade._stop_event.is_set())
+        ws.close.assert_called_once_with()
+        thread.join.assert_called_once_with(0.25)
+        self.assertIsNone(copy_trade._thread)
+        self.assertFalse(copy_trade._status["running"])
+
+    def test_stop_copy_monitor_reports_worker_that_does_not_exit(self):
+        thread = Mock()
+        thread.is_alive.return_value = True
+        copy_trade._thread = thread
+        self.assertFalse(copy_trade.stop_copy_monitor(timeout=0))
+        self.assertIs(copy_trade._thread, thread)
+
+    def test_stop_copy_monitor_rejects_invalid_timeout(self):
+        for value in (True, -1, float("inf"), "5"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    copy_trade.stop_copy_monitor(value)
 
     def test_requires_every_wallet_and_preserves_early_notifications(self):
         notification = {
