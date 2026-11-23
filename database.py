@@ -4,7 +4,7 @@ import json
 import math
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # ==========================================
@@ -1250,6 +1250,44 @@ def get_recent_trades(mode="paper", limit=20):
         )).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def get_period_realized_loss(mode="paper", window_hours=24):
+    """Return absolute realized losses from closed SELL rows in a rolling window."""
+    validate_mode(mode)
+    if isinstance(window_hours, bool):
+        raise ValueError("Loss window must be positive")
+    try:
+        hours = float(window_hours)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Loss window must be positive")
+    if not math.isfinite(hours) or hours <= 0 or hours > 24 * 31:
+        raise ValueError("Loss window must be between 0 and 744 hours")
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with connect() as connection:
+        row = connection.execute("""
+            SELECT COALESCE(SUM(CASE WHEN profit_loss < 0
+                THEN -profit_loss ELSE 0 END), 0) AS realized_loss
+            FROM trades
+            WHERE mode = ? AND action = 'SELL' AND timestamp >= ?
+        """, (mode, since)).fetchone()
+    return max(0.0, float(row["realized_loss"] or 0.0))
+
+
+def get_last_exit_timestamp(token_address, mode="paper"):
+    """Return the latest closed SELL timestamp for one token and trading mode."""
+    validate_mode(mode)
+    if not isinstance(token_address, str) or not token_address.strip():
+        raise ValueError("Token address is required")
+    with connect() as connection:
+        row = connection.execute("""
+            SELECT timestamp
+            FROM trades
+            WHERE token_address = ? AND mode = ? AND action = 'SELL'
+            ORDER BY timestamp DESC, id DESC
+            LIMIT 1
+        """, (token_address.strip(), mode)).fetchone()
+    return row["timestamp"] if row else None
 
 
 # ==========================================
