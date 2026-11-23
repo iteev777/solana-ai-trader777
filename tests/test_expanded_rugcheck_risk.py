@@ -67,7 +67,8 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
             tokenSupply="100",
         ))
         self.assertEqual(result["signals"]["creator_pct"], 15.0)
-        self.assertGreaterEqual(result["medium_risks"], 1)
+        self.assertEqual(result["status"], "REJECT")
+        self.assertGreaterEqual(result["high_risks"], 1)
 
     def test_creator_share_above_critical_threshold_rejected(self):
         result = analyze_rugcheck_report(safe_report(
