@@ -57,6 +57,11 @@ def _derive_native_price(pairs):
 
 
 def _candidate(pair, native_price_usd):
+    pool_address = _pair_identity(pair)
+    if pool_address:
+        import pool_analysis
+        if pool_analysis.should_skip_pool(pool_address):
+            return None
     base = pair.get("baseToken") if isinstance(pair.get("baseToken"), dict) else {}
     quote = pair.get("quoteToken") if isinstance(pair.get("quoteToken"), dict) else {}
     base_address = _address(base)
@@ -131,6 +136,8 @@ def select_best_pairs(pairs, requested_addresses):
         if not isinstance(address, str) or address not in requested:
             continue
         candidate = _candidate(pair, native_price)
+        if candidate is None:
+            continue
         grouped.setdefault(address, []).append(candidate)
 
     selected = {}
