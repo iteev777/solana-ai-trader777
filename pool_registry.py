@@ -51,6 +51,7 @@ _gecko_retry_at = {}
 _pending = set()
 _queue = queue.Queue(maxsize=MAX_PENDING_POOL_REQUESTS)
 _worker_thread = None
+_stop_event = threading.Event()
 _status = {
     "queued": 0, "pending": 0, "completed": 0, "failed": 0,
     "pools_merged": 0, "dex_pending": 0, "gecko_pending": 0,
@@ -248,32 +249,59 @@ def _ensure_worker():
     global _worker_thread
     with _lock:
         if _worker_thread is None or not _worker_thread.is_alive():
+            _stop_event.clear()
             _worker_thread = threading.Thread(
                 target=_worker, name="TrojanPoolRegistryWorker", daemon=True
             )
             _worker_thread.start()
 
 
+def start_pool_registry_worker():
+    """Start the managed pool-registry worker and return its thread handle."""
+    _ensure_worker()
+    with _lock:
+        return _worker_thread
+
+
+def stop_pool_registry_worker(timeout=5.0):
+    """Stop the pool worker gracefully; queued work is discarded on shutdown."""
+    global _worker_thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0:
+        raise ValueError("Pool registry worker shutdown timeout must be non-negative")
+    with _lock:
+        thread = _worker_thread
+        _stop_event.set()
+    if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+        thread.join(float(timeout))
+    stopped = thread is None or not thread.is_alive()
+    if stopped:
+        with _lock:
+            if _worker_thread is thread:
+                _worker_thread = None
+    return stopped
+
+
 def _enqueue(source, mint):
+    if source not in ("dexscreener", "geckoterminal") or not _valid_solana_address(mint):
+        return False
     task = (source, mint)
     with _lock:
         if task in _pending:
+            return False
+        if _stop_event.is_set() and _worker_thread is not None and _worker_thread.is_alive():
+            return False
+        try:
+            _queue.put_nowait(task)
+        except queue.Full:
+            _status["failed"] += 1
+            _status["last_error"] = "Pool registry queue is full"
             return False
         _pending.add(task)
         _status["queued"] += 1
         _status["pending"] = len(_pending)
         _status["dex_pending"] = sum(1 for item in _pending if item[0] == "dexscreener")
         _status["gecko_pending"] = sum(1 for item in _pending if item[0] == "geckoterminal")
-    try:
-        _queue.put_nowait(task)
-    except queue.Full:
-        with _lock:
-            _pending.discard(task)
-            _status["pending"] = len(_pending)
-            _status["failed"] += 1
-            _status["last_error"] = "Pool registry queue is full"
-        return False
-    _ensure_worker()
+        _ensure_worker()
     return True
 
 
@@ -370,8 +398,13 @@ def fetch_gecko_pool_candidates(mint):
 
 
 def _worker():
-    while True:
-        source, mint = _queue.get()
+    global _worker_thread
+    while not _stop_event.is_set():
+        try:
+            task = _queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        source, mint = task
         try:
             if source == "dexscreener":
                 fetch_dexscreener_token_pools(mint)
@@ -395,6 +428,22 @@ def _worker():
                 _status["gecko_pending"] = sum(1 for item in _pending if item[0] == "geckoterminal")
             _queue.task_done()
 
+    # Drop queued work after shutdown so restart cannot replay stale requests.
+    while True:
+        try:
+            task = _queue.get_nowait()
+        except queue.Empty:
+            break
+        with _lock:
+            _pending.discard(task)
+            _status["pending"] = len(_pending)
+            _status["dex_pending"] = sum(1 for item in _pending if item[0] == "dexscreener")
+            _status["gecko_pending"] = sum(1 for item in _pending if item[0] == "geckoterminal")
+        _queue.task_done()
+    with _lock:
+        if _worker_thread is threading.current_thread():
+            _worker_thread = None
+
 
 def get_pool_registry_status():
     with _lock:
@@ -411,6 +460,8 @@ def get_pool_registry_status():
 
 
 def clear_pool_registry_state(clear_persisted=False):
+    if not stop_pool_registry_worker(timeout=5.0):
+        return False
     while True:
         try:
             _queue.get_nowait()
