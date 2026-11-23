@@ -197,12 +197,12 @@ read-only quote adapters, native unsigned transaction builders, simulation,
 external-wallet signing, broadcast, and live execution.
 
 A protocol with a quote adapter is not thereby transaction-buildable. Current
-native builder coverage remains limited to Raydium CPMM and the supported
-standard PumpSwap V2 pool mode. Both remain legacy SPL Token only, require a
-fresh quote and RPC simulation, and do not enable server signing, broadcast,
-or live trading. Other quote adapters remain quote-only until their own
-protocol-specific transaction layout, account validation, simulation, and
-regression suite are implemented.
+native builder coverage includes Raydium CPMM, the supported standard PumpSwap
+V2 pool mode, and classic Orca Whirlpool. These builders are restricted to
+legacy SPL Token, require a fresh quote and RPC simulation, and do not enable
+server signing, broadcast, or live trading. Other quote adapters remain
+quote-only until their own protocol-specific transaction layout, account
+validation, simulation, and regression suite are implemented.
 
 Unknown or unregistered protocols fail closed. The capability inventory is
 descriptive; it does not grant execution permission.
@@ -224,3 +224,11 @@ array layouts, stale quotes, missing required accounts, and invalid account
 ownership fail closed. The unsigned transaction can be RPC-simulated, but the
 server does not sign or broadcast it. No mainnet end-to-end execution has been
 established; live trading remains disabled.
+
+
+The Orca endpoints are `GET /api/orca-whirlpool-quote` and authenticated
+`POST /api/orca-whirlpool-order`. The order endpoint builds an unsigned
+transaction, simulates it, and only then creates a short-lived approval for
+the external-wallet flow. The native broadcast gate remains disabled by
+default; Orca is only added to the protocol allow-list, not enabled for live
+trading. The order endpoint requires `X-Trojan-Action: 1`.
