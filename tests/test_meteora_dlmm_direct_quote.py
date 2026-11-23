@@ -195,6 +195,19 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fee collection mode"):
             self.quote(pair_data=bytes(pair))
 
+    def test_snapshot_freshness_uses_monotonic_clock(self):
+        with (
+            patch.object(dlmm.time, "monotonic", side_effect=[100.0, 101.0]),
+            patch.object(dlmm.time, "time", side_effect=AssertionError("wall clock must not be used")),
+        ):
+            result = self.quote()
+        self.assertEqual(result["snapshot_age_seconds"], 1.0)
+
+    def test_stale_snapshot_is_rejected_by_monotonic_elapsed_time(self):
+        with patch.object(dlmm.time, "monotonic", side_effect=[100.0, 106.0]):
+            with self.assertRaisesRegex(ValueError, "snapshot is stale"):
+                self.quote()
+
     def test_invalid_clock_owner_is_rejected(self):
         original = self.clock_account
         try:
