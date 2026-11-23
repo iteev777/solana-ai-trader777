@@ -10,7 +10,7 @@ from solders.pubkey import Pubkey
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from discovery.gecko_scanner import scan_new_pools, scan_trending_pools, scan_recently_updated_tokens
-from discovery.pumpfun_scanner import scan_pumpfun
+from discovery.pumpfun_scanner import scan_birdeye_meme_listing
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_profiles, scan_latest_boosts, scan_top_boosts
 from discovery.screenerbot_sources import (
@@ -47,7 +47,7 @@ def _birdeye_meme_scanners_from_env():
         "TROJAN_BIRDEYE_MEME_LISTING_ENABLED",
         _env_enabled("TROJAN_PUMPFUN_ENABLED", True),
     )
-    return [("birdeye_meme_listing", scan_pumpfun)] if enabled else []
+    return [("birdeye_meme_listing", scan_birdeye_meme_listing)] if enabled else []
 
 
 def _pumpfun_scanners_from_env():
