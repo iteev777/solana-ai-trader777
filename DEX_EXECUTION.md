@@ -198,11 +198,12 @@ external-wallet signing, broadcast, and live execution.
 
 A protocol with a quote adapter is not thereby transaction-buildable. Current
 native builder coverage includes Raydium CPMM, the supported standard PumpSwap
-V2 pool mode, and classic Orca Whirlpool. These builders are restricted to
-legacy SPL Token, require a fresh quote and RPC simulation, and do not enable
-server signing, broadcast, or live trading. Other quote adapters remain
-quote-only until their own protocol-specific transaction layout, account
-validation, simulation, and regression suite are implemented.
+V2 pool mode, classic Orca Whirlpool, and the supported classic Meteora DLMM
+Swap2 path. These builders are restricted to legacy SPL Token, require a fresh
+quote and RPC simulation, and do not enable server signing, broadcast, or live
+trading. Other quote adapters remain quote-only until their own
+protocol-specific transaction layout, account validation, simulation, and
+regression suite are implemented.
 
 Unknown or unregistered protocols fail closed. The capability inventory is
 descriptive; it does not grant execution permission.
@@ -232,3 +233,37 @@ transaction, simulates it, and only then creates a short-lived approval for
 the external-wallet flow. The native broadcast gate remains disabled by
 default; Orca is only added to the protocol allow-list, not enabled for live
 trading. The order endpoint requires `X-Trojan-Action: 1`.
+
+
+## Meteora DLMM native unsigned Swap2 builder
+
+Trojan includes a first native Meteora DLMM exact-input builder in
+`meteora_dlmm_builder.py`. It uses the current `Swap2` instruction
+(discriminator `414b3f4ceb5b5b88`), the 16-account IDL order, an empty
+`RemainingAccountsInfo`, and the quote's initialized bin-array PDAs as
+writable remaining accounts. Optional bitmap-extension and host-fee accounts
+are omitted using the program-id sentinel; the memo program and event-authority
+PDA are included in their IDL positions.
+
+The builder independently requotes from confirmed state, validates the
+LbPair, reserve vaults, legacy SPL Token mints and user token accounts, oracle,
+optional bitmap extension, bin-array ownership/layout/PDA, input balance and
+quote-slot freshness. It creates an unsigned legacy transaction and performs
+an unsigned RPC simulation before registering a short-lived external-wallet
+approval. The server never signs or broadcasts.
+
+This initial path intentionally follows the current read-only quote adapter's
+supported subset: legacy SPL Token only, `function_type=0`, no Token-2022
+transfer-fee/hook handling, no limit-order fills, and at most three consecutive
+initialized bin arrays. Pools or swaps outside those constraints fail closed.
+The quote engine's limited bin-array discovery is not a substitute for the
+full Meteora SDK bitmap traversal on wide/fragmented liquidity ranges; no
+mainnet end-to-end signed swap has been established.
+
+Endpoints:
+- `GET /api/meteora-dlmm-quote`
+- authenticated `POST /api/meteora-dlmm-order` with `X-Trojan-Action: 1`
+
+Live execution remains locked. The native broadcast environment gate remains
+off by default, and this builder's successful simulation is not proof that a
+real wallet-signed transaction will land or confirm.
