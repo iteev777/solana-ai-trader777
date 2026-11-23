@@ -43,6 +43,24 @@ class TokenSecurityTests(unittest.TestCase):
         self.assertEqual(report["top_owner_account_authorities"], ["11111111111111111111111111111111"])
         self.assertTrue(token_security.evaluate_token_security(report)["allowed"])
 
+    @patch("solana_onchain._rpc")
+    def test_exact_raw_amount_and_present_blank_authority_fail_closed(self, rpc):
+        raw_amount = 2**53 + 1
+        rpc.side_effect = [
+            {"value": {"owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                       "data": {"parsed": {"info": {
+                           "isInitialized": True, "decimals": 6,
+                           "mintAuthority": "", "freezeAuthority": None
+                       }}}}},
+            {"value": {"amount": str(raw_amount), "decimals": 6}},
+            {"value": [{"address": "11111111111111111111111111111111",
+                        "amount": str(raw_amount)}]},
+            {"value": []},
+        ]
+        report = token_security.get_token_security_report("11111111111111111111111111111111")
+        self.assertEqual(report["largest_token_account_details"][0]["amount"], raw_amount)
+        self.assertFalse(token_security.evaluate_token_security(report)["allowed"])
+
     def test_missing_report_fails_closed(self):
         self.assertFalse(token_security.evaluate_token_security(None)["allowed"])
 
