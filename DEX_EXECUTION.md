@@ -187,3 +187,22 @@ selection remains read-only and does not authorize signing or broadcasting.
 - `TROJAN_JUPITER_V2_BASE_URL`: defaults to `https://api.jup.ag/swap/v2`.
 - `TROJAN_JUPITER_EXECUTE_ENABLED`: defaults to `false`; do not enable until
   wallet signing, paper tests, simulation, and risk controls have been validated.
+
+
+## DEX protocol capability reporting
+
+The dashboard engine status now exposes `protocol_capabilities` and
+`capability_summary`. These fields deliberately separate pool decoding,
+read-only quote adapters, native unsigned transaction builders, simulation,
+external-wallet signing, broadcast, and live execution.
+
+A protocol with a quote adapter is not thereby transaction-buildable. Current
+native builder coverage remains limited to Raydium CPMM and the supported
+standard PumpSwap V2 pool mode. Both remain legacy SPL Token only, require a
+fresh quote and RPC simulation, and do not enable server signing, broadcast,
+or live trading. Other quote adapters remain quote-only until their own
+protocol-specific transaction layout, account validation, simulation, and
+regression suite are implemented.
+
+Unknown or unregistered protocols fail closed. The capability inventory is
+descriptive; it does not grant execution permission.
