@@ -113,6 +113,7 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.state = bytes(state)
 
         config = bytearray(117)
+        config[:8] = chain._discriminator("AmmConfig")
         config[47:51] = (3000).to_bytes(4, "little")
         config[51:53] = (1).to_bytes(2, "little")
         self.config_data = bytes(config)
@@ -134,6 +135,7 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.mint1_account = {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint1)}
 
         tick = bytearray(10240)
+        tick[:8] = chain._discriminator("TickArrayState")
         tick[8:40] = chain._b58decode(self.pool)
         tick[40:44] = (0).to_bytes(4, "little", signed=True)
         self.tick_account = {"owner": chain.PROGRAMS["raydium_clmm"], "data": bytes(tick)}
@@ -144,6 +146,14 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             self.mint0_account, self.mint1_account,
             self.tick_account,
         ]
+
+    def test_config_and_tick_array_discriminators_are_required(self):
+        for index in (1, 6):
+            account = self.accounts[index]
+            with self.subTest(index=index), patch.object(self, "accounts", list(self.accounts)):
+                self.accounts[index] = dict(account, data=b"\x00" * 8 + account["data"][8:])
+                with self.assertRaisesRegex(ValueError, "discriminator"):
+                    self.quote()
 
     def quote(self, input_mint=None, output_mint=None, amount=10_000, **kwargs):
         with (
