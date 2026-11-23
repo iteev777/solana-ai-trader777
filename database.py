@@ -1372,19 +1372,25 @@ def get_period_realized_loss(mode="paper", window_hours=24):
     return max(0.0, float(row["realized_loss"] or 0.0))
 
 
-def get_last_exit_timestamp(token_address, mode="paper"):
-    """Return the latest closed SELL timestamp for one token and trading mode."""
+def get_last_exit_timestamp(token_address, mode="paper", strategy=None):
+    """Return the latest closed SELL timestamp for one token, mode and optional strategy."""
     validate_mode(mode)
+    if strategy is not None:
+        validate_strategy(strategy)
     if not isinstance(token_address, str) or not token_address.strip():
         raise ValueError("Token address is required")
+    query = """
+        SELECT timestamp
+        FROM trades
+        WHERE token_address = ? AND mode = ? AND action = 'SELL'
+    """
+    params = [token_address.strip(), mode]
+    if strategy is not None:
+        query += " AND strategy = ?"
+        params.append(strategy)
+    query += " ORDER BY timestamp DESC, id DESC LIMIT 1"
     with connect() as connection:
-        row = connection.execute("""
-            SELECT timestamp
-            FROM trades
-            WHERE token_address = ? AND mode = ? AND action = 'SELL'
-            ORDER BY timestamp DESC, id DESC
-            LIMIT 1
-        """, (token_address.strip(), mode)).fetchone()
+        row = connection.execute(query, params).fetchone()
     return row["timestamp"] if row else None
 
 
