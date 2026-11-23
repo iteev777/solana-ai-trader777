@@ -122,6 +122,8 @@ def decode_transfer_fee_config(raw):
     diagnostic decoder intentionally returns both schedules and never grants
     swap approval.
     """
+    if isinstance(raw, (bytes, bytearray)) and len(raw) == 82:
+        return None
     extensions = parse_tlv_extensions(raw, MINT_ACCOUNT_TYPE)
     offset = TLV_START
     for extension in extensions:
