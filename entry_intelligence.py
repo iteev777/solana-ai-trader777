@@ -76,7 +76,13 @@ def analyze_entry_route(token_mint, trade_size_usd, slippage_bps=None):
         }
 
     return {
-        "allowed": True, "reason": "JUPITER_ROUTE_AND_SIMULATION_APPROVED",
+        # "allowed" means only that the route passed pre-entry checks. It must
+        # never be interpreted as permission to sign or broadcast a trade.
+        "allowed": True,
+        "reason": "ROUTE_PREFLIGHT_PASSED_EXECUTION_HARD_LOCKED",
+        "execution_locked": True,
+        "signing_available": False,
+        "broadcast_available": False,
         "input_amount_lamports": lamports, "sol_price_usd": sol_price,
         "trade_size_usd": round(usd_size, 4),
         "route_quality": quality,
