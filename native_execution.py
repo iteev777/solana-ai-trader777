@@ -169,7 +169,7 @@ def get_native_execution_status():
         "requires_signed_rpc_simulation": True,
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
         "approval_cache": "process_local_single_use",
-        "supported_protocols": ["raydium_cpmm", "raydium_clmm", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "meteora_dbc", "pumpswap", "orca_whirlpool", "meteora_dlmm"],
+        "supported_protocols": ["raydium_cpmm", "raydium_clmm", "meteora_dbc", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "meteora_dbc", "pumpswap", "orca_whirlpool", "meteora_dlmm"],
         "private_key_custody": False,
         "server_signing": False,
         "broadcast_available": _enabled(),
