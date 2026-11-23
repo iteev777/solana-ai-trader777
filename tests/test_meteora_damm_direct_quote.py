@@ -40,7 +40,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
             return {"owner": chain.TOKEN_PROGRAM, "data": bytes(data)}
 
         self.accounts = [
-            {"owner": chain.PROGRAMS["meteora_damm"], "data": self.state},
+            {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state},
             token_account(self.mint_a, 10**12),
             token_account(self.mint_b, 10**12),
             {"owner": chain.TOKEN_PROGRAM, "data": bytes(82)},
@@ -50,7 +50,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
     def quote(self, input_mint=None, output_mint=None, amount=1_000_000, accounts=None):
         with (
             patch.object(chain, "_account", return_value={
-                "owner": chain.PROGRAMS["meteora_damm"], "data": self.state
+                "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
             }),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(
                 self.accounts if accounts is None else accounts, 765432
@@ -79,7 +79,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state[484] = 1
         self.state = bytes(state)
         accounts = list(self.accounts)
-        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm"], "data": self.state}
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
         result = self.quote(input_mint=self.mint_b, output_mint=self.mint_a, accounts=accounts)
         self.assertEqual(result["fee_mint"], self.mint_b)
         self.assertTrue(result["fee_on_input"])
@@ -90,7 +90,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state[28:32] = (1000).to_bytes(4, "little")  # 10%
         self.state = bytes(state)
         accounts = list(self.accounts)
-        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm"], "data": self.state}
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
         result = self.quote(accounts=accounts)
         self.assertEqual(result["fee_rate_numerator"], 100_000_000)
 
@@ -102,7 +102,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state[120:136] = (100_000).to_bytes(16, "little")
         self.state = bytes(state)
         accounts = list(self.accounts)
-        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm"], "data": self.state}
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
         result = self.quote(accounts=accounts)
         self.assertGreater(result["fee_rate_numerator"], 3_000_000)
 
@@ -112,7 +112,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state[486] = 0
         self.state = bytes(state)
         accounts = list(self.accounts)
-        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm"], "data": self.state}
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
         result = self.quote(accounts=accounts)
         self.assertEqual(result["fee_rate_numerator"], 500_000_000)
 
@@ -120,7 +120,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state = bytearray(self.state)
         state[486] = 2
         with patch.object(chain, "_account", return_value={
-            "owner": chain.PROGRAMS["meteora_damm"], "data": bytes(state)
+            "owner": chain.PROGRAMS["meteora_damm_v2"], "data": bytes(state)
         }):
             with self.assertRaisesRegex(ValueError, "fee version"):
                 quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint=self.mint_b)
@@ -129,7 +129,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         state = bytearray(self.state)
         state[481] = 1
         with patch.object(chain, "_account", return_value={
-            "owner": chain.PROGRAMS["meteora_damm"], "data": bytes(state)
+            "owner": chain.PROGRAMS["meteora_damm_v2"], "data": bytes(state)
         }):
             with self.assertRaisesRegex(ValueError, "not enabled"):
                 quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint=self.mint_b)
@@ -146,7 +146,7 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
 
     def test_requested_output_mint_mismatch_is_rejected(self):
         with patch.object(chain, "_account", return_value={
-            "owner": chain.PROGRAMS["meteora_damm"], "data": self.state
+            "owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state
         }):
             with self.assertRaisesRegex(ValueError, "Requested output mint"):
                 quote_meteora_damm_pool(self.pool, self.mint_a, 1000, output_mint="wrong")
