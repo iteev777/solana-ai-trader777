@@ -1858,6 +1858,7 @@ def _service_manager_health():
     """Create the managed background services used by the main runtime."""
     import dashboard
     import copy_trade
+    import pool_registry
     from service_manager import ServiceManager, ServiceSpec, set_global_service_manager
 
     def dashboard_health():
@@ -1886,6 +1887,15 @@ def _service_manager_health():
         return {
             "status": "healthy" if status.get("running") else "degraded",
             "message": None if status.get("running") else status.get("last_error") or "copy monitor connecting",
+        }
+
+    def pool_registry_health():
+        status = pool_registry.get_pool_registry_status()
+        if status.get("worker_stopping"):
+            return {"status": "degraded", "message": "pool registry worker is stopping"}
+        return {
+            "status": "healthy" if status.get("worker_running") else "unhealthy",
+            "message": None if status.get("worker_running") else "pool registry worker is not running",
         }
 
     def start_sniper():
@@ -1923,6 +1933,16 @@ def _service_manager_health():
         priority=30,
         essential=False,
         enabled=lambda: bool(copy_trade.get_copy_monitor_status().get("configured")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="pool_registry_worker",
+        start=pool_registry.start_pool_registry_worker,
+        stop=lambda _handle: pool_registry.stop_pool_registry_worker(timeout=5.0),
+        health=pool_registry_health,
+        priority=25,
+        essential=False,
+        enabled=True,
         stops_alone=True,
     ))
     set_global_service_manager(service_manager)
