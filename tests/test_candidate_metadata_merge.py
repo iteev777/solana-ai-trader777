@@ -52,6 +52,17 @@ class CandidateMetadataMergeTests(unittest.TestCase):
         self.assertEqual(merged["info"]["websites"], pair["info"]["websites"])
         self.assertNotIn("website", merged)
 
+    def test_verified_base_token_name_and_symbol_are_not_overwritten(self):
+        pair = {
+            "baseToken": {"name": "Verified Market Name", "symbol": "MARKET"},
+        }
+        candidate = {"name": "Different Discovery Name", "symbol": "DISCOVERY"}
+        merged = main.merge_candidate_metadata(pair, candidate)
+        self.assertNotIn("name", merged)
+        self.assertNotIn("symbol", merged)
+        self.assertEqual(merged["baseToken"]["name"], "Verified Market Name")
+        self.assertEqual(merged["baseToken"]["symbol"], "MARKET")
+
     def test_nested_token_metadata_image_and_authority_are_supported(self):
         merged = main.merge_candidate_metadata({}, {
             "tokenMeta": {
