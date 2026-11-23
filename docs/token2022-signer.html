@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trojan Token-2022 Devnet signer</title>
+<style>
+:root{color-scheme:dark}body{font:16px system-ui,sans-serif;background:#10151d;color:#edf2f7;margin:0;padding:22px}
+main{max-width:680px;margin:auto}h1{font-size:1.45rem}p{line-height:1.5;color:#cbd5e1}
+.card{background:#1b2634;border:1px solid #334155;border-radius:14px;padding:16px;margin:14px 0}
+.warning{border-color:#b45309;background:#2b2118}.status{white-space:pre-wrap;overflow-wrap:anywhere;font:14px ui-monospace,monospace}
+button{background:#2563eb;color:white;border:0;border-radius:10px;padding:13px 18px;font-size:16px;font-weight:650}
+button:disabled{opacity:.45}input{max-width:100%;margin:10px 0}
+small{color:#94a3b8}code{overflow-wrap:anywhere}
+</style>
+<script src="https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js"></script>
+</head>
+<body><main>
+<h1>Trojan – Token-2022 Devnet -testi</h1>
+<div class="card warning">
+<strong>Tärkeä turvallisuusohje</strong>
+<p>Tämä sivu lukee keypair-JSON-tiedoston selaimessa. Se ei lähetä tiedostoa, yksityistä avainta tai palautuslausetta mihinkään. Älä koskaan liitä avainta chattiin, GitHubiin tai GitHub Secrets -asetuksiin.</p>
+<p>Varmista ennen jatkamista, että osoite täsmää ja verkko on Devnet. Testi luo vain Token-2022-ATA-tilin.</p>
+</div>
+<div class="card">
+<p><strong>Odotettu lompakko</strong><br><code id="expected">DrXL17U7RS2Nx6KVTUStpqhcsmDod3RfMS7RnTTSgTRH</code></p>
+<p><strong>Mint</strong><br><code>CFTBSCy68VqUzGeMwjmgzufeBgGi64i281f4iUxzavj7</code></p>
+<label for="keyfile">Valitse Solana Playgroundista tallennettu keypair-JSON-tiedosto:</label><br>
+<input id="keyfile" type="file" accept=".json,application/json">
+<p><small>Tiedostoa ei ladata palvelimelle. Sivu lukee sen vain tämän selaimen muistissa.</small></p>
+<button id="run" disabled>Aja Devnet-testi</button>
+</div>
+<div class="card"><strong>Testin tulos</strong><p id="status" class="status">Odottamassa keypair-tiedostoa.</p></div>
+</main>
+<script>
+(() => {
+"use strict";
+const EXPECTED="DrXL17U7RS2Nx6KVTUStpqhcsmDod3RfMS7RnTTSgTRH";
+const MINT="CFTBSCy68VqUzGeMwjmgzufeBgGi64i281f4iUxzavj7";
+const GENESIS="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+const TOKEN2022="TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const ATA_PROGRAM="ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const SYSTEM="11111111111111111111111111111111";
+const status=document.getElementById("status"), input=document.getElementById("keyfile"), run=document.getElementById("run");
+let secretBytes=null;
+function say(x){status.textContent=typeof x==="string"?x:JSON.stringify(x,null,2)}
+input.addEventListener("change",async()=>{
+ run.disabled=true;secretBytes=null;
+ try{
+  if(!input.files||!input.files[0])throw Error("Tiedostoa ei valittu.");
+  const raw=await input.files[0].text();
+  const arr=JSON.parse(raw);
+  if(!Array.isArray(arr)||arr.length!==64||arr.some(n=>!Number.isInteger(n)||n<0||n>255))throw Error("Tiedosto ei ole 64 tavun Solana keypair-JSON.");
+  const kp=solanaWeb3.Keypair.fromSecretKey(Uint8Array.from(arr));
+  if(kp.publicKey.toBase58()!==EXPECTED)throw Error("Tiedoston lompakko-osoite ei täsmää odotettuun Playground-osoitteeseen.");
+  secretBytes=Uint8Array.from(arr);
+  say("Lompakko täsmää: "+EXPECTED+"\nYksityinen avain pysyy selaimen muistissa. Valmis testiin.");
+  run.disabled=false;
+ }catch(e){say("Tiedoston tarkistus epäonnistui: "+e.message);}
+});
+run.addEventListener("click",async()=>{
+ run.disabled=true;
+ let kp=null;
+ try{
+  if(!secretBytes)throw Error("Valitse ensin oikea keypair-tiedosto.");
+  if(!window.solanaWeb3)throw Error("Solana web3.js -kirjaston lataus epäonnistui.");
+  const S=solanaWeb3;
+  kp=S.Keypair.fromSecretKey(Uint8Array.from(secretBytes));
+  const conn=new S.Connection("https://api.devnet.solana.com","confirmed");
+  say("Tarkistetaan Devnet-verkkoa ja lompakon saldoa...");
+  if(await conn.getGenesisHash()!==GENESIS)throw Error("RPC ei vastaa odotettua Devnet-verkkoa.");
+  const payer=kp.publicKey,mint=new S.PublicKey(MINT),token=new S.PublicKey(TOKEN2022),ataProgram=new S.PublicKey(ATA_PROGRAM),system=new S.PublicKey(SYSTEM);
+  if(payer.toBase58()!==EXPECTED)throw Error("Lompakko ei täsmää.");
+  const balance=await conn.getBalance(payer,"confirmed");
+  if(balance<=0)throw Error("Lompakossa ei ole Devnet SOL -saldoa.");
+  const mi=await conn.getAccountInfo(mint,"confirmed");
+  if(!mi||!mi.owner.equals(token)||mi.data.length!==278)throw Error("Token-2022-mintin omistaja tai koko ei täsmää.");
+  const [ata,bump]=S.PublicKey.findProgramAddressSync([payer.toBuffer(),token.toBuffer(),mint.toBuffer()],ataProgram);
+  const old=await conn.getAccountInfo(ata,"confirmed");
+  if(old){
+   if(!old.owner.equals(token)||old.data.length!==182)throw Error("Olemassa olevan ATA-tilin tarkistus epäonnistui.");
+   say({result:"PASS_ALREADY_EXISTS",wallet:payer.toBase58(),ata:ata.toBase58(),note:"ATA oli jo olemassa; uutta tapahtumaa ei lähetetty."});return;
+  }
+  const rent=await conn.getMinimumBalanceForRentExemption(182);
+  if(balance<rent+100000)throw Error("Saldo ei riitä ATA:n vuokraan ja tapahtumamaksuun. Mitään ei lähetetty.");
+  const ix=new S.TransactionInstruction({programId:ataProgram,keys:[
+   {pubkey:payer,isSigner:true,isWritable:true},{pubkey:ata,isSigner:false,isWritable:true},
+   {pubkey:payer,isSigner:false,isWritable:false},{pubkey:mint,isSigner:false,isWritable:false},
+   {pubkey:system,isSigner:false,isWritable:false},{pubkey:token,isSigner:false,isWritable:false}
+  ],data:Buffer.from([1])});
+  const latest=await conn.getLatestBlockhash("confirmed");
+  const tx=new S.Transaction({feePayer:payer,recentBlockhash:latest.blockhash}).add(ix);
+  say("Simuloidaan tapahtumaa ennen allekirjoitusta...");
+  const sim=await conn.simulateTransaction(tx);
+  if(sim.value.err)throw Error("Simulointi epäonnistui: "+JSON.stringify(sim.value.err));
+  tx.sign(kp);
+  say("Lähetetään allekirjoitettu ATA-luonti Devnetiin...");
+  const signature=await conn.sendRawTransaction(tx.serialize(),{skipPreflight:false,preflightCommitment:"confirmed",maxRetries:3});
+  const conf=await conn.confirmTransaction({signature,...latest},"confirmed");
+  if(conf.value.err)throw Error("Tapahtuma epäonnistui: "+JSON.stringify(conf.value.err));
+  const created=await conn.getAccountInfo(ata,"finalized");
+  if(!created||!created.owner.equals(token)||created.data.length!==182||
+    !created.data.subarray(0,32).equals(mint.toBuffer())||
+    !created.data.subarray(32,64).equals(payer.toBuffer())||created.data[108]!==1)
+    throw Error("Lopullisen ATA-tilin tarkistus epäonnistui.");
+  const finalBalance=await conn.getBalance(payer,"finalized");
+  say({result:"PASS",cluster:"devnet",wallet:payer.toBase58(),startingBalanceSOL:balance/1e9,
+   finalBalanceSOL:finalBalance/1e9,mint:MINT,ata:ata.toBase58(),ataBump:bump,
+   ataOwnerProgram:created.owner.toBase58(),ataDataSize:created.data.length,
+   ataInitialized:true,transactionSignature:signature,
+   explorer:"https://explorer.solana.com/tx/"+signature+"?cluster=devnet",
+   liveTrading:"LOCKED",mainnetAccess:"BLOCKED"});
+ }catch(e){say("TESTI EPÄONNISTUI: "+(e&&e.message?e.message:String(e)));}
+ finally{if(kp){kp.secretKey.fill(0);kp=null;}if(secretBytes){secretBytes.fill(0);secretBytes=null;}input.value="";run.disabled=true;}
+});
+})();
+</script></body></html>
