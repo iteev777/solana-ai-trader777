@@ -258,7 +258,6 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(status["native_transaction_builders"]["pumpswap_v2"]["live_execution"])
         self.assertFalse(status["native_transaction_builders"]["other_protocols"]["available"])
 
-    @patch("dex_engine.build_routes")
     def test_dashboard_does_not_claim_simulation_available_without_entrypoint(self):
         capability_report = {
             "protocols": {
@@ -281,6 +280,7 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertTrue(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_required"])
         self.assertFalse(status["native_transaction_builders"]["raydium_cpmm"]["rpc_simulation_available"])
 
+    @patch("dex_engine.build_routes")
     def test_dashboard_compatibility_accepts_comma_separated_pool_list(self, build):
         build.return_value = {"execution": "LOCKED"}
         result = dex_engine.build_route(
