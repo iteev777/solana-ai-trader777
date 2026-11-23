@@ -81,6 +81,7 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         self.vault0 = chain._b58encode(bytes([15]) * 32)
         self.vault1 = chain._b58encode(bytes([16]) * 32)
         self.tick_array = chain._b58encode(bytes([17]) * 32)
+        self.bitmap_extension = chain._b58encode(bytes([18]) * 32)
 
         state = bytearray(1544)
         state[:8] = chain._discriminator("PoolState")
@@ -129,15 +130,25 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             {"owner": chain.PROGRAMS["raydium_clmm"], "data": self.config_data},
             self.vault0_account, self.vault1_account,
             self.mint0_account, self.mint1_account,
-            self.tick_account,
+            None, self.tick_account,
         ]
+
+    def _pda(self, seeds, program):
+        if seeds[0] == dlmm.BITMAP_EXTENSION_SEED:
+            return self.bitmap_extension, 255
+        return self.tick_array, 255
+
+    def _account(self, address):
+        if address == self.pool:
+            return {"owner": chain.PROGRAMS["raydium_clmm"], "data": self.state}
+        if address == self.bitmap_extension:
+            return None
+        return None
 
     def quote(self, input_mint=None, output_mint=None, amount=10_000, **kwargs):
         with (
-            patch.object(chain, "_account", return_value={
-                "owner": chain.PROGRAMS["raydium_clmm"], "data": self.state
-            }),
-            patch.object(chain, "_find_program_address", return_value=(self.tick_array, 255)),
+            patch.object(chain, "_account", side_effect=self._account),
+            patch.object(chain, "_find_program_address", side_effect=self._pda),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(self.accounts, 123456)),
         ):
             return quote_raydium_clmm_pool(
@@ -185,10 +196,8 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
         accounts = list(self.accounts)
         accounts[5] = dict(accounts[5], owner=chain.TOKEN_2022_PROGRAM)
         with (
-            patch.object(chain, "_account", return_value={
-                "owner": chain.PROGRAMS["raydium_clmm"], "data": self.state
-            }),
-            patch.object(chain, "_find_program_address", return_value=(self.tick_array, 255)),
+            patch.object(chain, "_account", side_effect=self._account),
+            patch.object(chain, "_find_program_address", side_effect=self._pda),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 123456)),
         ):
             with self.assertRaisesRegex(ValueError, "Token-2022"):
