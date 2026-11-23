@@ -54,6 +54,8 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
         pool_raw[200:232] = chain._b58decode(self.mint_b)
         pool_raw[232:264] = chain._b58decode(chain.TOKEN_PROGRAM)
         pool_raw[264:296] = chain._b58decode(chain.TOKEN_PROGRAM)
+        pool_raw[296:328] = chain._b58decode(self.observation)
+        pool_raw[328] = 255
         pool_raw[329] = 0
         pool_raw[373:381] = (1).to_bytes(8, "little")
         self.pool_raw = bytes(pool_raw)
@@ -130,6 +132,21 @@ class RaydiumCpmmBuilderTests(unittest.TestCase):
              patch.object(chain, "_multiple_accounts_with_context",
                           side_effect=lambda keys: ([self.account_map.get(k) for k in keys], 600)):
             with self.assertRaisesRegex(ValueError, "quote is stale"):
+                builder.build_raydium_cpmm_swap(
+                    self.quote, self.wallet, self.user_in, self.user_out
+                )
+
+
+    def test_rejects_noncanonical_observation_pda_stored_in_pool_state(self):
+        bad_pool = bytearray(self.pool_raw)
+        bad_pool[296:328] = chain._b58decode(key(45))
+        bad_account = {"owner": builder.CPMM_PROGRAM_ID, "data": bytes(bad_pool)}
+        with patch.object(chain, "quote_raydium_cpmm_pool", return_value=self.quote), \
+             patch.object(chain, "_account", return_value=bad_account), \
+             patch.object(chain, "_find_program_address", side_effect=[
+                 (self.authority, 255), (self.observation, 254)
+             ]):
+            with self.assertRaisesRegex(ValueError, "observation PDA"):
                 builder.build_raydium_cpmm_swap(
                     self.quote, self.wallet, self.user_in, self.user_out
                 )
