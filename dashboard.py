@@ -204,6 +204,7 @@ def api_overview():
     import native_execution
     from api_client import get_api_status
     from market_data import get_market_data_status
+    import candidate_observer
 
     account = manager.get_account_summary("paper")
     stats = database.get_trade_stats("paper")
@@ -239,6 +240,19 @@ def api_overview():
         "runtime": _runtime(),
         "market_data": get_market_data_status(),
         "api": get_api_status(),
+        "candidate_observation": candidate_observer.get_status(),
+    })
+
+
+@app.get("/api/observation")
+def api_candidate_observation():
+    import candidate_observer
+    import sniper_scanner
+    return jsonify({
+        "observation": candidate_observer.get_status(),
+        "stream": sniper_scanner.get_trade_subscription_status(),
+        "mode": "paper_only",
+        "live_execution": "locked",
     })
 
 
@@ -1255,6 +1269,7 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>DATABASE INTEGRITY & BACKUPS</h2><div class="health" id="database-health"><div class="muted">Loading database health…</div></div><div class="actions" style="margin-top:12px"><button class="refresh" type="button" onclick="createDatabaseBackup()">Create verified backup</button><span class="muted" id="database-backup-status"></span></div></section>
 <section class="panel section"><h2>ADAPTIVE LEARNING · PAPER ONLY</h2><div class="muted" style="margin-bottom:10px">Closed paper outcomes adjust future paper position size only after the minimum sample; live execution remains locked.</div><div class="health" id="adaptive-learning"><div class="muted">Loading adaptive profile…</div></div></section>
 <section class="panel section"><h2>TOKEN DISCOVERY SOURCES</h2><div class="muted" style="margin-bottom:10px">Per-source candidate counts from the latest completed scan. A zero count can mean no matches or a provider outage; check the status.</div><div class="health" id="discovery-sources"><div class="muted">Loading discovery sources…</div></div></section>
+<section class="panel section"><h2>CANDIDATE TRADE OBSERVATION</h2><div class="muted" style="margin-bottom:10px">Pump.fun trade-window confirmation: trades, unique buyers, buy/sell pressure, buyer concentration and price movement. PumpPortal trade subscriptions are metered and remain disabled until explicitly enabled.</div><div class="health" id="candidate-observation"><div class="muted">Loading observation status…</div></div></section>
 <section class="panel section"><h2>COPY WALLET PAPER PERFORMANCE</h2><div class="muted" style="margin-bottom:10px">Wallet-attributed realized paper P/L, win rate, open exposure and observed activity.</div><div class="health" id="copy-performance"><div class="muted">Loading wallet performance…</div></div></section>
 <section class="panel section"><h2>COPY WALLET WATCHLIST</h2><div class="muted" style="margin-bottom:10px">Manage up to 20 public wallet addresses. Changes reconnect the read-only monitor automatically; only confirmed, classified BUY/SELL events can enter paper-copy.</div><div class="actions" style="flex-wrap:wrap"><input id="copy-watch-wallet" placeholder="Solana wallet address" style="min-width:250px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><input id="copy-watch-label" placeholder="Label (optional)" style="min-width:150px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><button class="refresh" type="button" onclick="addCopyWallet()">Add wallet</button></div><div class="health" id="copy-watchlist-items" style="margin-top:12px"><div class="muted">Loading watchlist…</div></div><div class="muted" id="copy-watchlist-status" style="margin-top:8px"></div></section>
 <section class="panel section"><h2>11-PROTOCOL MAINNET VALIDATION</h2><div class="muted" style="margin-bottom:10px">Counts only confirmed on-chain pool decodes observed by this running bot; zero means not yet verified.</div><div class="health" id="protocol-validation"><div class="muted">Loading protocol validation…</div></div></section>
@@ -1409,9 +1424,10 @@ async function loadAdvanced(){
   const values=await Promise.all([
    get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades'),
    get('/api/copy-performance'),get('/api/protocol-validation'),
-   get('/api/adaptive-learning'),get('/api/discovery'),get('/api/copy-watchlist')
+   get('/api/adaptive-learning'),get('/api/discovery'),get('/api/copy-watchlist'),
+   get('/api/observation')
   ]);
-  const s=values[0],h=values[1],c=values[2],cp=values[3],pv=values[4],al=values[5],ds=values[6],cw=values[7];
+  const s=values[0],h=values[1],c=values[2],cp=values[3],pv=values[4],al=values[5],ds=values[6],cw=values[7],ob=values[8];
   document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
   document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
   document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
@@ -1432,6 +1448,19 @@ async function loadAdvanced(){
   document.getElementById('adaptive-learning').innerHTML=(al.strategies||[]).map(x=>'<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.status==='learning_active'?'good':'muted')+'">'+esc(x.status.replaceAll('_',' '))+' · size '+fmt(x.size_multiplier,2)+'x</span><div class="muted">Closed '+x.closed_trades+'/'+x.minimum_sample+' · win rate '+fmt(x.win_rate,1)+'% · PF '+fmt(x.profit_factor,2)+' · expectancy '+usd(x.average_pnl)+' / trade</div><div class="muted">Losing streak '+x.current_losing_streak+' (max '+x.max_losing_streak+') · max realized P/L drawdown '+usd(x.max_drawdown_usd)+' · ignored invalid rows '+(x.invalid_rows_ignored||0)+'</div></div>').join('')+'<div class="muted">'+esc(al.policy||'')+'</div>';
   const dq=ds.quality||{tiers:{}};
   document.getElementById('discovery-sources').innerHTML='<div><b>Candidate quality</b><span>'+((dq.candidate_count||0)+' scored · '+((dq.tiers||{}).strong||0)+' strong · '+((dq.tiers||{}).watch||0)+' watch · '+((dq.tiers||{}).weak||0)+' weak · '+((dq.tiers||{}).reject||0)+' hard rejects')+'</span><div class="muted">Multi-window liquidity, volume, transaction flow, source consensus, pool age and momentum. Scoring prioritises candidates; missing data is not treated as unsafe.</div></div>'+(ds.sources||[]).map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':'bad')+'">'+(x.ok?'OK':'ERROR')+' · '+x.count+' candidates</span><div class="muted">'+esc(x.error||'Latest scan result')+'</div></div>').join('')||'<div class="muted">Waiting for the first discovery cycle…</div>';
+  const obs=ob.observation||{},stream=ob.stream||{},limits=obs.limits||{},ostats=obs.stats||{};
+  document.getElementById('candidate-observation').innerHTML=[
+   ['Mode',obs.enabled?'ENABLED':'DISABLED'],
+   ['Metered feed',obs.api_key_configured?'API key configured':'API key not configured'],
+   ['WebSocket',stream.connected?'CONNECTED':'DISCONNECTED'],
+   ['Active windows',(obs.active_count||0)+' / '+(obs.max_concurrent||0)],
+   ['Window',String(obs.duration_seconds||0)+' seconds'],
+   ['Sessions',String(ostats.sessions_completed||0)+' completed · '+String(ostats.sessions_passed||0)+' passed · '+String(ostats.sessions_rejected||0)+' rejected'],
+   ['Trade events',String(ostats.events_received||0)+' received · '+String(ostats.events_ignored||0)+' ignored'],
+   ['Entry thresholds',String(limits.min_trades||0)+' trades · '+String(limits.min_unique_buyers||0)+' buyers · '+String(limits.min_buy_volume_sol||0)+' SOL buy volume'],
+   ['Concentration / pressure','max '+String(limits.max_single_buyer_pct||0)+'% buyer · ratio '+String(limits.min_buy_sell_ratio||0)],
+   ['Execution','PAPER ONLY · LIVE LOCKED']
+  ].map(x=>'<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>').join('')+'<div class="muted">'+esc(obs.note||'')+'</div>';
  }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}
 }
 document.querySelectorAll(".app-nav button").forEach(button=>button.addEventListener("click",()=>{
