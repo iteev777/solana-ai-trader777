@@ -6,6 +6,7 @@ transactions with real funds.
 import json
 import os
 import threading
+import math
 import time
 import requests
 import websocket
@@ -17,6 +18,8 @@ import copy_freshness
 
 _lock = threading.Lock()
 _thread = None
+_stop_event = threading.Event()
+_active_ws = None
 # In-memory paging state is intentionally bounded. The durable cursor is advanced
 # only after the complete catch-up range has been replayed oldest-first.
 _poll_catchup = {}
@@ -443,7 +446,8 @@ def _subscribe_wallets(ws, wallets, timeout_seconds=15):
 
 
 def _monitor_loop():
-    while True:
+    global _active_ws
+    while not _stop_event.is_set():
         ws = None
         try:
             wallets = _wallets()
@@ -454,9 +458,11 @@ def _monitor_loop():
                     "wallet_count": len(wallets),
                     "last_error": "Set TROJAN_COPY_WALLETS and Solana RPC/WS URLs"
                 })
-                time.sleep(10)
+                _stop_event.wait(10)
                 continue
             ws = websocket.create_connection(ws_url, timeout=20, enable_multithread=True)
+            with _lock:
+                _active_ws = ws
             ws.settimeout(25)
             subscriptions, early_notifications = _subscribe_wallets(ws, wallets)
             notification_queue = list(early_notifications)
@@ -466,7 +472,7 @@ def _monitor_loop():
             })
             poll_interval = _poll_interval_seconds()
             next_poll = time.monotonic()
-            while True:
+            while not _stop_event.is_set():
                 if _wallets() != wallets:
                     print("[TROJAN V2] COPY WATCHLIST CHANGED; RECONNECTING", flush=True)
                     break
@@ -492,26 +498,59 @@ def _monitor_loop():
                 _process_wallet_signature(wallet, signature)
         except Exception as error:
             _status.update({"running": False, "last_error": str(error)[:220]})
-            print("[TROJAN V2] COPY WATCH RECONNECT:", repr(error), flush=True)
-            time.sleep(5)
+            if not _stop_event.is_set():
+                print("[TROJAN V2] COPY WATCH RECONNECT:", repr(error), flush=True)
+                _stop_event.wait(5)
         finally:
             if ws:
+                with _lock:
+                    if _active_ws is ws:
+                        _active_ws = None
                 try:
                     ws.close()
                 except Exception:
                     pass
+    _status.update({"running": False})
 
 
 def start_copy_monitor():
     global _thread
     with _lock:
         if _thread and _thread.is_alive():
-            return True
+            return _thread
+        _stop_event.clear()
         _thread = threading.Thread(
             target=_monitor_loop, name="trojan-copy-watch", daemon=True
         )
         _thread.start()
-        return True
+        return _thread
+
+
+def stop_copy_monitor(timeout=5.0):
+    """Stop the wallet observer and close its socket to unblock recv()."""
+    global _thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a finite non-negative number")
+    if not math.isfinite(float(timeout)) or timeout < 0:
+        raise ValueError("timeout must be a finite non-negative number")
+    _stop_event.set()
+    with _lock:
+        ws = _active_ws
+        thread = _thread
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception as error:
+            _status["last_error"] = "socket close: " + str(error)[:180]
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(float(timeout))
+        if thread.is_alive():
+            return False
+    with _lock:
+        if _thread is thread:
+            _thread = None
+    _status["running"] = False
+    return True
 
 
 def get_copy_monitor_status():
