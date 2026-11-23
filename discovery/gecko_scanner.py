@@ -98,7 +98,13 @@ def scan_recently_updated_tokens():
         if not isinstance(attributes, dict):
             continue
         address = attributes.get("address")
-        if not isinstance(address, str) or not address.strip():
+        token_id_address = extract_solana_address(entry.get("id"))
+        if (
+            not token_id_address
+            or not isinstance(address, str)
+            or not address.strip()
+            or address.strip() != token_id_address
+        ):
             continue
         address = address.strip()
         if address in seen:
