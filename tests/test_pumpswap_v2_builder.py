@@ -162,14 +162,16 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
         bad[244] = 1
         accounts = dict(self.account_map)
         accounts[self.pool] = {"owner": builder.PUMPSWAP_PROGRAM_ID, "data": bytes(bad)}
-        with patch.object(chain, "_account", side_effect=lambda address: accounts[address]):
+        with patch.object(chain, "_account", side_effect=lambda address: accounts[address]), \
+             patch.object(chain, "_find_program_address", side_effect=self.find_pda):
             with self.assertRaisesRegex(ValueError, "cashback"):
                 builder.build_pumpswap_v2_swap(
                     self.quote, self.wallet, self.user_base, self.user_quote
                 )
 
     def test_rejects_stale_quote(self):
-        with patch.object(chain, "_account", return_value=self.account_map[self.pool]), \
+        with patch.object(chain, "_account", side_effect=lambda address: self.account_map[address]), \
+             patch.object(chain, "_find_program_address", side_effect=self.find_pda), \
              patch.object(chain, "quote_pumpswap_pool", return_value=dict(self.quote, slot=499)):
             with self.assertRaisesRegex(ValueError, "older than the supplied quote"):
                 builder.build_pumpswap_v2_swap(
