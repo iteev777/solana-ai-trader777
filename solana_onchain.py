@@ -702,14 +702,32 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
     now = time.time()
     if decoded["open_time"] > int(now):
         raise ValueError("Raydium CPMM pool is not open for swaps yet")
-    if mint_base_acc["owner"] != TOKEN_PROGRAM or mint_quote_acc["owner"] != TOKEN_PROGRAM:
-        raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
-    if decoded["token_program_base"] != TOKEN_PROGRAM or decoded["token_program_quote"] != TOKEN_PROGRAM:
-        raise ValueError("Pool token program does not match the supported SPL Token program")
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("Raydium CPMM mint uses an unsupported token program")
+    if (decoded["token_program_base"] != token_program_base
+            or decoded["token_program_quote"] != token_program_quote):
+        raise ValueError("Pool token program does not match its mint account owner")
+    if token_program_base == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_base_acc["data"])
+    if token_program_quote == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_quote_acc["data"])
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    base_vault = _token_amount(vault_base_acc, decoded["base_mint"])
-    quote_vault = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    pool_authority, _ = _find_program_address(
+        [b"vault_and_lp_mint_auth_seed"], PROGRAMS["raydium_cpmm"]
+    )
+    base_vault = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], pool_authority,
+        "Raydium CPMM base vault",
+    )
+    quote_vault = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], pool_authority,
+        "Raydium CPMM quote vault",
+    )
     base_deduct = decoded["protocol_fees_base"] + decoded["fund_fees_base"] + decoded["creator_fees_base"]
     quote_deduct = decoded["protocol_fees_quote"] + decoded["fund_fees_quote"] + decoded["creator_fees_quote"]
     if base_vault <= base_deduct or quote_vault <= quote_deduct:
@@ -770,6 +788,9 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
         "trade_fee_rate": config["trade_fee_rate"],
         "creator_fee_rate": creator_rate,
         "creator_fee_on_input": creator_on_input,
