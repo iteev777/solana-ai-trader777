@@ -47,7 +47,7 @@ def _rust_rpc_call(url, method, params):
             {"url": url, "method": method, "params": params},
             separators=(",", ":"),
         )
-        process.stdin.write(request + "\\n")
+        process.stdin.write(request + "\n")
         process.stdin.flush()
         line = process.stdout.readline()
         if not line:
