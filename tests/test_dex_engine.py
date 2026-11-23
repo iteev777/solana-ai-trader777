@@ -167,6 +167,8 @@ class MultiPoolDexEngineTests(unittest.TestCase):
         self.assertFalse(status["signing_available"])
         self.assertFalse(status["broadcast_available"])
         self.assertFalse(status["live_trading_ready"])
+        self.assertTrue(status["pool_discovery"]["automatic_pair_matching"])
+        self.assertEqual(status["pool_discovery"]["max_candidates_per_pair"], 20)
 
     @patch("dex_engine.build_routes")
     def test_dashboard_compatibility_accepts_comma_separated_pool_list(self, build):
