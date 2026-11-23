@@ -68,7 +68,7 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
                          network_fee_output_amount=None):
     if not isinstance(item, dict) or item.get("status") != "QUOTED":
         raise ValueError("QUOTE_UNAVAILABLE")
-    if item.get("output_mint") not in (None, output_mint):
+    if item.get("output_mint") != output_mint:
         raise ValueError("OUTPUT_MINT_MISMATCH")
 
     out_amount = _uint(item.get("out_amount"), "out_amount")
@@ -83,17 +83,21 @@ def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
     if impact < 0 or impact > MAX_PRICE_IMPACT_PERCENT:
         raise ValueError("PRICE_IMPACT_OUTSIDE_LIMIT")
 
-    if isinstance(item.get("quality"), dict) and item["quality"].get("status") == "REJECT":
-        raise ValueError("ROUTE_QUALITY_REJECTED")
+    quality = item.get("quality")
+    if isinstance(quality, dict) and quality.get("status") != "PASS":
+        raise ValueError("ROUTE_QUALITY_NOT_PASSED")
+    if quality is not None and not isinstance(quality, dict):
+        raise ValueError("ROUTE_QUALITY_INVALID")
 
     route = item.get("route") or {}
     if not isinstance(route, dict):
         route = {}
     hops = route.get("hops", route.get("hop_count"))
-    if hops is not None:
-        hops = _uint(hops, "hop_count", allow_zero=True)
-        if hops > MAX_HOPS:
-            raise ValueError("HOP_COUNT_OUTSIDE_LIMIT")
+    if hops is None:
+        raise ValueError("HOP_COUNT_UNAVAILABLE")
+    hops = _uint(hops, "hop_count")
+    if hops > MAX_HOPS:
+        raise ValueError("HOP_COUNT_OUTSIDE_LIMIT")
 
     if item.get("snapshot_age_seconds") is not None:
         age = _finite(item["snapshot_age_seconds"], "snapshot_age_seconds")
@@ -147,6 +151,10 @@ def _direct_pool_quote(pool_address, input_mint, output_mint, amount, slippage_b
     quote["provider"] = quote.get("provider") or quote.get("protocol") or "direct_pool"
     quote["status"] = "QUOTED"
     quote["output_mint"] = quote.get("output_mint")
+    quote["route"] = {
+        "hops": 1,
+        "venue": quote.get("protocol") or "verified_direct_pool",
+    }
     return quote
 
 
