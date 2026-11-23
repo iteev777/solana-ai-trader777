@@ -117,60 +117,95 @@ def _context(token, score):
     }
 
 
+def _unknown_result(reasons):
+    markers = (
+        "unavailable", "not ready", "stale", "missing", "insufficient",
+        "future", "cooldown", "not resolved",
+    )
+    return any(
+        marker in str(reason).lower()
+        for reason in (reasons or [])
+        for marker in markers
+    )
+
+
 def _evaluate(node, context, path="root"):
+    """Evaluate a rule tree with three-valued logic: TRUE/FALSE/UNKNOWN.
+
+    Missing or stale data is UNKNOWN, never a false value that a NOT node can
+    invert into an approval. AND/OR retain their decisive sibling semantics.
+    """
     if not isinstance(node, dict):
-        return False, [path + ": invalid rule node"]
+        return "unknown", [path + ": invalid rule node"]
     groups = [key for key in ("all", "any", "not") if key in node]
     if groups:
         if len(groups) != 1:
-            return False, [path + ": exactly one group operator is required"]
+            return "unknown", [path + ": exactly one group operator is required"]
         key = groups[0]
         children = node[key]
         if not isinstance(children, list) or not children:
-            return False, [path + ": rule group must contain conditions"]
-        results = [_evaluate(child, context, path + "." + key + "[" + str(i) + "]") for i, child in enumerate(children)]
+            return "unknown", [path + ": rule group must contain conditions"]
+        results = [
+            _evaluate(child, context, path + "." + key + "[" + str(i) + "]")
+            for i, child in enumerate(children)
+        ]
+        states = [item[0] for item in results]
+        reasons = [reason for state, messages in results if state != "true" for reason in messages]
         if key == "all":
-            passed = all(item[0] for item in results)
-        elif key == "any":
-            passed = any(item[0] for item in results)
-        else:
-            if len(results) != 1:
-                return False, [path + ": not requires exactly one condition"]
-            passed = not results[0][0]
-        reasons = [reason for ok, messages in results if not ok for reason in messages]
-        return passed, ([] if passed else reasons or [path + ": group failed"])
+            if "false" in states:
+                return "false", reasons
+            if "unknown" in states:
+                return "unknown", reasons
+            return "true", []
+        if key == "any":
+            if "true" in states:
+                return "true", []
+            if "unknown" in states:
+                return "unknown", reasons
+            return "false", reasons or [path + ": no alternative passed"]
+        if len(results) != 1:
+            return "unknown", [path + ": not requires exactly one condition"]
+        state, messages = results[0]
+        if state == "unknown":
+            return "unknown", messages
+        return ("false" if state == "true" else "true"), ([] if state == "true" else messages)
+
     if "condition" in node:
         try:
-            return strategy_conditions.evaluate_condition(node, context)
+            passed, reasons = strategy_conditions.evaluate_condition(node, context)
         except (TypeError, ValueError) as error:
-            return False, [path + ": " + str(error)[:180]]
+            return "unknown", [path + ": " + str(error)[:180]]
+        if passed:
+            return "true", []
+        return ("unknown" if _unknown_result(reasons) else "false"), reasons
+
     field = node.get("field")
     op = node.get("op")
     if field not in ALLOWED_FIELDS or op not in ALLOWED_OPERATORS:
-        return False, [path + ": unsupported field or operator"]
+        return "unknown", [path + ": unsupported field or operator"]
     actual = context.get(field)
     if actual is None:
-        return False, [field + ": data unavailable"]
+        return "unknown", [field + ": data unavailable"]
     expected = node.get("value")
     if op == "between":
         if not isinstance(expected, list) or len(expected) != 2:
-            return False, [field + ": between expects [min, max]"]
+            return "unknown", [field + ": between expects [min, max]"]
         low, high = _number(expected[0]), _number(expected[1])
         if low is None or high is None or low > high:
-            return False, [field + ": invalid range"]
+            return "unknown", [field + ": invalid range"]
         passed = low <= actual <= high
         description = str(low) + "–" + str(high)
     else:
         target = _number(expected)
         if target is None:
-            return False, [field + ": invalid numeric threshold"]
+            return "unknown", [field + ": invalid numeric threshold"]
         passed = {
             "gt": actual > target, "gte": actual >= target,
             "lt": actual < target, "lte": actual <= target,
             "eq": actual == target
         }[op]
         description = op + " " + str(target)
-    return passed, ([] if passed else [field + " failed (" + str(actual) + " " + description + ")"])
+    return ("true", []) if passed else ("false", [field + " failed (" + str(actual) + " " + description + ")"])
 
 
 def _validate_node(node, path="root"):
@@ -256,7 +291,8 @@ def evaluate_strategy_rules(token, score, strategy):
     rule = config["rules"].get(strategy)
     if rule is None:
         return True, "No custom rules for " + strategy
-    passed, reasons = _evaluate(rule, _context(token, score))
+    state, reasons = _evaluate(rule, _context(token, score))
+    passed = state == "true"
     return passed, "Custom rules passed" if passed else "; ".join(reasons)
 
 
