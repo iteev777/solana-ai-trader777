@@ -144,7 +144,7 @@ The repositories are not considered parity-complete until every row and every fi
 - The first persisted-history test run exposed two issues. `calculate_multi_timeframe_indicators()` revalidated only normalized rows and lost the original malformed/duplicate counters; commit `31228949f44eb24a6102ba4282f524d57c9dba30` preserves the original input counters while evaluating freshness on the newest API-sized window.
 - The persisted-history test then exposed a fixture defect: it replaced the module's `OrderedDict` cache with a plain dict, but production cache insertion calls `move_to_end()`. The test now uses a fresh `OrderedDict` and an isolated fetch lock, and prints the returned error object if the expected multi-timeframe payload is absent.
 - Relevant test commit headlines: `test(ohlcv): isolate persisted-history fetch lock and expose failures`; `test(ohlcv): preserve ordered cache behavior in fetch fixture`.
-- Validation on the latest revision is pending; do not mark OHLCV complete until the persisted-history test and full validation both pass.
+- Validation passed: the persisted-history fixture correction and source-counter preservation are covered by the full-validation run recorded below. OHLCV is still partial because native per-timeframe fetch/fallback and historical gap repair remain unimplemented.
 
 
 ## Strategy engine comparison (partial, 2026-11-23)
@@ -172,3 +172,12 @@ The repositories are not considered parity-complete until every row and every fi
 - `strategy_catalog.py`: exposes evaluation timeout, maximum rule depth (4), maximum group children (30) and fail-closed missing-data semantics to dashboard consumers.
 - Focused tests added for AND/OR short-circuit behavior, expired evaluation deadline and catalog policy exposure. Commit headlines: `feat(strategy): bound rule evaluation and short-circuit groups`; `test(strategy): cover rule timeout and short-circuit semantics`; `feat(strategy): expose bounded evaluation policy in catalog`; `test(strategy): verify evaluation limits are exposed in catalog`.
 - Remaining strategy-engine differences: no bounded concurrent evaluation semaphore, no context/rules-fingerprint result cache, and no explicit switched-off node tree/outcome payload. The strategy engine remains partial.
+
+
+## Strategy timeframe selection implementation (2026-11-23)
+
+- `strategy_conditions.py` now exposes the seven OHLCV timeframes (`1m`, `5m`, `15m`, `1h`, `4h`, `12h`, `1d`) as an optional parameter on technical conditions. Evaluation selects the requested nested timeframe result instead of silently reading top-level 1m metrics; selected metrics override convenience fields in the generic context. Missing requested frames fail closed.
+- The indicator freshness check allows up to three selected timeframe buckets because candle timestamps represent bucket starts; nested frame readiness still depends on the live 1m source-quality gate. Market-window parameters for `PriceChangePercent` remain separate (`m5`, `h1`, `h6`, `h24`).
+- Commit headlines: `feat(strategy): add per-condition OHLCV timeframe selection`; `test(strategy): cover selected timeframe indicators and missing data`; `fix(strategy): read selected timeframe metrics consistently`.
+- The first selected-timeframe test revealed that `_context()`'s top-level 1m convenience values took precedence over nested selected-frame values. The implementation now overrides those fields with the selected frame before evaluation. Full validation passed on `b107d5fb5660c313eb927b23e7745b237340cb4f` (run `45250105990`); unit test run `45250113714` passed, with 949 tests in the preceding strategy test revision.
+- Strategy timeframe selection is implemented but the full strategy subsystem remains partial due the remaining gaps above.
