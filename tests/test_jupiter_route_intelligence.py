@@ -78,8 +78,15 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
     @patch("solana_onchain._rpc")
     @patch.object(live_execution, "_jupiter_get")
     def test_unsigned_simulation_never_signs_or_broadcasts(self, get_order, rpc):
-        get_order.return_value = {"transaction": "A" * 120, "router": "metis",
-                                  "inAmount": "1000", "outAmount": "2000"}
+        get_order.return_value = {
+            "transaction": "A" * 120,
+            "router": "metis",
+            "inputMint": "11111111111111111111111111111111",
+            "outputMint": "SysvarRent111111111111111111111111111111111",
+            "inAmount": "1000",
+            "outAmount": "2000",
+            "otherAmountThreshold": "1980",
+        }
         rpc.return_value = {"context": {"slot": 123}, "value": {
             "err": None, "unitsConsumed": 50000, "logs": ["Program success"]
         }}
