@@ -70,6 +70,8 @@ class PumpSwapV2BuilderTests(unittest.TestCase):
             "out_amount": 100,
             "minimum_out_amount": 80,
             "slot": 500,
+            "token_program_base": chain.TOKEN_PROGRAM,
+            "token_program_quote": chain.TOKEN_PROGRAM,
         }
 
         pool_raw = bytearray(271)
