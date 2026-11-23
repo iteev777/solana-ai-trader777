@@ -4,6 +4,7 @@ Transport/provider failures are transient and must not be recorded as bad pool
 layouts. Structural account/layout failures are temporarily quarantined so the
 same invalid pool is not fetched on every market-data heartbeat.
 """
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -54,6 +55,29 @@ _total_structural_failures = 0
 _last_error = None
 
 
+def _valid_pool_address(value):
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        import solana_onchain as chain
+        decoded = chain._b58decode(value)
+        return (
+            isinstance(decoded, (bytes, bytearray))
+            and len(decoded) == 32
+            and chain._b58encode(decoded) == value
+        )
+    except Exception:
+        return False
+
+
+def _normalize_now(now):
+    if now is None:
+        return time.monotonic()
+    if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(float(now)):
+        raise ValueError("Pool-analysis clock value must be finite")
+    return float(now)
+
+
 def classify_pool_error(error):
     """Classify an error as transient transport/provider or structural pool data."""
     if isinstance(error, (TimeoutError, ConnectionError)):
@@ -69,10 +93,10 @@ def classify_pool_error(error):
 
 
 def get_pool_analysis_state(pool_address, now=None):
-    if not isinstance(pool_address, str) or not pool_address.strip():
+    if not _valid_pool_address(pool_address):
         return {"state": "ready", "retry_in_seconds": 0}
-    now = time.monotonic() if now is None else float(now)
-    key = pool_address.strip()
+    now = _normalize_now(now)
+    key = pool_address
     with _lock:
         structural = _structural.get(key)
         if structural and now < structural["retry_at"]:
@@ -98,10 +122,10 @@ def is_structurally_blocked(pool_address, now=None):
 
 
 def should_skip_pool(pool_address, now=None):
-    if not isinstance(pool_address, str) or not pool_address.strip():
+    if not _valid_pool_address(pool_address):
         return False
-    now = time.monotonic() if now is None else float(now)
-    key = pool_address.strip()
+    now = _normalize_now(now)
+    key = pool_address
     with _lock:
         transient = _transient.get(key)
         if transient and now < transient["retry_at"]:
@@ -118,10 +142,10 @@ def should_skip_pool(pool_address, now=None):
 
 def record_transient_failure(pool_address, error=None, now=None):
     global _total_transient_failures, _last_error
-    if not isinstance(pool_address, str) or not pool_address.strip():
+    if not _valid_pool_address(pool_address):
         return None
-    now = time.monotonic() if now is None else float(now)
-    key = pool_address.strip()
+    now = _normalize_now(now)
+    key = pool_address
     with _lock:
         last_success = _last_success_at.get(key, 0.0)
         if last_success and now - last_success < RECENT_SUCCESS_GRACE_SECONDS:
@@ -181,10 +205,10 @@ def record_structural_failure(pool_address, error=None, now=None):
 
 
 def record_success(pool_address):
-    if not isinstance(pool_address, str) or not pool_address.strip():
+    if not _valid_pool_address(pool_address):
         return
     now = time.monotonic()
-    key = pool_address.strip()
+    key = pool_address
     with _lock:
         _transient.pop(key, None)
         _structural.pop(key, None)
@@ -195,7 +219,7 @@ def record_success(pool_address):
 
 
 def get_pool_analysis_status(now=None):
-    now = time.monotonic() if now is None else float(now)
+    now = _normalize_now(now)
     with _lock:
         active_transient = sum(
             1 for item in _transient.values() if item["retry_at"] > now
