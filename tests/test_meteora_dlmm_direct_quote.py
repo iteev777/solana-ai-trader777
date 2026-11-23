@@ -124,6 +124,30 @@ class MeteoraDlmmDirectQuoteTests(unittest.TestCase):
                 output_mint=output_mint or self.mint_y,
             )
 
+    def test_bin_price_is_derived_from_id_not_lazy_stored_field(self):
+        self.assertEqual(dlmm._bin_price(0, 4), 1 << 64)
+        self.assertGreater(dlmm._bin_price(100, 4), 1 << 64)
+        self.assertLess(dlmm._bin_price(-100, 4), 1 << 64)
+        account_key = self.array_addresses[1]
+        raw = bytearray(self.bin_accounts[account_key]["data"])
+        offset = 56 + 30 * 144
+        raw[offset + 16:offset + 32] = bytes(16)
+        self.bin_accounts[account_key] = {
+            "owner": chain.PROGRAMS["meteora_dlmm"], "data": bytes(raw)
+        }
+        result = self.quote()
+        self.assertGreater(result["out_amount"], 0)
+        self.assertGreater(result["price_impact_percent"], 0)
+
+    def test_uninitialized_next_array_never_claims_unloaded_liquidity(self):
+        self.bin_accounts[self.array_addresses[0]] = None
+        with self.assertRaisesRegex(ValueError, "coverage"):
+            self.quote(amount=10**12)
+
+    def test_bin_price_rejects_unsupported_exponents(self):
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            dlmm._bin_price(0x80000, 4)
+
     def test_confirmed_snapshot_quotes_both_directions(self):
         x_to_y = self.quote()
         y_to_x = self.quote(input_mint=self.mint_y, output_mint=self.mint_x)
