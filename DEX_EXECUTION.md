@@ -299,3 +299,28 @@ signing. This is a configured fee policy, not a live network-fee oracle.
 
 Live trading remains locked. The user must inspect and sign any transaction in
 their own wallet; the bot does not hold wallet secrets.
+
+
+## Token-2022 transfer-fee handling: Raydium CPMM
+
+The native Raydium CPMM quote path now parses both Token-2022
+TransferFeeConfig schedules and computes a conservative fee for the actual raw
+transfer amount using both schedules' rounded fee and maximum-fee cap. This is
+intentionally safer than selecting only the higher basis-point rate: the
+schedule with the higher rate can have a lower cap, so the larger actual fee
+must be chosen per amount.
+
+The quote applies the input transfer fee before Raydium's trade/creator fees,
+then applies the output transfer fee after any output-side creator fee. The
+quoted output and slippage minimum are the net amount expected to arrive in the
+user's token account. The unsigned CPMM builder re-reads the mint accounts and
+accepts the same supported extension subset; unsupported mint extensions
+(including active transfer hooks, confidential-transfer features, pausable,
+non-transferable, and other unimplemented behavior) remain blocked.
+
+This support is specific to Raydium CPMM and is not a blanket Token-2022
+approval for the other ten direct DEX builders. Other venues retain their
+existing restrictions until their quote and instruction semantics are audited
+and tested individually. ATA creation for extension-sized Token-2022 accounts
+is also a separate unfinished part of the Token-2022 project. Live signing and
+broadcast remain disabled.
