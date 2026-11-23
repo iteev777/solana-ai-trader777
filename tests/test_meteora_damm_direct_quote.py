@@ -96,6 +96,16 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         result = self.quote(accounts=accounts)
         self.assertEqual(result["fee_rate_numerator"], 100_000_000)
 
+    def test_compounding_mode_charges_token_b_before_reverse_swap(self):
+        state = bytearray(self.state)
+        state[484] = 2
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        result = self.quote(input_mint=self.mint_b, output_mint=self.mint_a, accounts=accounts)
+        self.assertEqual(result["fee_mint"], self.mint_b)
+        self.assertTrue(result["fee_on_input"])
+
     def test_dynamic_fee_is_added_using_stored_volatility(self):
         state = bytearray(self.state)
         state[56] = 1
