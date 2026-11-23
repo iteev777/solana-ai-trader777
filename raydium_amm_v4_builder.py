@@ -78,7 +78,10 @@ def build_raydium_amm_v4_swap(quote, wallet, user_input_token_account,
         or fresh.get("input_amount") != amount
     ):
         raise ValueError("Fresh Raydium AMM v4 quote does not validate pool, pair and amount")
+    fresh_out = _u64(fresh.get("out_amount"), "fresh quote output")
     minimum_out = _u64(fresh.get("minimum_out_amount"), "fresh minimum output")
+    if minimum_out > fresh_out:
+        raise ValueError("Fresh Raydium AMM v4 minimum output exceeds its quoted output")
     fresh_slot = fresh.get("slot")
     if isinstance(fresh_slot, bool) or not isinstance(fresh_slot, int) or fresh_slot < quote_slot:
         raise ValueError("Fresh Raydium AMM v4 quote is older than the supplied quote")
