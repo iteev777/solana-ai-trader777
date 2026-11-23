@@ -524,10 +524,25 @@ def analyze_token_task(address, strategy_name, token):
         # before any market, strategy, or paper-entry work is performed.
         try:
             import blacklist
-            blacklist_matches = blacklist.match_entries([
+            token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
+            authority_values = (
+                token.get("mintAuthority"), token.get("mint_authority"),
+                token.get("freezeAuthority"), token.get("freeze_authority"),
+                token.get("updateAuthority"), token.get("update_authority"),
+                token.get("creator"), token.get("creatorAddress"),
+                token.get("creator_address"),
+                token_meta.get("updateAuthority"),
+            )
+            blacklist_queries = [
                 ("token", address),
                 ("pool", pool_address),
-            ])
+            ]
+            blacklist_queries.extend(
+                ("account", value)
+                for value in authority_values
+                if isinstance(value, str) and value.strip()
+            )
+            blacklist_matches = blacklist.match_entries(blacklist_queries)
         except Exception as blacklist_error:
             log_event("BLACKLIST LOOKUP FAILED", address, repr(blacklist_error))
             return {
@@ -537,7 +552,11 @@ def analyze_token_task(address, strategy_name, token):
             }
         if blacklist_matches:
             match = blacklist_matches[0]
-            reason = "BLACKLISTED_TOKEN" if match["entry_type"] == "token" else "BLACKLISTED_POOL"
+            reason = {
+                "token": "BLACKLISTED_TOKEN",
+                "pool": "BLACKLISTED_POOL",
+                "account": "BLACKLISTED_ACCOUNT",
+            }.get(match["entry_type"], "BLACKLISTED_ENTRY")
             log_event("BLACKLIST REJECT", address, reason + ": " + match["reason"])
             return {
                 "status": "rejected",
@@ -645,6 +664,19 @@ def analyze_token_task(address, strategy_name, token):
         )
 
         token_data = dict(pair)
+        # Preserve authority/creator metadata supplied by discovery feeds; the
+        # market-data provider response alone does not reliably contain it.
+        token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
+        for metadata_key in (
+            "mintAuthority", "mint_authority", "freezeAuthority", "freeze_authority",
+            "updateAuthority", "update_authority", "creator", "creatorAddress",
+            "creator_address", "mutable", "isMutable", "is_mutable",
+        ):
+            value = token.get(metadata_key)
+            if value is not None and metadata_key not in token_data:
+                token_data[metadata_key] = value
+        if token_meta.get("updateAuthority") is not None and "updateAuthority" not in token_data:
+            token_data["updateAuthority"] = token_meta["updateAuthority"]
         token_data["address"] = address
         token_data["indicators"] = indicators
         token_data["onchain_verified"] = bool(
