@@ -428,3 +428,20 @@ def conservative_net_amount(config, amount):
     """Return a safe lower bound for the amount received after transfer fees."""
     fee = conservative_transfer_fee_for_amount(config, amount)
     return amount - fee
+
+
+def token_account_size_for_mint(raw):
+    """Return the Token-2022 ATA data length for the supported mint extensions.
+
+    The Associated Token Program adds ImmutableOwner to Token-2022 ATAs. A
+    TransferFeeConfig mint additionally requires TransferFeeAmount on its
+    token account. Unsupported mint extensions fail closed rather than using
+    the legacy 165-byte account size.
+    """
+    result = validate_swap_compatible_mint_data(raw)
+    # Base token account (165) + account-type byte + ImmutableOwner TLV (4).
+    size = 165 + 1 + 4
+    if result["transfer_fee_config"] is not None:
+        # TransferFeeAmount TLV: 4-byte header + 8-byte withheld amount.
+        size += 4 + 8
+    return size
