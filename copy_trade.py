@@ -22,7 +22,7 @@ _thread = None
 _poll_catchup = {}
 _COPY_SIGNATURE_PAGE_SIZE = 100
 _COPY_MAX_PAGES_PER_POLL = 5
-_COPY_MAX_BACKLOG_SIGNATURES = _COPY_SIGNATURE_PAGE_SIZE * _COPY_MAX_PAGES_PER_POLL
+_COPY_MAX_CATCHUP_SIGNATURES = 5000
 _status = {
     "running": False, "configured": False, "wallet_count": 0,
     "last_event": None, "last_error": None, "events_seen": 0,
@@ -241,6 +241,10 @@ def _poll_wallet_activity(wallets):
     """
     processed = 0
     errors = []
+    active_wallets = set(wallets)
+    for stale_wallet in list(_poll_catchup):
+        if stale_wallet not in active_wallets:
+            _poll_catchup.pop(stale_wallet, None)
     for wallet in wallets:
         try:
             cursor = database.get_copy_watch_cursor(wallet)
@@ -267,13 +271,18 @@ def _poll_wallet_activity(wallets):
                         state["newest_signature"] = page[0]["signature"]
                     previous_before = state["before"]
                     page_last = page[-1]["signature"]
-                    added = 0
-                    for item in page:
-                        signature = item["signature"]
-                        if signature not in state["seen"]:
-                            state["seen"].add(signature)
-                            state["newest_first"].append(item)
-                            added += 1
+                    new_items = [
+                        item for item in page
+                        if item["signature"] not in state["seen"]
+                    ]
+                    if len(state["newest_first"]) + len(new_items) > _COPY_MAX_CATCHUP_SIGNATURES:
+                        raise RuntimeError(
+                            "signature catch-up exceeded its safe memory cap; durable cursor not advanced"
+                        )
+                    for item in new_items:
+                        state["seen"].add(item["signature"])
+                        state["newest_first"].append(item)
+                    added = len(new_items)
                     if added == 0 or (previous_before is not None and page_last == previous_before):
                         raise RuntimeError("signature pagination made no forward progress")
                     state["before"] = page_last
@@ -283,8 +292,10 @@ def _poll_wallet_activity(wallets):
                     if state["initial_window"] or len(page) < page_size:
                         state["complete"] = True
                         break
-                    if len(state["newest_first"]) >= page_size * _COPY_MAX_PAGES_PER_POLL:
-                        break
+                    if len(state["newest_first"]) >= _COPY_MAX_CATCHUP_SIGNATURES:
+                        raise RuntimeError(
+                            "signature catch-up reached its safe memory cap; durable cursor not advanced"
+                        )
 
             if not state["complete"]:
                 continue
