@@ -110,7 +110,7 @@ def quote_exact_input(sqrt_price_x64, liquidity, tick_current, initialized_ticks
     indices = {item.index for item in relevant}
     if len(indices) != len(relevant):
         raise ValueError("duplicate initialized tick")
-    if any(index < coverage_tick if zero_for_one else index >= coverage_tick
+    if any(index < coverage_tick if zero_for_one else index > coverage_tick
            for index in indices):
         raise ValueError("initialized tick exceeds verified tick-array coverage")
     steps = [(item.index, item.liquidity_net, sqrt_price_at_tick(item.index), True)

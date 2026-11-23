@@ -73,6 +73,13 @@ class RaydiumClmmMathTests(unittest.TestCase):
                         ticks, False, 1_000_000, fee, 60,
                     )
 
+    def test_initialized_tick_at_inclusive_coverage_edge_is_valid(self):
+        result = mathx.quote_exact_input(
+            mathx.sqrt_price_at_tick(10), 1_000_000_000, 10,
+            [(60, 1)], False, 1_000, 3000, 60,
+        )
+        self.assertGreater(result["out_amount"], 0)
+
     def test_zero_active_liquidity_after_tick_crossing_is_refused(self):
         start = mathx.sqrt_price_at_tick(10)
         target = mathx.sqrt_price_at_tick(20)

@@ -192,8 +192,12 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         if oracle_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
             raise ValueError("Orca Whirlpool oracle owner is invalid")
         oracle_data = oracle_acc.get("data", b"")
-        if len(oracle_data) < 58:
+        if not isinstance(oracle_data, (bytes, bytearray)) or len(oracle_data) < 58:
             raise ValueError("Orca Whirlpool oracle layout is unknown; adaptive fee state cannot be verified")
+        if oracle_data[:8] != chain._discriminator("Oracle"):
+            raise ValueError("Orca Whirlpool oracle discriminator is invalid")
+        if chain._key(oracle_data, 8) != pool_address:
+            raise ValueError("Orca Whirlpool oracle belongs to a different pool")
         adaptive_fee_control = int.from_bytes(oracle_data[54:58], "little")
         if adaptive_fee_control != 0:
             raise ValueError("Orca Whirlpool adaptive-fee pools are not supported")
