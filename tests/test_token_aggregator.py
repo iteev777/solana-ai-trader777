@@ -46,6 +46,24 @@ class TokenAggregatorMergeTests(unittest.TestCase):
         })
         self.assertTrue(all("count" in item and "ok" in item for item in status["sources"]))
 
+    def test_jupiter_endpoints_are_independent_sources(self):
+        names = [name for name, _ in aggregator.SCANNERS]
+        self.assertEqual([name for name in names if name.startswith("jupiter_")], [
+            "jupiter_recent", "jupiter_organic", "jupiter_traded", "jupiter_trending"
+        ])
+
+    def test_jupiter_provider_and_each_endpoint_can_be_disabled(self):
+        with patch.dict(os.environ, {"TROJAN_JUPITER_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._jupiter_scanners_from_env(), [])
+        with patch.dict(os.environ, {"TROJAN_JUPITER_TRENDING_ENABLED": "0"}, clear=True):
+            names = [name for name, _ in aggregator._jupiter_scanners_from_env()]
+        self.assertEqual(names, ["jupiter_recent", "jupiter_organic", "jupiter_traded"])
+
+    def test_coingecko_and_defillama_have_independent_switches(self):
+        with patch.dict(os.environ, {"TROJAN_COINGECKO_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._coingecko_scanners_from_env(), [])
+        with patch.dict(os.environ, {"TROJAN_DEFILLAMA_PROTOCOLS_ENABLED": "false"}, clear=True):
+            self.assertEqual(aggregator._defillama_scanners_from_env(), [])
     def test_pumpfun_is_counted_as_its_own_provider_family(self):
         self.assertEqual(aggregator._provider_family("pumpfun"), "pumpfun")
         self.assertEqual(aggregator._provider_family("pumpfun_curve"), "pumpfun")
