@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import clmm_quote_math as mathx
 import solana_onchain as chain
+import route_comparison
 from orca_whirlpool_quote import quote_orca_whirlpool_pool
 
 
@@ -95,6 +96,10 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         self.assertEqual(buy["execution"], "DISABLED")
         self.assertEqual(sell["output_mint"], self.mint_b)
         self.assertGreater(sell["out_amount"], 0)
+
+    def test_router_status_lists_orca_direct_quote_adapter(self):
+        status = route_comparison.get_router_status()
+        self.assertIn("Orca Whirlpool", status["direct_pool"]["quote_adapters"])
 
     def test_requested_output_mint_mismatch_is_rejected(self):
         with patch.object(chain, "_account", return_value={
