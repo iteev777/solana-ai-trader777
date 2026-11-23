@@ -649,6 +649,58 @@ def api_route_comparison():
         return jsonify({"error": "Quote comparison failed", "detail": str(error)[:180]}), 502
 
 
+@app.get("/api/dex-execution-status")
+def api_dex_execution_status():
+    from dex_execution import get_execution_status
+    return jsonify(get_execution_status())
+
+
+@app.post("/api/dex-order")
+def api_dex_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from dex_execution import create_order
+        order = create_order(
+            payload.get("input_mint"),
+            payload.get("output_mint"),
+            payload.get("amount"),
+            payload.get("taker"),
+            payload.get("slippage_bps"),
+        )
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": "Jupiter order failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/dex-execute")
+def api_dex_execute():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    if request.headers.get("X-Trojan-Confirm-Live") != "1":
+        return jsonify({"error": "Explicit live execution confirmation is required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from dex_execution import execute_signed_order
+        result = execute_signed_order(
+            payload.get("signed_transaction"),
+            payload.get("request_id"),
+            confirmed=True,
+        )
+        return jsonify(result)
+    except Exception as error:
+        from dex_execution import ExecutionLocked
+        status = 403 if isinstance(error, ExecutionLocked) else 400
+        return jsonify({"error": str(error)[:240]}), status
+
+
 @app.get("/api/dex-status")
 def api_dex_status():
     from dex_engine import get_engine_status
