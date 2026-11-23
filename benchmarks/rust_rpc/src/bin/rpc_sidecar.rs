@@ -2,16 +2,17 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
-use std::{io::{self, BufRead, Write}, str::FromStr, time::Duration};
+use std::{collections::HashMap, io::{self, BufRead, Write}, str::FromStr, sync::Arc, time::Duration};
 
 #[tokio::main]
 async fn main() {
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
+    let mut clients: HashMap<String, Arc<RpcClient>> = HashMap::new();
     for line in stdin.lock().lines() {
         let response = match line {
             Ok(line) => match serde_json::from_str::<Value>(&line) {
-                Ok(input) => handle(input).await,
+                Ok(input) => handle(input, &mut clients).await,
                 Err(error) => json!({"ok": false, "error": format!("invalid request: {error}")}),
             },
             Err(error) => json!({"ok": false, "error": format!("stdin error: {error}")}),
@@ -21,16 +22,16 @@ async fn main() {
     }
 }
 
-async fn handle(input: Value) -> Value {
-    match execute(input).await {
+async fn handle(input: Value, clients: &mut HashMap<String, Arc<RpcClient>>) -> Value {
+    match execute(input, clients).await {
         Ok(result) => json!({"ok": true, "result": result}),
         Err(error) => json!({"ok": false, "error": error}),
     }
 }
 
-async fn execute(input: Value) -> Result<Value, String> {
+async fn execute(input: Value, clients: &mut HashMap<String, Arc<RpcClient>>) -> Result<Value, String> {
     let url = input.get("url").and_then(Value::as_str)
-        .filter(|s| !s.is_empty()).ok_or("missing RPC URL")?;
+        .filter(|s| !s.is_empty()).ok_or("missing RPC URL")?.to_string();
     let method = input.get("method").and_then(Value::as_str).ok_or("missing method")?;
     if method != "getMultipleAccounts" {
         return Err(format!("unsupported Rust sidecar method: {method}"));
@@ -44,9 +45,11 @@ async fn execute(input: Value) -> Result<Value, String> {
         let text = value.as_str().ok_or("account key must be a string")?;
         Pubkey::from_str(text).map_err(|error| format!("invalid account key: {error}"))
     }).collect::<Result<_, _>>()?;
-    let client = RpcClient::new_with_timeout_and_commitment(
-        url.to_string(), Duration::from_secs(8), CommitmentConfig::confirmed()
-    );
+    let client = clients.entry(url.clone()).or_insert_with(|| Arc::new(
+        RpcClient::new_with_timeout_and_commitment(
+            url, Duration::from_secs(8), CommitmentConfig::confirmed()
+        )
+    )).clone();
     let response = client.get_multiple_accounts_with_commitment(
         &keys, CommitmentConfig::confirmed()
     ).await.map_err(|error| error.to_string())?;
