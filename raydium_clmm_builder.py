@@ -146,16 +146,16 @@ def build_raydium_clmm_swap(quote, wallet, user_input_token_account,
         raise ValueError("CLMM vaults must use legacy SPL Token")
     if chain._mint_decimals(mint0_acc) is None or chain._mint_decimals(mint1_acc) is None:
         raise ValueError("CLMM mint account layout is invalid")
-    _token_account(vault0_acc, authority, _key(current["mint_0"], "mint 0"), "CLMM vault 0")
-    _token_account(vault1_acc, authority, _key(current["mint_1"], "mint 1"), "CLMM vault 1")
+    _token_account(vault0_acc, authority, current["mint_0"], "CLMM vault 0")
+    _token_account(vault1_acc, authority, current["mint_1"], "CLMM vault 1")
     # Vault authority is the canonical CLMM pool PDA authority.
     authority = pool
     if (chain._key(vault0_acc["data"], 32) != authority
             or chain._key(vault1_acc["data"], 32) != authority):
         raise ValueError("CLMM vault authority does not match canonical PDA")
-    _token_account(user_in_acc, _key(wallet, "wallet"), _key(input_mint, "input mint"),
+    _token_account(user_in_acc, wallet, input_mint,
                    "User input token account", amount)
-    _token_account(user_out_acc, _key(wallet, "wallet"), _key(output_mint, "output mint"),
+    _token_account(user_out_acc, wallet, output_mint,
                    "User output token account")
     if observation_acc.get("owner") != PROGRAM_ID:
         raise ValueError("CLMM observation account owner is invalid")
