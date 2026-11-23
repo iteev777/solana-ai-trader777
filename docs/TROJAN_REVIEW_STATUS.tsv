@@ -133,5 +133,5 @@ tests/test_standard_indicator_math.py	test	unreviewed
 tests/test_strategy_conditions.py	test	unreviewed
 tests/test_strategy_quality_integration.py	test	unreviewed
 tests/test_strategy_rules.py	test	unreviewed
-token_security.py	production	unreviewed
+token_security.py	production	reviewed
 trading_manager.py	production	unreviewed

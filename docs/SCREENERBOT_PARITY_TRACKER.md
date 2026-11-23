@@ -23,21 +23,23 @@ status in this review.
 
 | `candidate_quality.py` | `src/tokens/priorities.rs`, `src/filtering/sources/market.rs` | Reference prioritizes refresh by lifecycle state and applies provider-specific filtering after resolving the market feed. Trojan scores discovery candidates before admission. State-based refresh remains for market worker review. | `0a5d132` Harden candidate ranking and isolate quality status. Treat invalid timestamps as unknown, rank tied scores by distinct source count, tolerate malformed enrichment keys, and isolate the published counters. | All 577 tests passed. |
 
+| `token_security.py` | `src/chains/solana/assets/mint.rs` | Reference reads exact supply, decimals and authorities from one typed mint lookup. Trojan reads parsed RPC and also reports holder concentration. Holder snapshots remain separate reads. | `a889b66` Read exact supply from the SPL mint snapshot. Validate input length and parsed account kind, preserve raw supply and retain the lookup fallback for responses without embedded supply. | All 578 tests passed. |
+
 ## Checkpoint
 
 The [Trojan review status](TROJAN_REVIEW_STATUS.tsv) enumerates every tracked
-path in this branch, including review artifacts. Ten of 60 production
+path in this branch, including review artifacts. Eleven of 60 production
 Python files have completed this review. The last completed file is
-`candidate_quality.py`. Resume at `token_security.py` for mint and account validation.
+`token_security.py`. Resume at `rugcheck.py` for provider-side risk evaluation.
 
 The ScreenerBot ledger contains 3,043 tracked paths. The source classification
 counts 2,011 files by programming, script, markup, stylesheet and SQL
 extensions, including source-form tests and tooling. All other tracked paths
-are listed as well. Seventeen source files are reviewed and 1,994 remain
+are listed as well. Eighteen source files are reviewed and 1,993 remain
 unreviewed. The ledger gives the exact unreviewed paths.
 
 Checkpoint validation used Python 3.12 and isolated SQLite storage.
-All 577 tests passed, including the process-level paper/dashboard and live
+All 578 tests passed, including the process-level paper/dashboard and live
 execution lock checks and database backup/restore tests. This is checkpoint
 validation. Full project parity and current external provider or Devnet
 behavior are unverified by this checkpoint.

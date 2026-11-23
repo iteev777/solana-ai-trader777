@@ -888,7 +888,7 @@ src/chains/solana/assets/ata/helpers.rs	source	unreviewed	Pending review
 src/chains/solana/assets/ata/mod.rs	source	unreviewed	Pending review
 src/chains/solana/assets/ata/wsol_sweep.rs	source	unreviewed	Pending review
 src/chains/solana/assets/metaplex.rs	source	unreviewed	Pending review
-src/chains/solana/assets/mint.rs	source	unreviewed	Pending review
+src/chains/solana/assets/mint.rs	source	reviewed	token_security.py: exact mint-snapshot supply and authority reads overlap. Shared typed chain access and batch lookup remain open.
 src/chains/solana/assets/mod.rs	source	unreviewed	Pending review
 src/chains/solana/connectivity/jupiter.rs	source	unreviewed	Pending review
 src/chains/solana/connectivity/mod.rs	source	unreviewed	Pending review
