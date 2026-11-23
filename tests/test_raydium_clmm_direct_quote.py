@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import clmm_quote_math as mathx
 import solana_onchain as chain
+import raydium_clmm_quote as dlmm
 from raydium_clmm_quote import quote_raydium_clmm_pool
 
 
@@ -191,6 +192,43 @@ class RaydiumClmmDirectQuoteTests(unittest.TestCase):
             }):
                 with self.assertRaisesRegex(ValueError, "fee"):
                     quote_raydium_clmm_pool(self.pool, self.mint1, 1000, output_mint=self.mint0)
+
+    def test_bitmap_extension_decodes_positive_and_negative_array_ranges(self):
+        raw = bytearray(40 + 2 * dlmm.BITMAP_EXTENSION_BLOCKS * 64)
+        raw[:8] = chain._discriminator("TickArrayBitmapExtension")
+        raw[8:40] = chain._b58decode(self.pool)
+        positive_start = dlmm.BITMAP_EXTENSION_BASE_OFFSET
+        negative_start = positive_start + dlmm.BITMAP_EXTENSION_BLOCKS * 64
+        raw[positive_start:positive_start + 8] = (1).to_bytes(8, "little")
+        raw[negative_start:negative_start + 8] = (1).to_bytes(8, "little")
+        account = {"owner": chain.PROGRAMS["raydium_clmm"], "data": bytes(raw)}
+        extension = dlmm._decode_bitmap_extension(account, self.pool, chain)
+        state = dlmm._decode_state(self.state, chain)
+        self.assertTrue(dlmm._array_is_initialized(state, 512, extension))
+        self.assertTrue(dlmm._array_is_initialized(state, -513, extension))
+        self.assertFalse(dlmm._array_is_initialized(state, 513, extension))
+
+    def test_bitmap_extension_array_search_reaches_past_pool_bitmap(self):
+        raw = bytearray(40 + 2 * dlmm.BITMAP_EXTENSION_BLOCKS * 64)
+        raw[:8] = chain._discriminator("TickArrayBitmapExtension")
+        raw[8:40] = chain._b58decode(self.pool)
+        raw[dlmm.BITMAP_EXTENSION_BASE_OFFSET:
+            dlmm.BITMAP_EXTENSION_BASE_OFFSET + 8] = (1).to_bytes(8, "little")
+        extension = dlmm._decode_bitmap_extension(
+            {"owner": chain.PROGRAMS["raydium_clmm"], "data": bytes(raw)},
+            self.pool, chain,
+        )
+        state = dlmm._decode_state(self.state, chain)
+        state["tick_current"] = 512 * 60 + 10
+        with patch.object(chain, "_find_program_address", return_value=(self.tick_array, 255)):
+            arrays = dlmm._array_starts(state, self.pool, False, chain, extension)
+        self.assertEqual(arrays, [(512 * 60, self.tick_array)])
+
+    def test_missing_bitmap_extension_refuses_uncovered_outer_array(self):
+        state = dlmm._decode_state(self.state, chain)
+        state["tick_current"] = 512 * 60 + 10
+        with self.assertRaisesRegex(ValueError, "current tick array is not initialized"):
+            dlmm._array_starts(state, self.pool, False, chain)
 
     def test_token_2022_mints_are_rejected(self):
         accounts = list(self.accounts)
