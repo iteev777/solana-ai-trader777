@@ -63,6 +63,14 @@ class NativeExecutionTests(unittest.TestCase):
         with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
             self.assertFalse(native.get_native_execution_status()["broadcast_available"])
 
+    def test_pumpswap_v2_approval_matches_registered_builder_protocol(self):
+        approval = native.register_native_approval(
+            self.unsigned, "pumpswap_v2", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        self.assertIn("pumpswap_v2", native.get_native_execution_status()["supported_protocols"])
+
     def test_pumpfun_legacy_approval_is_registered_but_stays_gated(self):
         approval = native.register_native_approval(
             self.unsigned, "pumpfun_legacy", 200,
