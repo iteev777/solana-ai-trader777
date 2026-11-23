@@ -14,6 +14,7 @@ _cache = OrderedDict()
 _cache_lock = threading.RLock()
 _fetch_lock = threading.Lock()
 _last_fetch = 0.0
+_last_prune = 0.0
 
 
 def _minimum_fetch_interval():
@@ -332,7 +333,7 @@ def calculate_multi_timeframe_indicators(candles):
 
 
 def fetch_pool_indicators(pool_address, force=False):
-    global _last_fetch
+    global _last_fetch, _last_prune
     if not pool_address:
         return {"ready": False, "reason": "Pool address unavailable"}
     key = str(pool_address)
@@ -374,6 +375,15 @@ def fetch_pool_indicators(pool_address, force=False):
             try:
                 import database
                 database.save_market_candles(key, "1m", normalized)
+                now = time.monotonic()
+                if now - _last_prune >= 3600:
+                    try:
+                        removed = database.prune_market_candles()
+                        if removed:
+                            print("[TROJAN V2] OHLCV RETENTION PRUNED:", removed, flush=True)
+                    except Exception as prune_error:
+                        print("[TROJAN V2] OHLCV RETENTION WARNING:", type(prune_error).__name__, flush=True)
+                    _last_prune = now
             except Exception as error:
                 print("[TROJAN V2] OHLCV STORAGE WARNING:", type(error).__name__, flush=True)
         return indicators
@@ -398,12 +408,21 @@ def _bounded_env_int(name, default, minimum, maximum):
 
 
 def get_indicator_status():
-    ready = sum(1 for item in _cache.values() if item["data"].get("ready"))
-    stale = sum(1 for item in _cache.values()
-                if (item["data"].get("ohlcv_quality") or {}).get("stale"))
+    with _cache_lock:
+        ready = sum(1 for item in _cache.values() if item["data"].get("ready"))
+        stale = sum(1 for item in _cache.values()
+                    if (item["data"].get("ohlcv_quality") or {}).get("stale"))
+        cached_pools = len(_cache)
     return {
-        "cached_pools": len(_cache), "ready_pools": ready,
-        "stale_pools": stale, "timeframe": "1m",
+        "cached_pools": cached_pools,
+        "ready_pools": ready,
+        "stale_pools": stale,
+        "cache_capacity": MAX_CACHE_ENTRIES,
+        "cache_ttl_seconds": CACHE_SECONDS,
+        "candles_per_fetch": CANDLE_LIMIT,
+        "minimum_fetch_interval_seconds": MIN_FETCH_INTERVAL,
+        "retention_days": _bounded_env_int("TROJAN_OHLCV_RETENTION_DAYS", 30, 1, 3650),
+        "timeframe": "1m",
         "max_candle_age_seconds": _bounded_env_int("TROJAN_OHLCV_MAX_AGE_SECONDS", 180, 30, 3600),
         "max_gap_seconds": _bounded_env_int("TROJAN_OHLCV_MAX_GAP_SECONDS", 300, 60, 3600)
     }
