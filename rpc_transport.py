@@ -205,4 +205,4 @@ def get_rpc_status():
             "last_latency_ms": state["last_latency_ms"],
             "last_error": state["last_error"],
         })
-    return {"configured": bool(endpoints), "endpoint_count": len(endpoints), "endpoints": rows}
+    return {"configured": bool(endpoints), "endpoint_count": len(endpoints), "rust_sidecar_enabled": bool(_RUST_SIDECAR_BIN), "rust_sidecar_processes": sum(1 for process in _rust_sidecars.values() if process.poll() is None), "endpoints": rows}
