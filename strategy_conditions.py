@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 
 TIMEFRAMES = ("m5", "h1", "h6", "h24")
+INDICATOR_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "12h", "1d")
+INDICATOR_TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "12h": 43200, "1d": 86400}
 CONDITION_TYPES = (
     "BollingerBands", "BuyPressure", "CandleSize", "ConsecutiveCandles",
     "DrawdownFromPeak", "LiquidityChangeSinceEntry", "LiquidityLevel",
@@ -20,30 +22,30 @@ CONDITION_TYPES = (
 )
 
 SCHEMAS = {
-    "BollingerBands": {"category": "Technical Indicators", "params": {"comparison": ["BELOW", "ABOVE"], "threshold": [0.0, 1.0]}},
+    "BollingerBands": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "comparison": ["BELOW", "ABOVE"], "threshold": [0.0, 1.0]}},
     "BuyPressure": {"category": "Market Context", "params": {"threshold": [0.0, 1.0]}},
-    "CandleSize": {"category": "Price Analysis", "params": {"metric": ["body", "range"], "comparison": ["ABOVE", "BELOW"], "threshold_pct": [0.0, 1000.0]}},
-    "ConsecutiveCandles": {"category": "Price Analysis", "params": {"direction": ["GREEN", "RED"], "minimum": [1.0, 100.0]}},
-    "DrawdownFromPeak": {"category": "Price Analysis", "params": {"minimum_pct": [0.0, 100.0], "maximum_pct": [0.0, 100.0]}},
+    "CandleSize": {"category": "Price Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "metric": ["body", "range"], "comparison": ["ABOVE", "BELOW"], "threshold_pct": [0.0, 1000.0]}},
+    "ConsecutiveCandles": {"category": "Price Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "direction": ["GREEN", "RED"], "minimum": [1.0, 100.0]}},
+    "DrawdownFromPeak": {"category": "Price Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "minimum_pct": [0.0, 100.0], "maximum_pct": [0.0, 100.0]}},
     "LiquidityChangeSinceEntry": {"category": "Position & Performance", "params": {"comparison": ["ABOVE", "BELOW"], "threshold_pct": [-100.0, 10000.0]}},
     "LiquidityLevel": {"category": "Market Context", "params": {"comparison": ["ABOVE", "BELOW"], "threshold_usd": [0.0, 1e12]}},
     "LiquidityToSize": {"category": "Market Context", "params": {"minimum_multiple": [0.1, 1e9], "trade_size_usd": [0.01, 1e9]}},
-    "MaCross": {"category": "Technical Indicators", "params": {"direction": ["BULLISH", "BEARISH"]}},
+    "MaCross": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "direction": ["BULLISH", "BEARISH"]}},
     "PositionAdds": {"category": "Position & Performance", "params": {"comparison": ["AT_LEAST", "AT_MOST"], "count": [0.0, 100.0]}},
     "PositionHoldingTime": {"category": "Position & Performance", "params": {"comparison": ["ABOVE", "BELOW"], "minutes": [0.0, 1e7]}},
     "PositionProfit": {"category": "Position & Performance", "params": {"comparison": ["ABOVE", "BELOW"], "profit_pct": [-100.0, 1e6]}},
-    "PriceBreakout": {"category": "Price Analysis", "params": {"direction": ["ABOVE", "BELOW"]}},
+    "PriceBreakout": {"category": "Price Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "direction": ["ABOVE", "BELOW"]}},
     "PriceChangePercent": {"category": "Price Analysis", "params": {"timeframe": list(TIMEFRAMES), "comparison": ["ABOVE", "BELOW"], "threshold_pct": [-100.0, 1e6]}},
-    "PriceToMa": {"category": "Technical Indicators", "params": {"period": [9.0, 200.0], "comparison": ["ABOVE", "BELOW"], "threshold_pct": [-100.0, 1000.0]}},
+    "PriceToMa": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "period": [9.0, 200.0], "comparison": ["ABOVE", "BELOW"], "threshold_pct": [-100.0, 1000.0]}},
     "ProfitGiveback": {"category": "Position & Performance", "params": {"comparison": ["ABOVE", "BELOW"], "giveback_pct": [0.0, 100.0]}},
-    "PullbackFromHigh": {"category": "Price Analysis", "params": {"minimum_pct": [0.0, 100.0], "maximum_pct": [0.0, 100.0]}},
-    "Rsi": {"category": "Technical Indicators", "params": {"comparison": ["BELOW", "ABOVE"], "threshold": [1.0, 99.0]}},
+    "PullbackFromHigh": {"category": "Price Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "minimum_pct": [0.0, 100.0], "maximum_pct": [0.0, 100.0]}},
+    "Rsi": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "comparison": ["BELOW", "ABOVE"], "threshold": [1.0, 99.0]}},
     "TimeOfDay": {"category": "Market Context", "params": {"start_hour_utc": [0.0, 23.0], "end_hour_utc": [0.0, 23.0]}},
     "TokenAge": {"category": "Market Context", "params": {"comparison": ["ABOVE", "BELOW"], "minutes": [0.0, 1e8]}},
     "TransactionVelocity": {"category": "Market Context", "params": {"window": ["5m_vs_1h", "1h_vs_6h", "6h_vs_24h"], "comparison": ["ABOVE", "BELOW"], "ratio": [0.1, 50.0], "min_transactions": [1.0, 100000.0]}},
-    "VolatilityRange": {"category": "Technical Indicators", "params": {"comparison": ["ABOVE", "BELOW"], "threshold_pct": [0.1, 500.0]}},
-    "VolumeSpike": {"category": "Volume Analysis", "params": {"multiplier": [1.0, 50.0]}},
-    "Vwap": {"category": "Technical Indicators", "params": {"position": ["ABOVE", "BELOW"]}},
+    "VolatilityRange": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "comparison": ["ABOVE", "BELOW"], "threshold_pct": [0.1, 500.0]}},
+    "VolumeSpike": {"category": "Volume Analysis", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "multiplier": [1.0, 50.0]}},
+    "Vwap": {"category": "Technical Indicators", "params": {"timeframe": list(INDICATOR_TIMEFRAMES), "position": ["ABOVE", "BELOW"]}},
 }
 
 
@@ -121,7 +123,7 @@ def validate_condition(node):
     return True
 
 
-def _indicator_freshness(name, context, indicators):
+def _indicator_freshness(name, context, indicators, timeframe="1m"):
     """Require fresh, explicitly ready OHLCV-derived indicators for technical rules."""
     direct_metrics = {
         "DrawdownFromPeak": ("drawdown_from_peak_pct", "pullback_from_high_pct"),
@@ -156,6 +158,10 @@ def _indicator_freshness(name, context, indicators):
         maximum_age = 180.0
     if not math.isfinite(maximum_age) or not 30.0 <= maximum_age <= 3600.0:
         maximum_age = 180.0
+    # Candle timestamps identify the start of their bucket. Allow up to three
+    # selected-timeframe buckets, while the nested frame readiness still depends
+    # on the live 1m source-quality gate.
+    maximum_age = max(maximum_age, INDICATOR_TIMEFRAME_SECONDS.get(timeframe, 60) * 3)
 
     evaluated_at = _num(context.get("evaluated_at"))
     now = evaluated_at if evaluated_at is not None else time.time()
@@ -171,7 +177,30 @@ def evaluate_condition(node, context):
     validate_condition(node)
     name, params = node["condition"], node["params"]
     indicators = context.get("indicators") if isinstance(context.get("indicators"), dict) else {}
-    fresh, freshness_reason = _indicator_freshness(name, context, indicators)
+    technical = {
+        "BollingerBands", "CandleSize", "ConsecutiveCandles", "DrawdownFromPeak",
+        "MaCross", "PriceBreakout", "PriceToMa", "PullbackFromHigh", "Rsi",
+        "VolatilityRange", "VolumeSpike", "Vwap",
+    }
+    timeframe = params.get("timeframe", "1m") if name in technical else "1m"
+    direct_position_metric = (
+        name in ("DrawdownFromPeak", "PullbackFromHigh")
+        and any(_metric(context, field) is not None for field in (
+            "drawdown_from_peak_pct", "pullback_from_high_pct"
+        ))
+    )
+    if name in technical and not direct_position_metric:
+        timeframe_map = indicators.get("timeframes")
+        if isinstance(timeframe_map, dict):
+            selected = timeframe_map.get(timeframe)
+            if not isinstance(selected, dict):
+                return False, [name + ": timeframe data unavailable (" + timeframe + ")"]
+            indicators = selected
+            context = dict(context)
+            context["indicators"] = indicators
+        elif timeframe != "1m":
+            return False, [name + ": timeframe data unavailable (" + timeframe + ")"]
+    fresh, freshness_reason = _indicator_freshness(name, context, indicators, timeframe)
     if not fresh:
         return False, [name + ": " + freshness_reason]
     token = context.get("token") if isinstance(context.get("token"), dict) else {}
