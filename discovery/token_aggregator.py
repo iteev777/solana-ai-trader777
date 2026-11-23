@@ -230,7 +230,13 @@ def get_discovery_status():
                     "SELECT last_scan_at FROM discovery_scan_state WHERE id = 1"
                 ).fetchone()
             if not sources:
-                sources = [dict(row) for row in rows]
+                sources = []
+                for row in rows:
+                    item = dict(row)
+                    item["count"] = item.get("last_count", 0)
+                    item["ok"] = bool(item.get("last_ok", 0))
+                    item["completed_at"] = item.get("updated_at")
+                    sources.append(item)
             if last_scan_at is None and state is not None:
                 last_scan_at = state["last_scan_at"]
         except Exception as error:
