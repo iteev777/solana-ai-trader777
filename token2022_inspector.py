@@ -331,8 +331,14 @@ def validate_token_account_for_program(account, token_program, mint, authority,
     raw = account.get("data", b"")
     if not isinstance(raw, (bytes, bytearray)) or len(raw) != 165:
         raise Token2022LayoutError(label + " legacy token-account layout is invalid")
-    if chain._key(raw, 0) != mint or chain._key(raw, 32) != authority:
-        raise Token2022LayoutError(label + " mint or authority does not match")
+    if chain._key(raw, 0) != mint:
+        raise Token2022LayoutError(label + " mint does not match")
+    if chain._key(raw, 32) != authority:
+        if "vault" in label.lower():
+            raise Token2022LayoutError(label + " vault token authority does not match")
+        if "input token account" in label.lower() or "output token account" in label.lower():
+            raise Token2022LayoutError(label + " is not owned by the signing wallet")
+        raise Token2022LayoutError(label + " authority does not match")
     if raw[108] != 1:
         raise Token2022LayoutError(label + " is not initialized or is frozen")
     balance = int.from_bytes(raw[64:72], "little")
