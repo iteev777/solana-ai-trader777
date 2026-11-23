@@ -400,3 +400,7 @@ Every address is validated as a 32-byte base58 Solana public key. Entries are so
 ## Raydium CLMM direct quote adapter
 
 The read-only Raydium CLMM adapter reads the pool state, AmmConfig, vaults, legacy SPL mints and initialized tick arrays in one confirmed RPC context. It walks the concentrated-liquidity curve with integer Q64.64 price math, charges the configured input fee per step, updates active liquidity at crossed initialized ticks and caps output at the actual vault balance. It refuses unsupported dynamic-fee and fee-on-token-side modes, Token-2022 mints, bitmap-extension ranges and amounts that exceed the fetched tick-array coverage. It does not build or sign swap instructions.
+
+## Strategy indicator freshness
+
+Technical strategy conditions (RSI, Bollinger, EMA cross/price-to-MA, breakout, candle structure, ATR/volatility, volume spike, VWAP and indicator-derived pullbacks) now require an explicitly ready OHLCV indicator series with a valid timestamp. The default maximum age is 180 seconds, configurable from 30 to 3600 seconds with `TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS`. Missing, stale or future-dated indicator snapshots fail closed with an auditable condition reason. Market-only and direct position metrics do not require an OHLCV timestamp. Token age and time-of-day conditions use the same evaluation timestamp.
