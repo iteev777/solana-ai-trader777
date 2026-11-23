@@ -42,6 +42,8 @@ def valid_token(token):
 
 def safe_volume(value):
 
+    if isinstance(value, bool):
+        return None
     try:
         volume = float(value)
 
@@ -52,6 +54,11 @@ def safe_volume(value):
 
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _quota_exhausted(response):
+    text = getattr(response, "text", "") or ""
+    return "compute units usage limit exceeded" in text[:300].lower()
 
 
 def extract_items(data):
@@ -150,7 +157,7 @@ def scan_birdeye():
 
             # A plan/endpoint compatibility issue should not disable
             # the entire Birdeye source: fall back to trending tokens.
-            if status_code not in (400, 404, 422):
+            if status_code not in (400, 404, 422) or _quota_exhausted(response):
                 raise
 
             print(
@@ -206,8 +213,7 @@ def scan_birdeye():
         print("================================", flush=True)
 
     except requests.HTTPError as error:
-        response_text = getattr(error.response, "text", None) or ""
-        if "compute units usage limit exceeded" in response_text[:300].lower():
+        if _quota_exhausted(error.response):
             _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
             raise RuntimeError("Birdeye: quota exhausted; paused for 1 hour") from None
         raise

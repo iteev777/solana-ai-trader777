@@ -104,6 +104,23 @@ class DiscoverySourceFailureTests(unittest.TestCase):
             with self.assertRaises(requests.Timeout):
                 birdeye_scanner.scan_birdeye()
 
+    def test_birdeye_quota_error_does_not_call_trending(self):
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b"Compute units usage limit exceeded"
+        with (
+            patch.object(birdeye_scanner, "API_KEY", "test-key"),
+            patch.object(birdeye_scanner, "_quota_disabled_until", 0),
+            patch.object(birdeye_scanner, "get_json",
+                         side_effect=requests.HTTPError(response=response)) as fetch,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "quota exhausted"):
+                birdeye_scanner.scan_birdeye()
+            with self.assertRaisesRegex(RuntimeError, "cooldown"):
+                birdeye_scanner.scan_birdeye()
+        fetch.assert_called_once()
+        self.assertIsNone(birdeye_scanner.safe_volume(True))
+
     def test_birdeye_missing_key_is_reported_as_unavailable(self):
         with patch.object(birdeye_scanner, "API_KEY", None):
             with self.assertRaisesRegex(RuntimeError, "API_KEY"):
