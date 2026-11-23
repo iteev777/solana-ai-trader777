@@ -35,13 +35,13 @@ class RiskGuardExtensionTests(unittest.TestCase):
         database.DATABASE = self.previous_database
         self.temp.cleanup()
 
-    def risk(self, token="MintA", mode="paper"):
+    def risk(self, token="MintA", mode="paper", strategy="main"):
         return risk_manager.check_trade_risk(
             balance=100,
             open_positions=0,
             daily_loss=0,
             trade_size=5,
-            strategy="main",
+            strategy=strategy,
             main_positions=0,
             sniper_positions=0,
             token_address=token,
@@ -79,6 +79,26 @@ class RiskGuardExtensionTests(unittest.TestCase):
             )
         allowed, reason = self.risk("MintA")
         self.assertTrue(allowed, reason)
+
+    def test_reentry_cooldown_is_scoped_to_strategy(self):
+        database.save_trade("MintA", "SELL", 1, 5, 0.0, mode="paper", strategy="main")
+        main_allowed, main_reason = self.risk("MintA", strategy="main")
+        sniper_allowed, sniper_reason = self.risk("MintA", strategy="sniper")
+        self.assertFalse(main_allowed)
+        self.assertEqual(main_reason, "RE-ENTRY COOLDOWN ACTIVE")
+        self.assertTrue(sniper_allowed, sniper_reason)
+        self.assertIsNone(database.get_last_exit_timestamp("MintA", "paper", strategy="sniper"))
+
+    def test_period_loss_guard_applies_without_token_context(self):
+        database.save_trade("MintA", "SELL", 1, 5, -10.0, mode="paper")
+        allowed, reason = self.risk(token=None)
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "ROLLING PERIOD LOSS LIMIT REACHED")
+
+    def test_invalid_mode_is_rejected_without_token_context(self):
+        allowed, reason = self.risk(token=None, mode="invalid")
+        self.assertFalse(allowed)
+        self.assertEqual(reason, "INVALID TRADING MODE FOR HISTORY GUARDS")
 
     def test_period_loss_guard_fails_closed_when_history_is_unavailable(self):
         with patch.object(database, "get_period_realized_loss", side_effect=RuntimeError("db offline")):
