@@ -188,13 +188,24 @@ def should_refresh_pool(key, now=None):
 
 
 def store_pool_snapshot(key, snapshot):
-    """Publish a verified pool snapshot for WebSocket and dashboard readers."""
-    if not isinstance(key, (tuple, list)) or len(key) != 3 or not isinstance(snapshot, dict):
+    """Publish only a decoder-verified pool snapshot for readers."""
+    if (
+        not isinstance(key, (tuple, list))
+        or len(key) != 3
+        or not all(isinstance(part, str) and part.strip() for part in key)
+        or not isinstance(snapshot, dict)
+        or snapshot.get("onchainVerified") is not True
+    ):
         return False
     observed = snapshot.get("observedAt")
-    if not isinstance(observed, (int, float)) or observed <= 0:
+    if (
+        isinstance(observed, bool)
+        or not isinstance(observed, (int, float))
+        or not math.isfinite(observed)
+        or observed <= 0
+    ):
         observed = time.time()
-    normalized_key = tuple(key)
+    normalized_key = tuple(part.strip() for part in key)
     with _lock:
         _snapshots[normalized_key] = {"data": dict(snapshot), "observed_at": observed}
         _status["last_update"] = observed
@@ -210,12 +221,14 @@ def _refresh(key):
         snapshot = decode_pool_snapshot(
             pool, protocol, mint, _force=True, _register_watch=False
         )
-        if isinstance(snapshot, dict):
-            store_pool_snapshot(key, snapshot)
-            with _lock:
-                _status["last_latency_ms"] = round(
-                    (time.perf_counter() - started) * 1000, 1
-                )
+        if not isinstance(snapshot, dict) or snapshot.get("onchainVerified") is not True:
+            raise ValueError("pool snapshot decoder returned no verified snapshot")
+        if not store_pool_snapshot(key, snapshot):
+            raise ValueError("verified pool snapshot could not be published")
+        with _lock:
+            _status["last_latency_ms"] = round(
+                (time.perf_counter() - started) * 1000, 1
+            )
     except Exception as error:
         with _lock:
             _status["refresh_errors"] += 1
