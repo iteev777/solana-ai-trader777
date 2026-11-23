@@ -397,6 +397,36 @@ def analyze_token_task(address, strategy_name, token):
             token.get("poolAddress") or pair.get("pairAddress")
             or token.get("pool_address")
         )
+        # Persistent denylist parity: block token mints and selected pools
+        # before any market, strategy, or paper-entry work is performed.
+        try:
+            import blacklist
+            blacklist_matches = blacklist.match_entries([
+                ("token", address),
+                ("pool", pool_address),
+            ])
+        except Exception as blacklist_error:
+            log_event("BLACKLIST LOOKUP FAILED", address, repr(blacklist_error))
+            return {
+                "status": "rejected",
+                "reason": "BLACKLIST_LOOKUP_UNAVAILABLE",
+                "address": address,
+            }
+        if blacklist_matches:
+            match = blacklist_matches[0]
+            reason = "BLACKLISTED_TOKEN" if match["entry_type"] == "token" else "BLACKLISTED_POOL"
+            log_event("BLACKLIST REJECT", address, reason + ": " + match["reason"])
+            return {
+                "status": "rejected",
+                "reason": reason,
+                "blacklist": {
+                    "entry_type": match["entry_type"],
+                    "entry_value": match["entry_value"],
+                    "reason": match["reason"],
+                    "source": match["source"],
+                },
+                "address": address,
+            }
         pool_protocol = (
             pair.get("dexId") or token.get("dexId")
             or token.get("poolName") or token.get("pool_name") or ""
