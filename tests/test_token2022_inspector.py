@@ -43,6 +43,24 @@ class Token2022InspectorTests(unittest.TestCase):
         })
         self.assertTrue(result["epoch_selection_required"])
 
+    def test_selects_transfer_fee_schedule_at_activation_epoch(self):
+        config = {
+            "older": {"epoch": 10, "basis_points": 100, "maximum_fee": 500},
+            "newer": {"epoch": 20, "basis_points": 250, "maximum_fee": 900},
+        }
+        self.assertEqual(
+            inspector.select_transfer_fee_schedule(config, 19), config["older"]
+        )
+        self.assertEqual(
+            inspector.select_transfer_fee_schedule(config, 20), config["newer"]
+        )
+
+    def test_epoch_schedule_selection_rejects_invalid_epoch(self):
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            inspector.select_transfer_fee_schedule(
+                {"older": {}, "newer": {"epoch": 2}}, True
+            )
+
     def test_transfer_fee_rounds_up_and_respects_maximum(self):
         schedule = {"basis_points": 100, "maximum_fee": 50}
         self.assertEqual(inspector.transfer_fee_for_amount(schedule, 1), 1)
