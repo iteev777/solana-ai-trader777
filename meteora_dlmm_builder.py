@@ -125,9 +125,9 @@ def build_meteora_dlmm_swap(quote, wallet, user_input_token_account,
     if (
         not isinstance(indices, list) or not indices
         or not isinstance(addresses, list) or len(indices) != len(addresses)
-        or len(indices) > 3
+        or len(indices) > dlmm_quote.MAX_BIN_ARRAYS
     ):
-        raise ValueError("Fresh DLMM quote does not expose a bounded initialized bin-array set")
+        raise ValueError("Fresh DLMM quote does not expose a supported initialized bin-array set")
     expected_indices = dlmm_quote._array_indices(
         first["active_id"], input_is_x, first["min_bin_id"], first["max_bin_id"]
     )
