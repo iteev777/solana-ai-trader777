@@ -19,7 +19,6 @@ TOKEN_2022_PROGRAM_ID = chain.TOKEN_2022_PROGRAM
 SWAP_TAG = 1
 MAX_QUOTE_SLOT_LAG = 32
 COMPUTE_UNITS = 160_000
-UNSUPPORTED_MINT_EXTENSIONS = {4, 6, 9, 10, 12, 16, 24, 25, 26, 28}
 SUPPORTED_TOKEN_ACCOUNT_EXTENSIONS = {2, 7}
 
 
@@ -48,9 +47,12 @@ def _mint_program_and_validate(account, label):
     if owner not in (TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID):
         raise ValueError(label + " is not owned by a supported SPL token program")
     raw = account.get("data", b"")
-    if len(raw) < 82 or raw[45] != 1:
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 82 or raw[45] != 1:
         raise ValueError(label + " mint layout is invalid or uninitialized")
-    if owner == TOKEN_2022_PROGRAM_ID:
+    if owner == TOKEN_PROGRAM_ID:
+        if len(raw) != 82:
+            raise ValueError(label + " legacy SPL mint must use the exact 82-byte layout")
+    else:
         try:
             token2022.validate_zero_fee_mint_data(raw)
         except ValueError as exc:
@@ -64,6 +66,8 @@ def _token_account_amount(account, expected_program, expected_mint, expected_own
     raw = account.get("data", b"")
     if not isinstance(raw, (bytes, bytearray)) or len(raw) < 165:
         raise ValueError(label + " token account layout is invalid")
+    if expected_program == TOKEN_PROGRAM_ID and len(raw) != 165:
+        raise ValueError(label + " legacy SPL token account must use the exact 165-byte layout")
     if chain._key(raw, 0) != expected_mint:
         raise ValueError(label + " token account mint does not match")
     if expected_owner is not None and chain._key(raw, 32) != expected_owner:
@@ -269,9 +273,11 @@ def simulate_fluxbeam_transaction(transaction_base64):
         {"encoding": "base64", "sigVerify": False,
          "replaceRecentBlockhash": True, "commitment": "confirmed"},
     ])
-    value = (result or {}).get("value")
-    if not isinstance(value, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("value"), dict):
         raise ValueError("Solana RPC returned a malformed simulation result")
+    value = result["value"]
+    if "err" not in value:
+        raise ValueError("Solana RPC simulation response is missing the error field")
     logs = value.get("logs") or []
     if not isinstance(logs, list):
         raise ValueError("Solana RPC returned malformed simulation logs")
