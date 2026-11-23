@@ -167,35 +167,48 @@ def dashboard_app_icon():
 @app.get("/sw.js")
 def dashboard_service_worker():
     script = """
-const CACHE = "trojan-dashboard-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/app-icon.svg"];
+// Dashboard is authenticated and contains live financial data.
+// Never cache navigation documents or API responses.
+const OLD_CACHE_PREFIX = "trojan-dashboard-";
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
   self.skipWaiting();
 });
 self.addEventListener("activate", event => {
-  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))));
-  self.clients.claim();
+  event.waitUntil(Promise.all([
+    caches.keys().then(keys => Promise.all(
+      keys.filter(key => key.startsWith(OLD_CACHE_PREFIX)).map(key => caches.delete(key))
+    )),
+    self.clients.claim()
+  ]));
 });
 self.addEventListener("fetch", event => {
-  const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
   if (event.request.method !== "GET") return;
-  event.respondWith(fetch(event.request).then(response => {
-    if (response.ok) {
-      const copy = response.clone();
-      caches.open(CACHE).then(cache => cache.put(event.request, copy));
-    }
-    return response;
-  }).catch(() => caches.match(event.request)));
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  // Force every page load through the server. An expired cached dashboard
+  // must never mask an authentication failure or a stopped server.
+  if (event.request.mode === "navigate") {
+    event.respondWith(fetch(event.request, {cache: "no-store"}).catch(() =>
+      new Response(
+        '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
+        '<body style="background:#080d18;color:white;font:16px system-ui;padding:24px">' +
+        '<h2>Trojan V2 is offline</h2><p>Check the dashboard server and your connection, then reopen the app.</p>' +
+        '<button onclick="location.reload()">Try again</button></body></html>',
+        {status: 503, headers: {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"}}
+      )
+    ));
+  }
 });
 """
-    return Response(script, mimetype="application/javascript", headers={"Service-Worker-Allowed": "/"})
+    return Response(script, mimetype="application/javascript", headers={
+        "Service-Worker-Allowed": "/",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+    })
 
 
 @app.get("/")
 def dashboard_home():
-    return Response(_HTML, mimetype="text/html")
+    return Response(_HTML, mimetype="text/html", headers={"Cache-Control": "no-store, private"})
 
 
 @app.get("/api/overview")
