@@ -1,53 +1,37 @@
-"""Safety-gated multi-router DEX route selection for Trojan V2.
+"""Multi-pool DEX route selection for Trojan V2.
 
-This module is deliberately non-custodial and read-only. It fans out to the
-existing Jupiter, Raptor and verified direct-pool quote adapters, rejects
-stale/unsafe/malformed candidates, and selects the highest minimum output in
-the requested output mint's raw units. It never signs or broadcasts.
+This module compares Jupiter, Raptor and every supplied verified direct pool
+in parallel. It is quote-only: it never constructs, signs or broadcasts a swap.
+All amounts are raw units of the same output mint. Protocol fees are expected
+to be reflected in each adapter's out_amount; network fees are only deducted
+when an explicit output-mint-denominated estimate is supplied.
 """
+import concurrent.futures
 import math
-import os
 import time
 
-
-def _bounded_env_float(name, default, minimum, maximum):
-    try:
-        value = float(os.getenv(name, str(default)))
-    except (TypeError, ValueError, OverflowError):
-        return float(default)
-    if not math.isfinite(value):
-        return float(default)
-    return min(float(maximum), max(float(minimum), value))
+import route_comparison
 
 
-def _bounded_env_int(name, default, minimum, maximum):
-    try:
-        value = int(os.getenv(name, str(default)))
-    except (TypeError, ValueError, OverflowError):
-        return int(default)
-    return min(int(maximum), max(int(minimum), value))
+MAX_POOL_CANDIDATES = 20
+MAX_QUOTE_AGE_SECONDS = 8.0
+MAX_PRICE_IMPACT_PERCENT = 3.0
+MAX_HOPS = 4
 
 
-MAX_ROUTE_AGE_SECONDS = _bounded_env_float(
-    "TROJAN_DEX_MAX_QUOTE_AGE_SECONDS", 8.0, 1.0, 30.0
-)
-MAX_PRICE_IMPACT_PERCENT = _bounded_env_float(
-    "TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT", 3.0, 0.01, 20.0
-)
-MAX_ALLOWED_HOPS = _bounded_env_int("TROJAN_DEX_MAX_HOPS", 4, 1, 8)
-
-
-def _positive_int(value, name):
+def _uint(value, name, allow_zero=False):
     if isinstance(value, bool):
-        raise ValueError(name + " must be a positive integer")
-    try:
+        raise ValueError(name + " must be an integer")
+    if isinstance(value, str):
+        if not value.isdigit():
+            raise ValueError(name + " must be an integer")
         number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError(name + " must be a positive integer")
-    if not isinstance(value, str) and value != number:
-        raise ValueError(name + " must be a positive integer")
-    if number <= 0:
-        raise ValueError(name + " must be a positive integer")
+    elif isinstance(value, int):
+        number = value
+    else:
+        raise ValueError(name + " must be an integer")
+    if number < (0 if allow_zero else 1) or number > 2**64 - 1:
+        raise ValueError(name + " is outside the supported u64 range")
     return number
 
 
@@ -63,111 +47,117 @@ def _finite(value, name):
     return number
 
 
-def _quote_age(candidate, now):
-    quoted_at = candidate.get("quoted_at")
-    if quoted_at is not None:
-        age = now - _finite(quoted_at, "quoted_at")
-    elif candidate.get("snapshot_age_seconds") is not None:
-        age = _finite(candidate["snapshot_age_seconds"], "snapshot_age_seconds")
-    else:
-        return None
-    if age < 0:
-        raise ValueError("QUOTE_TIMESTAMP_IN_FUTURE")
-    return age
+def _validate_pool_addresses(pool_addresses):
+    if pool_addresses is None:
+        return []
+    if not isinstance(pool_addresses, (list, tuple)):
+        raise ValueError("pool_addresses must be a list")
+    result = []
+    for address in pool_addresses:
+        if not isinstance(address, str) or not address.strip():
+            raise ValueError("pool address must be a non-empty string")
+        address = address.strip()
+        if address not in result:
+            result.append(address)
+    if len(result) > MAX_POOL_CANDIDATES:
+        raise ValueError("Too many direct pool candidates")
+    return result
 
 
-def _candidate(provider_key, candidate, output_mint, now):
-    if not isinstance(candidate, dict):
-        return None, ["QUOTE_NOT_AN_OBJECT"]
-    reasons = []
-    if candidate.get("status") != "QUOTED":
-        return None, [str(candidate.get("reason") or candidate.get("status") or "QUOTE_UNAVAILABLE")[:160]]
+def _normalize_candidate(provider_key, item, input_mint, output_mint, now,
+                         network_fee_output_amount=None):
+    if not isinstance(item, dict) or item.get("status") != "QUOTED":
+        raise ValueError("QUOTE_UNAVAILABLE")
+    if item.get("output_mint") not in (None, output_mint):
+        raise ValueError("OUTPUT_MINT_MISMATCH")
 
-    provider = str(candidate.get("provider") or provider_key)[:80]
-    actual_output = candidate.get("output_mint")
-    if actual_output is not None and actual_output != output_mint:
-        return None, ["OUTPUT_MINT_MISMATCH"]
+    out_amount = _uint(item.get("out_amount"), "out_amount")
+    minimum_out = _uint(item.get("minimum_out_amount"), "minimum_out_amount")
+    if minimum_out > out_amount:
+        raise ValueError("MINIMUM_OUTPUT_EXCEEDS_QUOTE")
 
-    try:
-        out_amount = _positive_int(candidate.get("out_amount"), "out_amount")
-        minimum_out = _positive_int(candidate.get("minimum_out_amount"), "minimum_out_amount")
-        if minimum_out > out_amount:
-            raise ValueError("MINIMUM_OUTPUT_EXCEEDS_QUOTE")
-    except ValueError as error:
-        return None, [str(error)[:160]]
-
-    impact = candidate.get("price_impact_percent")
-    if impact is None:
-        return None, ["PRICE_IMPACT_UNAVAILABLE"]
-    try:
-        impact = _finite(impact, "price_impact_percent")
-    except ValueError as error:
-        return None, [str(error)[:160]]
+    impact_raw = item.get("price_impact_percent")
+    if impact_raw is None:
+        raise ValueError("PRICE_IMPACT_UNAVAILABLE")
+    impact = _finite(impact_raw, "price_impact_percent")
     if impact < 0 or impact > MAX_PRICE_IMPACT_PERCENT:
-        return None, ["PRICE_IMPACT_OUTSIDE_LIMIT"]
+        raise ValueError("PRICE_IMPACT_OUTSIDE_LIMIT")
 
-    quality = candidate.get("quality")
-    if isinstance(quality, dict) and quality.get("status") == "REJECT":
-        return None, ["ROUTE_QUALITY_REJECTED"]
+    if isinstance(item.get("quality"), dict) and item["quality"].get("status") == "REJECT":
+        raise ValueError("ROUTE_QUALITY_REJECTED")
 
-    route = candidate.get("route") or {}
+    route = item.get("route") or {}
     if not isinstance(route, dict):
         route = {}
     hops = route.get("hops", route.get("hop_count"))
     if hops is not None:
-        try:
-            parsed_hops = int(hops)
-        except (TypeError, ValueError, OverflowError):
-            return None, ["INVALID_HOP_COUNT"]
-        if not isinstance(hops, str) and hops != parsed_hops:
-            return None, ["INVALID_HOP_COUNT"]
-        hops = parsed_hops
-        if hops < 0 or hops > MAX_ALLOWED_HOPS:
-            return None, ["HOP_COUNT_OUTSIDE_LIMIT"]
+        hops = _uint(hops, "hop_count", allow_zero=True)
+        if hops > MAX_HOPS:
+            raise ValueError("HOP_COUNT_OUTSIDE_LIMIT")
 
-    try:
-        age = _quote_age(candidate, now)
-    except ValueError as error:
-        return None, [str(error)[:160]]
-    if age is None:
-        # A direct pool quote must include a confirmed snapshot age. Router
-        # APIs must include a quote timestamp. Unknown freshness fails closed.
-        return None, ["QUOTE_FRESHNESS_UNAVAILABLE"]
-    if age > MAX_ROUTE_AGE_SECONDS:
-        return None, ["QUOTE_STALE"]
+    if item.get("snapshot_age_seconds") is not None:
+        age = _finite(item["snapshot_age_seconds"], "snapshot_age_seconds")
+    elif item.get("quoted_at") is not None:
+        age = now - _finite(item["quoted_at"], "quoted_at")
+    else:
+        raise ValueError("QUOTE_FRESHNESS_UNAVAILABLE")
+    if age < 0:
+        raise ValueError("QUOTE_TIMESTAMP_IN_FUTURE")
+    if age > MAX_QUOTE_AGE_SECONDS:
+        raise ValueError("QUOTE_STALE")
 
-    latency = candidate.get("latency_ms", candidate.get("quote_latency_ms"))
-    if latency is not None:
-        try:
-            latency = max(0.0, _finite(latency, "latency_ms"))
-        except ValueError:
-            latency = None
-
-    normalized = {
-        "provider": provider,
+    network_cost = _uint(
+        network_fee_output_amount if network_fee_output_amount is not None else 0,
+        "network_fee_output_amount", allow_zero=True
+    )
+    if network_cost >= minimum_out:
+        raise ValueError("NETWORK_COST_CONSUMES_OUTPUT")
+    net_minimum = minimum_out - network_cost
+    return {
+        "provider": str(item.get("provider") or provider_key)[:80],
         "provider_key": provider_key,
-        "protocol": candidate.get("protocol"),
-        "status": "ELIGIBLE",
-        "input_mint": None,
+        "protocol": item.get("protocol"),
+        "pool_id": item.get("pool_id"),
+        "input_mint": input_mint,
         "output_mint": output_mint,
         "out_amount": out_amount,
         "minimum_out_amount": minimum_out,
+        "network_fee_output_amount": network_cost,
+        "net_minimum_output": net_minimum,
+        "network_fee_priced": network_fee_output_amount is not None,
         "price_impact_percent": impact,
         "quote_age_seconds": round(age, 3),
-        "latency_ms": round(latency, 2) if latency is not None else None,
+        "latency_ms": item.get("latency_ms", item.get("quote_latency_ms")),
         "hops": hops,
         "route": route,
-        "quality": quality,
-        "pool_id": candidate.get("pool_id"),
-        "slot": candidate.get("slot"),
-        "fee_amounts": candidate.get("fee_amounts"),
-        "fee_mint": candidate.get("fee_mint"),
+        "slot": item.get("slot"),
+        "fee_amounts": item.get("fee_amounts"),
+        "quality": item.get("quality"),
+        "selected": False,
     }
-    return normalized, reasons
 
 
-def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
-    """Return a safety-gated route decision; this function never executes a swap."""
+def _direct_pool_quote(pool_address, input_mint, output_mint, amount, slippage_bps):
+    import solana_onchain
+    quote = solana_onchain.quote_direct_pool(
+        pool_address, input_mint, amount, slippage_bps, output_mint=output_mint
+    )
+    quote = dict(quote)
+    quote["pool_id"] = pool_address
+    quote["provider"] = quote.get("provider") or quote.get("protocol") or "direct_pool"
+    quote["status"] = "QUOTED"
+    quote["output_mint"] = quote.get("output_mint")
+    return quote
+
+
+def build_routes(input_mint, output_mint, amount, pool_addresses=None,
+                 slippage_bps=None, network_fee_output_amounts=None):
+    """Compare aggregator routes and multiple verified native pools.
+
+    network_fee_output_amounts maps provider keys (jupiter, raptor, or
+    direct:<pool-address>) to an estimate denominated in output-token raw units.
+    Missing entries are not guessed or converted across incompatible units.
+    """
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
     if not isinstance(output_mint, str) or not output_mint.strip():
@@ -175,57 +165,99 @@ def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address
     input_mint, output_mint = input_mint.strip(), output_mint.strip()
     if input_mint == output_mint:
         raise ValueError("Input and output mints must differ")
-    amount = _positive_int(amount, "input amount")
+    amount = _uint(amount, "amount")
+    pools = _validate_pool_addresses(pool_addresses)
+    network_fee_output_amounts = network_fee_output_amounts or {}
+    if not isinstance(network_fee_output_amounts, dict):
+        raise ValueError("network_fee_output_amounts must be an object")
 
-    import route_comparison
-    comparison = route_comparison.compare_quotes(
-        input_mint, output_mint, amount, slippage_bps, pool_address
-    )
+    # Validate every fee estimate before making external calls.
+    fee_estimates = {
+        str(key): _uint(value, "network fee", allow_zero=True)
+        for key, value in network_fee_output_amounts.items()
+    }
+    started = time.perf_counter()
+    raw_quotes = {}
+    rejected = {}
+
+    tasks = {
+        "aggregators": lambda: route_comparison.compare_quotes(
+            input_mint, output_mint, amount, slippage_bps, pool_address=None
+        )
+    }
+    for pool_address in pools:
+        key = "direct:" + pool_address
+        tasks[key] = lambda address=pool_address: _direct_pool_quote(
+            address, input_mint, output_mint, amount,
+            slippage_bps if slippage_bps is not None else route_comparison.MAX_SLIPPAGE_BPS
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(tasks))) as executor:
+        futures = {executor.submit(fn): key for key, fn in tasks.items()}
+        for future in concurrent.futures.as_completed(futures):
+            key = futures[future]
+            try:
+                raw_quotes[key] = future.result()
+            except Exception as error:
+                rejected[key] = (str(error) or type(error).__name__)[:180]
+
     now = time.time()
-    candidates, rejected = [], {}
-    for key, value in (comparison.get("quotes") or {}).items():
-        normalized, reasons = _candidate(key, value, output_mint, now)
-        if normalized is None:
-            rejected[key] = reasons
+    candidates = []
+    aggregate = raw_quotes.get("aggregators") or {}
+    for provider in ("jupiter", "raptor"):
+        item = (aggregate.get("quotes") or {}).get(provider)
+        if item is None:
+            rejected[provider] = "QUOTE_UNAVAILABLE"
             continue
-        normalized["input_mint"] = input_mint
-        candidates.append(normalized)
+        try:
+            candidates.append(_normalize_candidate(
+                provider, item, input_mint, output_mint, now,
+                fee_estimates.get(provider)
+            ))
+        except Exception as error:
+            rejected[provider] = (str(error) or type(error).__name__)[:180]
 
-    # All candidates produce the same output mint, so minimum raw output is
-    # directly comparable. Network/priority fees are not subtracted here:
-    # they are denominated in SOL and must not be mixed with token base units.
+    for key, item in raw_quotes.items():
+        if not key.startswith("direct:"):
+            continue
+        try:
+            candidates.append(_normalize_candidate(
+                key, item, input_mint, output_mint, now,
+                fee_estimates.get(key)
+            ))
+        except Exception as error:
+            rejected[key] = (str(error) or type(error).__name__)[:180]
+
     candidates.sort(
         key=lambda item: (
+            item["net_minimum_output"],
             item["minimum_out_amount"],
-            item["out_amount"],
-            -(item["latency_ms"] if item["latency_ms"] is not None else 1e12),
+            -(float(item["latency_ms"]) if item["latency_ms"] is not None else 1e12)
         ),
-        reverse=True,
+        reverse=True
     )
+    if candidates:
+        candidates[0]["selected"] = True
     selected = candidates[0] if candidates else None
-    if selected:
-        best_minimum = selected["minimum_out_amount"]
-        for item in candidates:
-            item["relative_minimum_output_percent"] = round(
-                item["minimum_out_amount"] / best_minimum * 100.0, 4
-            )
-            item["selected"] = item is selected
     return {
-        "engine": "trojan_dex_route_engine_v1",
+        "engine": "trojan_multi_pool_dex_engine_v2",
         "mode": "READ_ONLY_ROUTE_SELECTION",
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount,
-        "slippage_bps": comparison.get("slippage_bps"),
+        "slippage_bps": aggregate.get("slippage_bps"),
+        "pool_candidates_requested": len(pools),
+        "routes_eligible": candidates,
+        "routes_rejected": rejected,
         "selected_route": selected,
-        "eligible_routes": candidates,
-        "rejected_routes": rejected,
         "best_provider": selected["provider"] if selected else None,
-        "best_minimum_output": selected["minimum_out_amount"] if selected else None,
-        "comparison_basis": "minimum_output_raw_units_same_output_mint",
-        "max_quote_age_seconds": MAX_ROUTE_AGE_SECONDS,
-        "max_price_impact_percent": MAX_PRICE_IMPACT_PERCENT,
-        "max_hops": MAX_ALLOWED_HOPS,
+        "best_pool": selected["pool_id"] if selected else None,
+        "comparison_basis": "net_minimum_output_same_output_mint_raw_units",
+        "network_costs": "only explicit output-mint-denominated estimates are deducted",
+        "unpriced_network_costs_may_change_ranking": any(
+            key not in fee_estimates for key in ["jupiter", "raptor"]
+        ) or any("direct:" + address not in fee_estimates for address in pools),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
         "execution": "LOCKED",
         "signing": "DISABLED",
         "broadcast": "DISABLED",
@@ -235,26 +267,38 @@ def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address
 
 
 def get_engine_status():
-    import route_comparison
+    import solana_onchain
     routers = route_comparison.get_router_status()
+    chain = solana_onchain.get_onchain_status()
     return {
-        "engine": "trojan_dex_route_engine_v1",
+        "engine": "trojan_multi_pool_dex_engine_v2",
         "mode": "READ_ONLY_ROUTE_SELECTION",
-        "quote_sources": {
-            "jupiter": "enabled",
-            "raptor": "enabled",
-            "verified_direct_pool": "enabled_when_pool_address_supplied",
+        "aggregators": {
+            "jupiter": routers.get("jupiter"),
+            "raptor": routers.get("raptor"),
         },
-        "direct_pool": routers.get("direct_pool", {}),
-        "safety": {
-            "max_quote_age_seconds": MAX_ROUTE_AGE_SECONDS,
-            "max_price_impact_percent": MAX_PRICE_IMPACT_PERCENT,
-            "max_hops": MAX_ALLOWED_HOPS,
-            "unknown_freshness": "REJECT",
-            "unknown_price_impact": "REJECT",
-        },
+        "direct_pool": routers.get("direct_pool"),
+        "onchain_supported_protocols": chain.get("supported_protocols", []),
         "execution_locked": True,
         "signing_available": False,
         "broadcast_available": False,
         "live_trading_ready": False,
     }
+
+
+
+def build_route(input_mint, output_mint, amount, slippage_bps=None, pool_address=None):
+    """Backward-compatible dashboard entry point; accepts one or many pools."""
+    if pool_address is None:
+        pools = []
+    elif isinstance(pool_address, str):
+        pools = [part.strip() for part in pool_address.split(",") if part.strip()]
+    elif isinstance(pool_address, (list, tuple)):
+        pools = list(pool_address)
+    else:
+        raise ValueError("pool_address must be a string or list")
+    return build_routes(
+        input_mint, output_mint, amount,
+        pool_addresses=pools,
+        slippage_bps=slippage_bps,
+    )
