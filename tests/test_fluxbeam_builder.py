@@ -62,6 +62,8 @@ class FluxbeamBuilderTests(unittest.TestCase):
             "out_amount": 100,
             "minimum_out_amount": 80,
             "slot": 500,
+            "base_decimals": 9,
+            "quote_decimals": 6,
         }
         raw = bytearray(324)
         raw[0] = 1
@@ -93,8 +95,15 @@ class FluxbeamBuilderTests(unittest.TestCase):
 
     def call_builder(self, quote=None, account_map=None, slot=503):
         account_map = account_map or self.account_map
+        def fresh_quote(pool, input_mint, amount, slippage):
+            result = dict(self.quote)
+            result["input_mint"] = input_mint
+            result["output_mint"] = self.mint_b if input_mint == self.mint_a else self.mint_a
+            result["input_amount"] = amount
+            return result
+
         with (
-            patch.object(chain, "quote_fluxbeam_pool", return_value=self.quote),
+            patch.object(chain, "quote_fluxbeam_pool", side_effect=fresh_quote),
             patch.object(chain, "_account", return_value=self.account_map[self.pool]),
             patch.object(chain, "_find_program_address",
                          return_value=(self.authority, 254)),
