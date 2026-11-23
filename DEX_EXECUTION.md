@@ -52,6 +52,27 @@ X-Trojan-Confirm-Live: 1
 ```
 
 
+## Token-2022 extension inspection
+
+The authenticated read-only endpoint `POST /api/token2022-inspect` accepts a
+mint public key and returns the mint's Token-2022 base fields and parsed TLV
+extension list. It validates the account owner, mint discriminator, zero
+padding, TLV bounds, duplicate extension types, and mint-vs-account extension
+types. Known extensions are labeled with their protocol implications, including
+transfer fees, confidential transfers, permanent delegates, transfer hooks,
+non-transferability, pausable mints, and scaled UI amounts.
+
+**Inspection is not Token-2022 swap support.** The response explicitly keeps
+`swap_eligibility` blocked and `execution_enabled` false. Native builders and
+wallet preflight still require the legacy SPL Token program. Transfer-fee
+extensions change net received amounts and need epoch-aware fee calculations;
+confidential transfers need client-side proof flows; transfer hooks require
+additional account/program handling. Token-2022 ATA sizing also depends on the
+mint's required account extensions, so the legacy 165-byte ATA path must not be
+used for these mints. See the official
+[Solana Token-2022 documentation](https://solana.com/docs/tokens) and
+[transfer-fee extension guide](https://solana.com/docs/tokens/extensions/transfer-fees).
+
 ## Non-custodial ATA creation order
 
 When the wallet does not yet have its canonical legacy SPL token account, call
