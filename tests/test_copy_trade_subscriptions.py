@@ -3,7 +3,7 @@ import sys
 import time
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import copy_trade
 
@@ -134,7 +134,7 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
     def test_fresh_wallet_event_can_queue_paper_copy_and_alert(self):
         now = time.time()
         event = self._event(now, now - 5)
-        fake_main = types.SimpleNamespace(queue_copy_signal=unittest.mock.Mock())
+        fake_main = types.SimpleNamespace(queue_copy_signal=Mock())
         with patch.object(copy_trade, "_fetch_wallet_transaction", return_value=event), \
              patch.object(copy_trade.database, "record_copy_trade_event", return_value=True), \
              patch.object(copy_trade, "send_alert") as alert, \
