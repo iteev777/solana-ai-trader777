@@ -20,6 +20,16 @@ class RaydiumClmmMathTests(unittest.TestCase):
             5876110600988489675,
         )
 
+    def test_known_orca_mainnet_tick_prices_are_exact(self):
+        self.assertEqual(
+            mathx.sqrt_price_at_tick(-22315),
+            6044771392447776916,
+        )
+        self.assertEqual(
+            mathx.sqrt_price_at_tick(-22314),
+            6045073623461811934,
+        )
+
     def test_partial_step_quotes_both_directions_with_input_fee(self):
         sqrt_price = mathx.sqrt_price_at_tick(10) + 1000
         for zero_for_one in (True, False):
