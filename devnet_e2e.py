@@ -49,6 +49,46 @@ def require_devnet_endpoint():
         raise RuntimeError("RPC genesis hash does not match Solana devnet: " + str(genesis))
 
 
+def obtain_devnet_funding(payer_address):
+    """Use RPC airdrop when available; otherwise wait for human faucet funding.
+
+    The private key remains only in this runner's process. Only the public
+    address is printed so the repository owner can fund this one-run wallet.
+    """
+    try:
+        signature = rpc("requestAirdrop", [payer_address, 20_000_000])
+        if not isinstance(signature, str) or not signature:
+            raise RuntimeError("Devnet faucet RPC returned no airdrop signature")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            result = rpc("getSignatureStatuses", [[signature], {"searchTransactionHistory": True}])
+            status = (result or {}).get("value", [None])[0]
+            if status and status.get("err") is not None:
+                raise RuntimeError("Devnet faucet airdrop failed: " + str(status["err"]))
+            if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
+                return signature, "rpc_airdrop"
+            time.sleep(2)
+        raise TimeoutError("Devnet faucet airdrop was not confirmed")
+    except requests.HTTPError as error:
+        if error.response is None or error.response.status_code != 410:
+            raise
+
+    print(
+        "DEVNET_E2E_FUNDING_REQUIRED: send devnet SOL to this temporary address "
+        + payer_address
+        + " using the official faucet, then this job will continue automatically.",
+        flush=True,
+    )
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        balance = rpc("getBalance", [payer_address, {"commitment": "confirmed"}])
+        lamports = (balance or {}).get("value")
+        if isinstance(lamports, int) and lamports >= 5_000_000:
+            return "MANUAL_FAUCET_FUNDING", "manual_web_faucet"
+        time.sleep(5)
+    raise TimeoutError("Temporary devnet test wallet was not funded within 10 minutes")
+
+
 def wait_for_signature(signature, last_valid_block_height):
     deadline = time.monotonic() + FINALITY_TIMEOUT
     while time.monotonic() < deadline:
@@ -87,20 +127,7 @@ def main():
     payer_address = str(payer.pubkey())
     recipient_address = str(recipient.pubkey())
 
-    airdrop_signature = rpc("requestAirdrop", [payer_address, 20_000_000])
-    if not isinstance(airdrop_signature, str) or not airdrop_signature:
-        raise RuntimeError("Devnet faucet returned no airdrop signature")
-    airdrop_deadline = time.monotonic() + 60
-    while time.monotonic() < airdrop_deadline:
-        result = rpc("getSignatureStatuses", [[airdrop_signature], {"searchTransactionHistory": True}])
-        status = (result or {}).get("value", [None])[0]
-        if status and status.get("err") is not None:
-            raise RuntimeError("Devnet faucet airdrop failed: " + str(status["err"]))
-        if status and status.get("confirmationStatus") in ("confirmed", "finalized"):
-            break
-        time.sleep(2)
-    else:
-        raise TimeoutError("Devnet faucet airdrop was not confirmed")
+    airdrop_signature, funding_method = obtain_devnet_funding(payer_address)
 
     latest = rpc("getLatestBlockhash", [{"commitment": "confirmed"}])
     latest_value = (latest or {}).get("value") or {}
@@ -204,6 +231,7 @@ def main():
         "payer": payer_address,
         "recipient": recipient_address,
         "airdrop_signature": airdrop_signature,
+        "funding_method": funding_method,
         "transaction_signature": returned_signature,
         "confirmation_status": final_status.get("confirmationStatus"),
         "recipient_balance_lamports": recipient_balance["value"],
