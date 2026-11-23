@@ -171,7 +171,7 @@ def select_transfer_fee_schedule(config, epoch):
     if not isinstance(config, dict) or not isinstance(config.get("older"), dict) or not isinstance(config.get("newer"), dict):
         raise ValueError("A decoded older/newer transfer-fee configuration is required")
     if isinstance(epoch, bool) or not isinstance(epoch, int) or not 0 <= epoch <= 2**64 - 1:
-        raise ValueError("Current epoch must be a valid u64 integer")
+        raise ValueError("Current epoch must be a non-negative u64 integer")
     older = config["older"]
     newer = config["newer"]
     activation_epoch = newer.get("epoch")
