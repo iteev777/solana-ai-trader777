@@ -78,11 +78,22 @@ jobs:
           TROJAN_DASHBOARD_TOKEN: ci-dashboard-test-token
         run: |
           python - <<'PY'
+          import base64
           import dashboard
 
           client = dashboard.app.test_client()
           unauthenticated = client.get("/api/readiness")
           assert unauthenticated.status_code == 401, unauthenticated.status_code
+
+          credentials = base64.b64encode(b"ci-user:ci-dashboard-test-token").decode("ascii")
+          headers = {"Authorization": "Basic " + credentials}
+          observation = client.get("/api/observation", headers=headers)
+          assert observation.status_code == 200, observation.status_code
+          observation_payload = observation.get_json()
+          assert observation_payload["mode"] == "paper_only"
+          assert observation_payload["live_execution"] == "locked"
+          assert observation_payload["observation"]["enabled"] is False
+          assert observation_payload["observation"]["metered"] is True
 
           paths = {rule.rule for rule in dashboard.app.url_map.iter_rules()}
           required = {
@@ -106,6 +117,7 @@ jobs:
 
           print(f"PASS: dashboard registers {len(paths)} routes")
           print("PASS: protected API rejects requests without authentication")
+          print("PASS: observation endpoint reports metered feed disabled by default and paper-only mode")
           PY
 
       - name: Report safety mode
