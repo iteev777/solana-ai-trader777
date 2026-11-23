@@ -10,7 +10,7 @@ import struct
 import time
 
 import solana_onchain as chain
-from raydium_cpmm_builder import _compile_legacy_message
+from raydium_cpmm_builder import _compile_legacy_message, _priority_fee_micro_lamports
 from orca_whirlpool_quote import (
     _decode_whirlpool, _tick_array_starts, _decode_fixed_tick_array,
     _derive_address, quote_orca_whirlpool_pool, TICK_ARRAY_SIZE,
@@ -205,7 +205,9 @@ def build_orca_whirlpool_swap(quote, wallet, user_input_token_account,
         "account_keys": account_keys,
         "required_signers": [wallet],
         "transaction": base64.b64encode(transaction).decode("ascii"),
-        "transaction_version": "legacy", "last_valid_block_height": last_valid,
+        "transaction_version": "legacy",
+        "compute_unit_limit": 300_000,
+        "priority_fee_micro_lamports": _priority_fee_micro_lamports(), "last_valid_block_height": last_valid,
         "signature_status": "UNSIGNED_EXTERNAL_WALLET_REQUIRED",
         "execution": "LOCKED", "signing": "DISABLED_ON_SERVER",
         "broadcast": "DISABLED", "live_trading_ready": False,
