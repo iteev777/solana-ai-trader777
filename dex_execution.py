@@ -15,8 +15,10 @@ BASE_URL = os.getenv("TROJAN_JUPITER_V2_BASE_URL", "https://api.jup.ag/swap/v2")
 API_KEY = os.getenv("JUPITER_API_KEY", "").strip()
 TIMEOUT = min(15.0, max(2.0, float(os.getenv("TROJAN_JUPITER_EXECUTION_TIMEOUT", "8"))))
 MAX_SLIPPAGE_BPS = min(300, max(1, int(os.getenv("TROJAN_MAX_SLIPPAGE_BPS", "100"))))
-MAX_SIGNED_TRANSACTION_BYTES = 15_000
-EXECUTE_ENABLED = os.getenv("TROJAN_JUPITER_EXECUTE_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+# Solana's serialized transaction packet ceiling. Reject oversized data before parsing.
+MAX_SIGNED_TRANSACTION_BYTES = 1232
+# Phase 5 live execution is hard-locked in code; environment variables cannot unlock it.
+EXECUTE_ENABLED = False
 ORDER_TTL_SECONDS = 120
 _order_lock = threading.Lock()
 _simulated_orders = {}
@@ -263,52 +265,11 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simu
 
 
 def execute_signed_order(signed_transaction, request_id, confirmed=False):
-    """Submit a wallet-signed order only after two independent live-trade gates."""
-    if not EXECUTE_ENABLED:
-        raise ExecutionLocked("Jupiter execution is disabled by TROJAN_JUPITER_EXECUTE_ENABLED")
-    if confirmed is not True:
-        raise ExecutionLocked("Explicit live execution confirmation is required")
-    if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
-        raise ValueError("request_id is invalid")
-    # Atomically consume the simulation approval before any network call.
-    # This prevents concurrent duplicate submissions and replay of a requestId.
-    with _order_lock:
-        approved = _simulated_orders.pop(request_id.strip(), None)
-    if not approved or approved.get("simulation_status") != "PASS":
-        raise ExecutionLocked("Order has no unused recent successful unsigned simulation on this Trojan instance")
-    if time.time() - approved.get("created_at", 0) > ORDER_TTL_SECONDS:
-        raise ExecutionLocked("Simulated order expired; request a fresh order")
-    raw = _decode_transaction(signed_transaction, "signed transaction")
-    if len(raw) < 65:
-        raise ValueError("signed transaction is too short to contain a signature")
-
-    response = requests.post(
-        BASE_URL + "/execute",
-        json={"signedTransaction": signed_transaction, "requestId": request_id.strip()},
-        headers=_headers(json_body=True),
-        timeout=TIMEOUT,
+    """Live Jupiter execution is intentionally unavailable in the current project phase."""
+    raise ExecutionLocked(
+        "Live trading is hard-locked in Trojan V2. Jupiter /execute cannot be enabled "
+        "by environment variables or per-request confirmation."
     )
-    response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict):
-        raise ValueError("Jupiter execute response is not an object")
-    status = payload.get("status")
-    if status not in ("Success", "Failed"):
-        raise ValueError("Jupiter returned an unknown execution status")
-    return {
-        "provider": "jupiter",
-        "status": status,
-        "signature": payload.get("signature"),
-        "code": payload.get("code"),
-        "input_amount_result": payload.get("inputAmountResult"),
-        "output_amount_result": payload.get("outputAmountResult"),
-        "error": str(payload.get("error") or "")[:240] or None,
-        "explorer_url": (
-            "https://solscan.io/tx/" + payload["signature"]
-            if isinstance(payload.get("signature"), str) and payload["signature"]
-            else None
-        ),
-    }
 
 
 def get_execution_status():
@@ -318,8 +279,10 @@ def get_execution_status():
         "execute_endpoint": BASE_URL + "/execute",
         "api_key_configured": bool(API_KEY),
         "max_slippage_bps": MAX_SLIPPAGE_BPS,
-        "execution_enabled": EXECUTE_ENABLED,
-        "execution_locked": not EXECUTE_ENABLED,
+        "execution_enabled": False,
+        "execution_locked": True,
+        "hard_lock": True,
+        "unlock_policy": "CODE_CHANGE_AFTER_EXPLICIT_PHASE_5_APPROVAL",
         "wallet_secret_required_on_server": False,
         "signing": "external_user_wallet",
         "transaction_landing": "Jupiter managed /execute",
