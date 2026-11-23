@@ -176,6 +176,9 @@ class MeteoraDbcDirectQuoteTests(unittest.TestCase):
         self.assertEqual(result["fee_mint"], self.base_mint)
 
     def test_curve_walk_crosses_into_next_liquidity_segment(self):
+        pool = bytearray(self.pool_data)
+        pool[232:240] = (999_999_999_000).to_bytes(8, "little")
+        self._replace_pool_state(pool)
         config = dbc._decode_pool_config(self.config_data, chain)
         state = dbc._decode_virtual_pool(self.pool_data, chain)
         target = config["points"][0][0]
