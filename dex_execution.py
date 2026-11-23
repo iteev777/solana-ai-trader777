@@ -7,6 +7,7 @@ requires both an explicit per-call confirmation and an environment feature flag.
 import base64
 import os
 import time
+import threading
 
 import requests
 
@@ -16,6 +17,9 @@ TIMEOUT = min(15.0, max(2.0, float(os.getenv("TROJAN_JUPITER_EXECUTION_TIMEOUT",
 MAX_SLIPPAGE_BPS = min(300, max(1, int(os.getenv("TROJAN_MAX_SLIPPAGE_BPS", "100"))))
 MAX_SIGNED_TRANSACTION_BYTES = 15_000
 EXECUTE_ENABLED = os.getenv("TROJAN_JUPITER_EXECUTE_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+ORDER_TTL_SECONDS = 120
+_order_lock = threading.Lock()
+_simulated_orders = {}
 
 
 class ExecutionLocked(RuntimeError):
@@ -74,7 +78,7 @@ def _decode_transaction(value, name):
     return raw
 
 
-def create_order(input_mint, output_mint, amount, taker, slippage_bps=None):
+def create_order(input_mint, output_mint, amount, taker, slippage_bps=None, simulate=False):
     """Request a Jupiter V2 best-route order and unsigned wallet transaction."""
     input_mint = _base58_pubkey(input_mint, "input_mint")
     output_mint = _base58_pubkey(output_mint, "output_mint")
@@ -122,6 +126,19 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None):
     if minimum_out is not None and minimum_out > out_amount:
         raise ValueError("Jupiter minimum output exceeds quoted output")
 
+    simulation = _simulate_transaction(payload["transaction"]) if simulate is True else {
+        "status": "NOT_REQUESTED", "signed": False, "broadcast": False
+    }
+    if simulation.get("status") == "PASS":
+        _remember_simulated_order(request_id, {
+            "taker": taker,
+            "input_mint": input_mint,
+            "output_mint": output_mint,
+            "input_amount": in_amount,
+            "minimum_output_amount": minimum_out,
+            "simulation_status": "PASS",
+        })
+
     return {
         "provider": "jupiter",
         "api_version": "v2",
@@ -140,6 +157,8 @@ def create_order(input_mint, output_mint, amount, taker, slippage_bps=None):
         "price_impact_pct": payload.get("priceImpact"),
         "route_plan": payload.get("routePlan") or [],
         "fee_bps": payload.get("feeBps"),
+        "simulation": simulation,
+        "execution_eligible": simulation.get("status") == "PASS",
         "quoted_at": time.time(),
         "latency_ms": round((time.perf_counter() - started) * 1000, 2),
         "signing": "USER_WALLET_REQUIRED",
@@ -155,6 +174,14 @@ def execute_signed_order(signed_transaction, request_id, confirmed=False):
         raise ExecutionLocked("Explicit live execution confirmation is required")
     if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
         raise ValueError("request_id is invalid")
+    with _order_lock:
+        approved = _simulated_orders.get(request_id.strip())
+    if not approved or approved.get("simulation_status") != "PASS":
+        raise ExecutionLocked("Order has no recent successful unsigned simulation on this Trojan instance")
+    if time.time() - approved.get("created_at", 0) > ORDER_TTL_SECONDS:
+        with _order_lock:
+            _simulated_orders.pop(request_id.strip(), None)
+        raise ExecutionLocked("Simulated order expired; request a fresh order")
     raw = _decode_transaction(signed_transaction, "signed transaction")
     if len(raw) < 65:
         raise ValueError("signed transaction is too short to contain a signature")
@@ -201,4 +228,6 @@ def get_execution_status():
         "signing": "external_user_wallet",
         "transaction_landing": "Jupiter managed /execute",
         "max_transaction_bytes": MAX_SIGNED_TRANSACTION_BYTES,
+        "simulation_required_for_execution": True,
+        "simulated_order_ttl_seconds": ORDER_TTL_SECONDS,
     }
