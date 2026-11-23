@@ -9,6 +9,7 @@ import os
 import solana_onchain as chain
 
 SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 TOKEN_ACCOUNT_SIZE = 165
 MINT_ACCOUNT_SIZE = 82
 LAMPORTS_PER_SOL = 1_000_000_000
@@ -38,6 +39,16 @@ def _positive_amount(value):
     if amount <= 0 or amount > 0xFFFFFFFFFFFFFFFF:
         raise ValueError("Input amount is outside the supported u64 range")
     return amount
+
+
+def _associated_token_address(wallet, mint, token_program=chain.TOKEN_PROGRAM):
+    """Derive the canonical ATA for a wallet, mint and token program."""
+    seeds = [
+        _pubkey(wallet, "Wallet"),
+        _pubkey(token_program, "Token program"),
+        _pubkey(mint, "Mint"),
+    ]
+    return chain._find_program_address(seeds, ASSOCIATED_TOKEN_PROGRAM_ID)[0]
 
 
 def _decode_token_account(account, expected_mint, wallet, label):
@@ -141,6 +152,10 @@ def preflight_wallet_swap(wallet, input_mint, output_mint, input_token_account,
 
     input_info = _decode_token_account(input_account, input_mint, wallet, "Input token account")
     output_info = _decode_token_account(output_account, output_mint, wallet, "Output token account")
+    input_ata = _associated_token_address(wallet, input_mint)
+    output_ata = _associated_token_address(wallet, output_mint)
+    input_info["is_associated_token_account"] = input_token_account == input_ata
+    output_info["is_associated_token_account"] = output_token_account == output_ata
     input_mint_info = _validate_mint(input_mint_account, input_mint, "Input mint")
     output_mint_info = _validate_mint(output_mint_account, output_mint, "Output mint")
 
@@ -168,6 +183,8 @@ def preflight_wallet_swap(wallet, input_mint, output_mint, input_token_account,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount,
+        "expected_input_associated_token_account": input_ata,
+        "expected_output_associated_token_account": output_ata,
         "confirmed_context_slot": slot,
         "wallet_sol_balance_lamports": wallet_lamports,
         "wallet_sol_balance": wallet_lamports / LAMPORTS_PER_SOL,
@@ -185,4 +202,6 @@ def preflight_wallet_swap(wallet, input_mint, output_mint, input_token_account,
         "signing": "NOT_PERFORMED",
         "broadcast": "NOT_PERFORMED",
         "supported_token_program": chain.TOKEN_PROGRAM,
+        "associated_token_program": ASSOCIATED_TOKEN_PROGRAM_ID,
+        "ata_note": "Non-ATA token accounts remain supported when valid; canonical ATAs are reported for wallet UX and safe account setup.",
     }
