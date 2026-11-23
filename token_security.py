@@ -136,6 +136,7 @@ def get_token_security_report(mint, largest_limit=20):
 
 
 def _fetch_token_security_report(mint, limit):
+    import solana_onchain as chain
     mint_result = chain._rpc(
         "getAccountInfo",
         [mint, {"encoding": "jsonParsed", "commitment": "confirmed"}]
