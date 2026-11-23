@@ -164,6 +164,10 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
     if fee is None:
         return []
 
+    # A transaction fee belongs to the fee payer (account index zero), not
+    # automatically to the watched subject when it is only a signer/recipient.
+    subject_fee = fee if subject_index == 0 else 0
+
     program_ids = _program_ids(transaction, keys)
     venue = _venue_for(program_ids)
     system_ids = {
@@ -204,7 +208,7 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
             before_raw=before if 0 <= before <= MAX_U128 else None,
             after_raw=after if 0 <= after <= MAX_U128 else None,
             decimals=decimals, kind=kind, venue=venue,
-            fee_native_raw=fee, success=True,
+            fee_native_raw=subject_fee, success=True,
         ))
 
     if native_material:
@@ -216,6 +220,6 @@ def extract_subject_deltas(subject_address, transaction, signature=None):
             tx_index=tx_index, delta_raw=economic_native_delta,
             before_raw=subject_pre if 0 <= subject_pre <= MAX_U128 else None,
             after_raw=subject_post if 0 <= subject_post <= MAX_U128 else None,
-            decimals=9, kind=kind, venue=venue, fee_native_raw=fee, success=True,
+            decimals=9, kind=kind, venue=venue, fee_native_raw=subject_fee, success=True,
         ))
     return result
