@@ -30,7 +30,7 @@ class MultiTimeframeIndicatorTests(unittest.TestCase):
         # Align the fixture to real epoch buckets and keep it fresh for the
         # OHLCV validator; otherwise a 3-minute interval may span three buckets.
         now = int(time.time())
-        start = now - (now % 180) - 240
+        start = now - (now % 180) - 360
         for index, row in enumerate(rows):
             row[0] = start + index * 60
         aggregated = indicators.aggregate_candles(rows, 180)
