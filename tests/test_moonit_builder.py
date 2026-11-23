@@ -93,15 +93,21 @@ class MoonitBuilderTests(unittest.TestCase):
             patch.object(chain, "quote_moonit_pool", side_effect=fresh_quote),
             patch.object(chain, "_account", return_value=self.account_map[self.pool]),
             patch.object(chain, "_find_program_address",
-                         side_effect=[(self.config, 251), (self.curve_ata, 255)]),
+                         side_effect=[(self.config, 251), (self.curve_ata, 255),
+                                      (self.user_out, 253)]),
             patch.object(chain, "_multiple_accounts_with_context",
                          side_effect=lambda keys: ([account_map.get(k) for k in keys], slot)),
             patch.object(chain, "_rpc", return_value={"value": {
                 "blockhash": self.blockhash, "lastValidBlockHeight": 123456
             }}),
         ):
+            selected_quote = quote or self.quote
+            if selected_quote.get("input_mint") == chain.SOL_MINT:
+                input_account, output_account = self.user_in, self.user_out
+            else:
+                input_account, output_account = self.user_out, self.user_in
             return builder.build_moonit_swap(
-                quote or self.quote, self.wallet, self.user_in, self.user_out
+                selected_quote, self.wallet, input_account, output_account
             )
 
     def test_builds_native_sol_buy_with_verified_11_account_order(self):
