@@ -94,6 +94,49 @@ class MeteoraDammDirectQuoteTests(unittest.TestCase):
         result = self.quote(accounts=accounts)
         self.assertEqual(result["fee_rate_numerator"], 100_000_000)
 
+    def test_compounding_mode_charges_token_b_before_swap(self):
+        state = bytearray(self.state)
+        state[484] = 2
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        result = self.quote(input_mint=self.mint_b, output_mint=self.mint_a, accounts=accounts)
+        self.assertEqual(result["fee_mint"], self.mint_b)
+        self.assertTrue(result["fee_on_input"])
+
+    def test_future_slot_activation_is_rejected(self):
+        state = bytearray(self.state)
+        state[472:480] = (765433).to_bytes(8, "little")
+        state[480] = 0
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        with self.assertRaisesRegex(ValueError, "not active at the confirmed slot"):
+            self.quote(accounts=accounts)
+
+    def test_future_timestamp_activation_is_rejected(self):
+        state = bytearray(self.state)
+        state[472:480] = (1_900_000_000).to_bytes(8, "little")
+        state[480] = 1
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        with patch.object(chain, "_rpc", return_value=1_800_000_000):
+            with self.assertRaisesRegex(ValueError, "not active at the confirmed block time"):
+                self.quote(accounts=accounts)
+
+    def test_past_timestamp_activation_is_verified_before_quote(self):
+        state = bytearray(self.state)
+        state[472:480] = (1_700_000_000).to_bytes(8, "little")
+        state[480] = 1
+        self.state = bytes(state)
+        accounts = list(self.accounts)
+        accounts[0] = {"owner": chain.PROGRAMS["meteora_damm_v2"], "data": self.state}
+        with patch.object(chain, "_rpc", return_value=1_800_000_000) as block_time:
+            result = self.quote(accounts=accounts)
+        self.assertGreater(result["out_amount"], 0)
+        block_time.assert_called_once_with("getBlockTime", [765432])
+
     def test_dynamic_fee_is_added_using_stored_volatility(self):
         state = bytearray(self.state)
         state[56] = 1
