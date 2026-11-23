@@ -7,23 +7,23 @@
 - Trojan: https://github.com/iteev777/solana-ai-trader777
 - Trojan baseline revision before this ledger: `e52fc52ed598dcbbaab89bc267822c2c8ada9ef0`
 - Trojan working branch: `feature/dex-jupiter-noncustodial-execution-current`
-- Latest parity ledger revision before this update: `2b231b1b772f2e109e118c06cb3b6cd0ab0471fa`
-- Latest working branch revision before this update: `e7bfc0311e7979558b142f140319232bfd910893`
+- Latest parity ledger revision before this update: `53602028b4b2e755003191fa2c7fcae44963bded`
+- Latest working branch revision before this update: `a4da6eed637c73f21bfdaeae52779e331f0e7189`
 
 ### Repository-wide tree inventory
 
 | Inventory | ScreenerBot | Trojan |
 |---|---:|---:|
-| Tracked files | 3,043 | 218 |
+| Tracked files | 3,043 | 220 |
 | Main source directory | `src/`: 1,660 | Root Python modules + `discovery/` |
-| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 106 `tests/` files |
+| Tests | `tests/`: 186 Rust/integration test files, plus `tools/tests/` | 107 `tests/` files |
 | Locales | 609 | No equivalent locale tree identified |
 | Desktop shell | `electron/`: 35 | No equivalent desktop shell identified |
 | Tools and fixtures | `tools/`: 444 | No equivalent tools tree identified |
 | Images/icons/assets | `icons/`: 71; `assets/`: 10 | No equivalent large asset tree identified |
 | Build/workflow/docs/config | Present across root and hidden dirs | Present across root and hidden dirs |
 
-Trojan inventory at the latest audited revision includes 191 Python files, 2 Rust files, 1 TypeScript file, 10 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
+Trojan inventory at the latest audited revision includes 193 Python files, 2 Rust files, 1 TypeScript file, 10 Markdown files, 9 workflow YAML files and other configuration/assets. Counts are an inventory, not a parity score.
 
 ScreenerBot is substantially larger because its repository includes a full Rust application, Electron shell, translations, UI assets, fixture corpora, tooling and tests. These must be classified individually as: (a) runtime feature with a Trojan equivalent, (b) runtime feature missing from Trojan, (c) platform-specific feature not applicable to Trojan's deployment model, (d) test/fixture/build support, or (e) non-code asset. Do not silently omit categories.
 
@@ -44,7 +44,7 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 |---|---|---|---|
 | Discovery feeds and aggregation | `src/tokens/discovery.rs`, `src/tokens/discovery_sources.rs`, `src/apis/geckoterminal/endpoints.rs` | `discovery/token_aggregator.py`, `discovery/screenerbot_sources.py`, `discovery/gecko_scanner.py`, `tests/test_token_aggregator.py`, `docs/DISCOVERY_QUALITY.md` | Partial inspection; recently-updated feed, both pool sides, and provider/global switches added; dynamic runtime configuration and broader runner parity remain open |
 | Filtering pipeline | `src/filtering/stage.rs`, `src/chains/solana/filtering.rs`, `src/filtering/sources/symbols.rs`, `src/filtering/sources/meta.rs`, `src/filtering/sources/rugcheck.rs`, `src/filtering/sources/market.rs`, `src/filtering/sources/dexscreener.rs`, `src/filtering/sources/geckoterminal.rs`, `src/filtering/sources/llm_analysis.rs` | `filter_pipeline.py`, `main.py`, `rugcheck.py`, `token_security.py`, `ai_analyzer.py`, focused tests | Partial comparison; pre-strategy RugCheck/on-chain gates, metadata preservation and initial Solana on-chain stage added; market/meta parity remains open |
-| API clients and rate limiting | `src/apis/client.rs`, `src/apis/manager.rs`, `src/apis/stats.rs`, provider clients | `api_client.py`, provider scanners, `tests/test_api_client_stats.py`, `dashboard.py` | Partial comparison; per-host/per-endpoint request/cache statistics added; provider-specific manager semantics and retry telemetry remain open |
+| API clients and rate limiting | `src/apis/client.rs`, `src/apis/manager.rs`, `src/apis/stats.rs`, `src/apis/dexscreener/`, `src/apis/geckoterminal/`, `src/apis/rugcheck/`, `src/apis/coingecko/`, `src/apis/defillama/` | `api_client.py`, `dexscreener_api.py`, `market_data.py`, `pool_registry.py`, provider scanners, `tests/test_api_client_stats.py`, `tests/test_dexscreener_api.py`, `dashboard.py` | Partial comparison; per-host/per-endpoint stats, request coalescing, thread-local sessions and additional DexScreener endpoints implemented; dedicated provider manager and full endpoint integration remain open |
 | Trading admission and exits | Trader, safety gates, entry/exit evaluators | `main.py`, `trading_manager.py`, `entry_intelligence.py`, `exit_policy.py`, `risk_manager.py` | Not audited |
 | Positions and accounting | Positions lifecycle, DCA, partial exits, P&L | `position_policy.py`, `paper_trading.py`, `database.py` | Not audited |
 | Copy trading and wallet watch | Copy tasks, shared wallet watch, durable cursor/replay handling | `copy_*.py`, `copy_event_parser.py`, `sniper_scanner.py` | Not audited |
@@ -77,6 +77,9 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 - Remaining filter gaps: ScreenerBot's `MetaStage` resolves and requires valid decimals and applies a default 180-minute age and cooldown; Trojan's age floor defaults to zero and no equivalent decimals-resolution/cooldown stage has been verified. ScreenerBot's DexScreener filter defaults are source-specific (e.g. $15k minimum liquidity, $50k minimum market cap, transaction and volume floors, logo required), while Trojan's current market filter is provider-agnostic and has looser defaults. GeckoTerminal is disabled by default in ScreenerBot filtering; Trojan currently accepts Gecko market snapshots through its own fallback path. These are open behavior differences, not accepted parity.
 
 - API client comparison: ScreenerBot centralizes provider clients in a singleton API manager and exposes total/success/failure/cache hit/cache miss/average-latency statistics per client. Trojan already had host/endpoint rate buckets, serialized locks, shared 429 cooldown, Retry-After parsing, retries, bounded cache and host status; it lacked equivalent per-endpoint request statistics. `api_client.py` now tracks total/success/failure, cache hits/misses, last request/success/error, last error message, average response time and derived success/cache-hit rates per host and endpoint. `dashboard.py` already returns `get_api_status()` in `/api/overview`, so the new stats are exposed without a separate route. Identified API gaps: ScreenerBot has provider client objects with explicit enabled-state and typed errors; Trojan centralizes this in a generic host/endpoint client. Trojan now coalesces concurrent identical cacheable calls (accurate cache-hit stats) and uses thread-local pooled `requests.Session` connections. Remaining API differences include no dedicated per-provider client objects/manager and no separate retry/429/status-code counters in the stats payload.
+
+- DexScreener API comparison: ScreenerBot exposes token-pairs (all pools), batch token snapshots, pair lookup, search, latest profiles, latest/top boosts, token orders and supported chains. Trojan already had the batch market endpoint, discovery profiles/boosts and a background `pool_registry.py` full token-pairs fetch with GeckoTerminal completion. Added independent `dexscreener_api.py` wrappers for token-pairs, batch snapshots, pair lookup, search, token orders and supported chains, with URL/input validation and response-shape checks. Focused tests cover the new API surface. The pair lookup/search/orders/chains wrappers are available for integration but are not yet connected to a dashboard workflow or strategy decision path.
+- CoinGecko and DeFiLlama comparison: Trojan's `discovery/screenerbot_sources.py` already filters CoinGecko's `platforms.solana` addresses and DeFiLlama's chain list/address records; it uses the optional CoinGecko demo API key and source-level validation. No missing feature was established in this sample, but complete failure/rate-limit/config behavior remains to be tested.
 - This is an initial sample, not a claim that all discovery files or edge cases have been inspected.
 
 ## Work completed in this audit session (filtering and discovery continuation)
@@ -99,7 +102,10 @@ ScreenerBot is substantially larger because its repository includes a full Rust 
 - `api_client.py`: added per-host/per-endpoint request statistics and exposed them through the existing dashboard `/api/overview` payload. Stats include successful/failed logical requests, cache hits/misses, average response time, last request/success/error timestamps, last error text and derived rates.
 - Added `tests/test_api_client_stats.py` for success/cache-hit behavior, failures and independent endpoint buckets. Stabilized `tests/test_expanded_rugcheck_risk.py` by pinning the creator-share thresholds in the test so deployment-specific environment overrides cannot change its expected severity.
 - API commit headlines: `feat(api): add per-host request and cache statistics`; `fix(api): correct per-endpoint stats iteration syntax`; `fix(api): count cache misses only for cache-enabled requests`; `test(api): cover per-host request and cache statistics`; `test(rugcheck): isolate creator risk threshold defaults`.
-- Latest verified source revision `e7bfc0311e7979558b142f140319232bfd910893`: 919 unit tests passed and full validation succeeded, including Python module compilation, live-execution safety locks, dashboard smoke checks and paper-only status (run `45246578309`).
+- Latest verified API stats and resilience revision `2d17b0ee1ba2d13b76d1c4217c56d7952b18eefc`: 931 unit tests passed and full validation succeeded, including Python compilation, live-execution safety locks, dashboard route smoke tests and paper-only status (runs `45247136339` and `45247122383`).
+- `dexscreener_api.py`: added independent validated wrappers for token-pairs, batch snapshots, pair lookup, search, orders and supported chains. `tests/test_dexscreener_api.py` covers valid responses, malformed shapes, input validation and batch limits.
+- DexScreener API commit headlines: `feat(api): add missing DexScreener pool search and order endpoints`; `test(api): cover DexScreener pool search and order endpoints`.
+- Latest verified DexScreener API revision `fc1541d81f510571f2225543f9c91ca5d1124cd6`: 930 unit tests passed and full validation succeeded (run `45247042545`).
 
 
 - `rugcheck.py`: aligned default holder/insider/creator/transfer-fee/LP-lock thresholds with ScreenerBot; regular-token missing LP-lock data remains non-blocking, while Pump.fun missing lock data remains UNKNOWN. Added `tests/test_screenerbot_rugcheck_defaults.py` and updated existing fixture expectations.
