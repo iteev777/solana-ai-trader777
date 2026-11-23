@@ -55,7 +55,7 @@ class AdaptiveLearningTests(unittest.TestCase):
     def test_five_recent_losses_cap_multiplier_even_after_profitable_history(self):
         wins = [{"action": "SELL", "strategy": "main", "profit_loss": 2.0}] * 25
         losses = [{"action": "SELL", "strategy": "main", "profit_loss": -0.25}] * 5
-        profile = self._report(list(reversed(losses + wins)))["strategies"][0]
+        profile = self._report(list(reversed(wins + losses)))["strategies"][0]
         self.assertEqual(profile["current_losing_streak"], 5)
         self.assertEqual(profile["size_multiplier"], 0.8)
 
