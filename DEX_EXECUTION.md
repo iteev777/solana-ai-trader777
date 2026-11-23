@@ -51,6 +51,27 @@ X-Trojan-Confirm-Live: 1
 }
 ```
 
+
+## Non-custodial ATA creation order
+
+When the wallet does not yet have its canonical legacy SPL token account, call
+`POST /api/ata-order` with dashboard authentication, `X-Trojan-Action: 1`,
+and JSON containing `wallet` and `mint` (both public keys). The endpoint
+checks the mint owner/layout, derives the canonical ATA, checks wallet SOL,
+fetches the exact 165-byte token-account rent exemption and message fee, builds
+an Associated Token Program `CreateIdempotent` instruction, and simulates the
+unsigned transaction. The response contains the unsigned base64 transaction,
+ATA address, rent/fee/reserve breakdown, and simulation result. The connected
+wallet must review and sign it locally; this endpoint never signs or broadcasts.
+
+If the ATA already exists and validates, the endpoint reports
+`ATA_ALREADY_EXISTS` and returns no transaction. Token-2022 mints are rejected.
+The order is a separate user-approved transaction; after it confirms, rerun
+wallet preflight and create the swap order. Rent and fees are estimates from
+confirmed RPC state and can change before signing; the wallet must review the
+transaction and current balance. This is not evidence of mainnet end-to-end
+execution.
+
 ## Read-only wallet preflight
 
 Before requesting a native Raydium CPMM or PumpSwap order, the dashboard can
