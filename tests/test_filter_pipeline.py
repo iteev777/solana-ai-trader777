@@ -161,6 +161,46 @@ class FilterPipelineTests(unittest.TestCase):
             result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "PASS")
 
+    def test_filter_stages_short_circuit_after_first_rejection(self):
+        token = dict(self.token, symbol="")
+        with patch.object(filter_pipeline, "_activity_stage", side_effect=AssertionError("later stage ran")):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "EMPTY_SYMBOL")
+        self.assertEqual([item["stage"] for item in result["decisions"]], ["metadata"])
+
+    def test_invalid_boolean_environment_value_preserves_safe_default(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "flase"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_unknown_authority_is_not_treated_as_revoked(self):
+        token = dict(self.token, mutable=False, freezeAuthority="unknown")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_string_false_mutability_is_normalized(self):
+        token = dict(self.token, mutable="false", freezeAuthority="Authority111")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_metadata_name_falls_back_to_base_token_when_top_level_is_empty(self):
+        token = dict(self.token, name=None, baseToken={"name": "Base Name", "address": "Mint111"})
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["decisions"][0]["metrics"]["name"], "Base Name")
+
+    def test_token_mint_mismatch_is_rejected(self):
+        token = dict(self.token, address="DifferentMint")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "TOKEN_MINT_MISMATCH")
+
+    def test_quality_score_outside_unit_interval_is_rejected(self):
+        token = dict(self.token, candidate_quality={"score": 101, "tier": "strong"})
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_QUALITY_SCORE": "60"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "INVALID_CANDIDATE_QUALITY_SCORE")
+
     def test_missing_optional_momentum_does_not_block_by_default(self):
         token = dict(self.token)
         token.pop("priceChange")
