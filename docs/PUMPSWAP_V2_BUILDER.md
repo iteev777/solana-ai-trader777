@@ -45,9 +45,10 @@ official PumpSwap IDL. The builder does not use a hand-invented account list.
   single-use external-signature broadcast gate is documented in
   `docs/NATIVE_EXECUTION.md`; it requires `TROJAN_NATIVE_EXECUTE_ENABLED=true`
   and explicit confirmation. The native broadcast path is hard locked in code;
-  setting `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. A separate
-  Jupiter V2 execute adapter has its own env gate and is not the PumpSwap native
-  path; the global live-lock audit remains a release blocker.
+  setting `TROJAN_NATIVE_EXECUTE_ENABLED=true` cannot unlock it. The separate
+  Jupiter V2 `/execute` adapter is also hard locked in code; no environment
+  variable or request confirmation can unlock it. The repository-wide live-path
+  audit remains a release blocker.
 - A successful simulation is not a guarantee of later inclusion or execution;
   pool state may change after simulation and on-chain min-out remains the final
   price guard.
