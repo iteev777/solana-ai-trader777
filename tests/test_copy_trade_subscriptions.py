@@ -113,6 +113,17 @@ class CopyWalletSubscriptionTests(unittest.TestCase):
         self.assertEqual(processed, ["oldest", "newest"])
         self.assertEqual(result, {"processed": 2, "wallets": 1, "errors": 0})
 
+    def test_null_transaction_result_does_not_look_like_a_completed_decode(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {"result": None}
+        with patch.object(copy_trade, "_rpc_url", return_value="https://rpc.example"), \
+             patch.object(copy_trade.requests, "post", return_value=Response()):
+            with self.assertRaisesRegex(RuntimeError, "not indexed yet"):
+                copy_trade._fetch_wallet_transaction("sig-pending", "wallet-A")
+
     def test_poll_wallet_activity_isolates_wallet_rpc_failures(self):
         with patch.object(copy_trade, "_fetch_wallet_signatures", side_effect=[RuntimeError("offline"), []]):
             result = copy_trade._poll_wallet_activity(["wallet-A", "wallet-B"])
