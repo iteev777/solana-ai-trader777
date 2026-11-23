@@ -206,3 +206,21 @@ regression suite are implemented.
 
 Unknown or unregistered protocols fail closed. The capability inventory is
 descriptive; it does not grant execution permission.
+
+
+## Orca Whirlpool native unsigned swap builder
+
+Trojan now includes a classic Orca Whirlpool `Swap` instruction builder in
+`orca_whirlpool_builder.py`. It uses the official Whirlpool Swap discriminator,
+Borsh argument layout, and account order (legacy token program, external wallet
+authority, Whirlpool, owner A/vault A, owner B/vault B, three tick arrays,
+oracle). The builder re-quotes from confirmed on-chain state, checks quote-slot
+freshness, validates the pool/vault/mint/user token accounts, and creates an
+unsigned legacy transaction for external wallet signing.
+
+This first version is deliberately restricted to static-fee classic Whirlpool
+pools and legacy SPL Token. Adaptive-fee state, Token-2022, unsupported tick
+array layouts, stale quotes, missing required accounts, and invalid account
+ownership fail closed. The unsigned transaction can be RPC-simulated, but the
+server does not sign or broadcast it. No mainnet end-to-end execution has been
+established; live trading remains disabled.
