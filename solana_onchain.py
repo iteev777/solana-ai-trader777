@@ -1009,15 +1009,30 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
             raise ValueError("FluxBeam pool relationships or fee configuration changed during snapshot")
     if decoded["curve_type"] != 0:
         raise ValueError("FluxBeam pool curve is not ConstantProduct")
-    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("FluxBeam Token-2022 mints are refused until transfer-fee behavior is verified")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM or vault_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("FluxBeam vaults must use the legacy SPL Token program")
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("FluxBeam mint uses an unsupported token program")
+    if vault_base_acc.get("owner") != token_program_base or vault_quote_acc.get("owner") != token_program_quote:
+        raise ValueError("FluxBeam vault token program does not match its mint")
+    if token_program_base == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_base_acc.get("data", b""))
+    if token_program_quote == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_quote_acc.get("data", b""))
 
+    authority, _ = _find_program_address([_b58decode(pool_address)], PROGRAMS["fluxbeam_amm"])
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    reserve_base = _token_amount(vault_base_acc, decoded["base_mint"])
-    reserve_quote = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    reserve_base = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], authority,
+        "FluxBeam base vault",
+    )
+    reserve_quote = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], authority,
+        "FluxBeam quote vault",
+    )
     if reserve_base <= 0 or reserve_quote <= 0:
         raise ValueError("FluxBeam reserves are empty")
 
@@ -1072,6 +1087,11 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         "trade_fee_amount": trade_fee,
         "owner_fee_amount": owner_fee,
         "total_fee_amount": total_fee,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
+        "token_program_input": token_program_base if input_mint == decoded["base_mint"] else token_program_quote,
+        "token_program_output": token_program_quote if input_mint == decoded["base_mint"] else token_program_base,
+        "token2022_zero_fee_supported": TOKEN_2022_PROGRAM in (token_program_base, token_program_quote),
         "out_amount": output_amount,
         "minimum_out_amount": minimum_out,
         "price_impact_percent": round(impact, 6),
