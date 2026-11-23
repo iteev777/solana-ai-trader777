@@ -149,10 +149,10 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "adaptive-fee"):
             self.quote(accounts=accounts)
 
-    def test_unknown_oracle_layout_is_rejected(self):
+    def test_any_oracle_pda_is_rejected_for_static_fee_adapter(self):
         accounts = list(self.accounts)
         accounts[5] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(20)}
-        with self.assertRaisesRegex(ValueError, "oracle layout"):
+        with self.assertRaisesRegex(ValueError, "adaptive-fee oracle is present"):
             self.quote(accounts=accounts)
 
     def test_token_2022_mint_is_rejected(self):
