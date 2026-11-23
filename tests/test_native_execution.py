@@ -41,6 +41,18 @@ class NativeExecutionTests(unittest.TestCase):
                 {"status": "REJECT", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
             )
 
+    def test_raydium_amm_v4_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_amm_v4", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("raydium_amm_v4", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
     def test_orca_whirlpool_approval_is_registered_but_stays_gated(self):
         approval = native.register_native_approval(
             self.unsigned, "orca_whirlpool", 200,
