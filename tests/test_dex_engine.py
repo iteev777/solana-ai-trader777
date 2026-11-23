@@ -287,5 +287,37 @@ class MultiPoolDexEngineTests(unittest.TestCase):
 
 
 
+    def test_protocol_capability_registry_separates_quote_from_execution(self):
+        import dex_capabilities
+
+        report = dex_capabilities.get_dex_capabilities([
+            "raydium_cpmm", "orca_whirlpool", "meteora_dlmm"
+        ])
+        raydium = report["protocols"]["raydium_cpmm"]
+        orca = report["protocols"]["orca_whirlpool"]
+        self.assertTrue(raydium["pool_decoder_available"])
+        self.assertTrue(raydium["quote"]["available"])
+        self.assertTrue(raydium["transaction_builder"]["available"])
+        self.assertFalse(raydium["broadcast"])
+        self.assertFalse(raydium["live_execution"])
+        self.assertTrue(orca["pool_decoder_available"])
+        self.assertTrue(orca["quote"]["available"])
+        self.assertFalse(orca["transaction_builder"]["available"])
+        self.assertFalse(orca["live_execution"])
+        self.assertEqual(
+            report["execution_policy"],
+            "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED"
+        )
+
+    def test_unknown_protocol_defaults_to_no_execution_capability(self):
+        import dex_capabilities
+
+        report = dex_capabilities.get_dex_capabilities([])
+        self.assertNotIn("unknown_dex", report["protocols"])
+        self.assertEqual(report["native_builder_count"], 2)
+        self.assertEqual(report["execution_policy"],
+                         "ALL_PROTOCOLS_LIVE_EXECUTION_DISABLED")
+
+
 if __name__ == "__main__":
     unittest.main()
