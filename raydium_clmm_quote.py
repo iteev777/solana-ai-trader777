@@ -215,6 +215,8 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     ] + [address for _, address in arrays]
     snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Raydium CLMM snapshot must include a positive confirmed slot")
     if (len(accounts) != len(addresses)
             or any(item is None for item in accounts[:6])
             or any(item is None for item in accounts[7:])):
@@ -291,7 +293,7 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         decoded_ticks, zero_for_one, received_by_pool, fee_rate, coverage_tick,
     )
     output_reserve = reserve1 if zero_for_one else reserve0
-    if quote["out_amount"] > output_reserve:
+    if quote["out_amount"] >= output_reserve:
         raise ValueError("Raydium CLMM quote exceeds the output vault reserve")
     gross_output = quote["out_amount"]
     expected_output_amount = token2022.conservative_net_amount(
@@ -309,7 +311,7 @@ def quote_raydium_clmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if not math.isfinite(impact):
         raise ValueError("Raydium CLMM price impact is invalid")
     age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("Raydium CLMM confirmed snapshot is stale")
 
     minimum_out = expected_output_amount * (10_000 - slippage_bps) // 10_000
