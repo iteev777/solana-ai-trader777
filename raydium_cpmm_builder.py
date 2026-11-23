@@ -7,7 +7,6 @@ handling is fully integrated into both quote and execution paths.
 """
 import base64
 import hashlib
-import struct
 import os
 import struct
 import time
@@ -18,6 +17,7 @@ import token2022_inspector as token2022
 
 CPMM_PROGRAM_ID = chain.PROGRAMS["raydium_cpmm"]
 TOKEN_PROGRAM_ID = chain.TOKEN_PROGRAM
+ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
 OBSERVATION_SEED = b"observation"
 AUTHORITY_SEED = b"vault_and_lp_mint_auth_seed"
 MAX_QUOTE_SLOT_LAG = 32
