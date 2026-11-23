@@ -222,15 +222,15 @@ def _process_wallet_signature(wallet, signature):
     if inserted:
         send_alert(
             "COPY WATCH " + event["action"]
-            + "\\nWallet: " + wallet
-            + "\\nMint: " + event["token_mint"]
-            + "\\nToken delta: " + str(round(event["token_delta"], 6))
-            + "\\nSOL delta: " + (
+            + "\nWallet: " + wallet
+            + "\nMint: " + event["token_mint"]
+            + "\nToken delta: " + str(round(event["token_delta"], 6))
+            + "\nSOL delta: " + (
                 str(round(event["sol_delta"], 6))
                 if event["sol_delta"] is not None else "n/a"
             )
-            + "\\nClassification: " + event.get("classification_reason", "unknown")
-            + "\\nSignature: " + signature
+            + "\nClassification: " + event.get("classification_reason", "unknown")
+            + "\nSignature: " + signature
         )
     if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
         try:
