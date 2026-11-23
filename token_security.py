@@ -13,11 +13,35 @@ TOKEN_PROGRAMS = {
 
 
 def _number(value):
+    if isinstance(value, bool):
+        return None
     try:
         result = float(value)
         return result if math.isfinite(result) and result >= 0 else None
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _raw_u64(value, label):
+    if isinstance(value, bool):
+        raise ValueError(label + " must be a raw u64 integer")
+    if isinstance(value, int):
+        result = value
+    elif isinstance(value, str) and value.isdigit():
+        result = int(value)
+    else:
+        raise ValueError(label + " must be a raw u64 integer")
+    if not 0 <= result <= (1 << 64) - 1:
+        raise ValueError(label + " is outside the u64 range")
+    return result
+
+
+def _authority_state(value):
+    if value is None or value is False:
+        return "DISABLED"
+    if isinstance(value, str) and value.strip():
+        return "ACTIVE"
+    return "UNKNOWN"
 
 
 def get_token_security_report(mint, largest_limit=20):
@@ -37,9 +61,8 @@ def get_token_security_report(mint, largest_limit=20):
     token_program = mint_account.get("owner")
     if token_program not in TOKEN_PROGRAMS:
         raise ValueError("Mint account owner is not a supported SPL Token program")
-    parsed = (
-        (mint_account.get("data") or {}).get("parsed") or {}
-    ).get("info") or {}
+    data = mint_account.get("data")
+    parsed = ((data.get("parsed") or {}).get("info") or {}) if isinstance(data, dict) else {}
     if not isinstance(parsed, dict) or parsed.get("isInitialized") is not True:
         raise ValueError("Mint account is not initialized or parsed")
     if "mintAuthority" not in parsed or "freezeAuthority" not in parsed:
@@ -47,38 +70,53 @@ def get_token_security_report(mint, largest_limit=20):
 
     mint_authority = parsed.get("mintAuthority")
     freeze_authority = parsed.get("freezeAuthority")
-    decimals = int(parsed.get("decimals", -1))
-    if not 0 <= decimals <= 18:
+    decimals = parsed.get("decimals")
+    if isinstance(decimals, bool) or not isinstance(decimals, int) or not 0 <= decimals <= 18:
         raise ValueError("Mint decimals are invalid")
+
+    if isinstance(largest_limit, bool) or not isinstance(largest_limit, int):
+        raise ValueError("Largest-account limit must be an integer")
+    limit = max(1, min(largest_limit, 20))
 
     supply_result = chain._rpc(
         "getTokenSupply", [mint, {"commitment": "confirmed"}]
     )
-    supply_info = (supply_result or {}).get("value") or {}
-    supply_raw = int(supply_info.get("amount", "0"))
+    supply_info = (supply_result or {}).get("value")
+    if not isinstance(supply_info, dict):
+        raise ValueError("Mint supply response is malformed")
+    supply_raw = _raw_u64(supply_info.get("amount"), "Mint supply")
     if supply_raw <= 0:
         raise ValueError("Mint supply is unavailable or zero")
+    supply_decimals = supply_info.get("decimals")
+    if supply_decimals is not None and (
+        isinstance(supply_decimals, bool) or not isinstance(supply_decimals, int)
+        or supply_decimals != decimals
+    ):
+        raise ValueError("Mint supply decimals do not match parsed mint decimals")
 
     largest_result = chain._rpc(
         "getTokenLargestAccounts",
         [mint, {"commitment": "confirmed"}]
     )
-    accounts = (largest_result or {}).get("value") or []
+    accounts = (largest_result or {}).get("value")
     if not isinstance(accounts, list):
         raise ValueError("Largest token account response is invalid")
-    accounts = accounts[:max(1, min(int(largest_limit), 20))]
     amounts = []
-    for item in accounts:
+    for item in accounts[:limit]:
         if not isinstance(item, dict):
-            continue
-        amount = _number(item.get("amount"))
+            raise ValueError("Largest token account entry is malformed")
         address = item.get("address")
-        if amount is not None and isinstance(address, str):
-            amounts.append({"address": address, "amount": amount})
+        if not isinstance(address, str) or len(chain._b58decode(address)) != 32:
+            raise ValueError("Largest token account address is invalid")
+        amount = _raw_u64(item.get("amount"), "Largest token account amount")
+        amounts.append({"address": address, "amount": amount})
     if not amounts:
         raise ValueError("Largest token account data unavailable")
+    amounts.sort(key=lambda item: item["amount"], reverse=True)
 
     top10_raw = sum(item["amount"] for item in amounts[:10])
+    if top10_raw > supply_raw:
+        raise ValueError("Largest token account balances exceed total mint supply")
     top10_pct = min(100.0, top10_raw / supply_raw * 100.0)
 
     owner_concentration = None
@@ -98,21 +136,25 @@ def get_token_security_report(mint, largest_limit=20):
             [[item["address"] for item in amounts],
              {"encoding": "jsonParsed", "commitment": "confirmed"}]
         )
-        owner_accounts = (owner_result or {}).get("value") or []
-        owner_amounts = {}
-        for index, (item, account) in enumerate(zip(amounts, owner_accounts)):
-            info = (
-                (((account or {}).get("data") or {}).get("parsed") or {})
-                .get("info") or {}
-            )
-            owner = info.get("owner")
-            if isinstance(owner, str) and owner:
+        owner_accounts = (owner_result or {}).get("value")
+        if isinstance(owner_accounts, list) and len(owner_accounts) == len(amounts):
+            owner_amounts = {}
+            owners_complete = True
+            for index, (item, account) in enumerate(zip(amounts, owner_accounts)):
+                info = (
+                    (((account or {}).get("data") or {}).get("parsed") or {})
+                    .get("info") or {}
+                ) if isinstance(account, dict) else {}
+                owner = info.get("owner") if isinstance(info, dict) else None
+                if not isinstance(owner, str) or not owner:
+                    owners_complete = False
+                    continue
                 owner_amounts[owner] = owner_amounts.get(owner, 0.0) + item["amount"]
                 account_details[index]["authority"] = owner
-        if owner_amounts:
-            owner_concentration = min(
-                100.0, max(owner_amounts.values()) / supply_raw * 100.0
-            )
+            if owners_complete and owner_amounts:
+                owner_concentration = min(
+                    100.0, max(owner_amounts.values()) / supply_raw * 100.0
+                )
     except Exception:
         # Account-level data remains useful; owner aggregation is optional.
         owner_concentration = None
@@ -132,8 +174,8 @@ def get_token_security_report(mint, largest_limit=20):
         "token_program": token_program,
         "decimals": decimals,
         "supply": supply_raw / (10 ** decimals),
-        "mint_authority": "ACTIVE" if mint_authority else "DISABLED",
-        "freeze_authority": "ACTIVE" if freeze_authority else "DISABLED",
+        "mint_authority": _authority_state(mint_authority),
+        "freeze_authority": _authority_state(freeze_authority),
         "top10_token_account_pct": round(top10_pct, 4),
         "largest_token_accounts": len(amounts),
         "largest_token_account_details": account_details,
@@ -150,7 +192,10 @@ def get_token_security_report(mint, largest_limit=20):
         "checked_at": time.time(),
         "commitment": "confirmed",
         "source": "solana_rpc",
-        "safe_authorities": mint_authority is None and freeze_authority is None,
+        "safe_authorities": (
+            _authority_state(mint_authority) == "DISABLED"
+            and _authority_state(freeze_authority) == "DISABLED"
+        ),
     }
 
 
