@@ -306,5 +306,13 @@ class Token2022InspectorTests(unittest.TestCase):
             )
 
 
+    def test_zero_fee_validator_requires_transfer_fee_authority_to_be_disabled(self):
+        config = bytearray(108)
+        config[:32] = bytes([9]) * 32
+        raw = mint_data(tlv(1, bytes(config)))
+        with self.assertRaisesRegex(ValueError, "authority must be permanently disabled"):
+            inspector.validate_zero_fee_mint_data(raw)
+
+
 if __name__ == "__main__":
     unittest.main()
