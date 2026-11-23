@@ -33,6 +33,7 @@ MIN_FETCH_INTERVAL = _minimum_fetch_interval()
 TIMEFRAME = "minute"
 AGGREGATE = 1
 CANDLE_LIMIT = 1000
+MAX_HISTORY_CANDLES = 43200
 
 
 def _cache_get(key, now=None):
@@ -302,7 +303,11 @@ def calculate_multi_timeframe_indicators(candles):
     Higher timeframes remain explicitly not-ready until enough complete
     aggregate candles exist; no synthetic history or forward filling is used.
     """
-    normalized, quality = normalize_ohlcv_rows(candles)
+    normalized, _history_quality = normalize_ohlcv_rows(candles)
+    # The retained history can contain old gaps or stale edges. Live readiness
+    # is judged from the newest API-sized window; older history still feeds
+    # complete higher-timeframe indicator series.
+    _, quality = normalize_ohlcv_rows(normalized[-CANDLE_LIMIT:])
     arrays = [
         [row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"]]
         for row in normalized
@@ -311,7 +316,7 @@ def calculate_multi_timeframe_indicators(candles):
     ready_trends = []
     for name, seconds in TIMEFRAMES.items():
         aggregated = arrays if name == "1m" else aggregate_candles(arrays, seconds)
-        result = calculate_indicators(aggregated)
+        result = calculate_indicators(aggregated[-CANDLE_LIMIT:])
         result["timeframe"] = name
         if result.get("ready") and not quality["ready"]:
             result["ready"] = False
@@ -376,13 +381,16 @@ def fetch_pool_indicators(pool_address, force=False):
         attributes = data.get("attributes", {}) if isinstance(data, dict) else {}
         raw = attributes.get("ohlcv_list", [])
         normalized, _quality = normalize_ohlcv_rows(raw)
-        indicators = calculate_multi_timeframe_indicators(normalized)
-        indicators["pool_address"] = key
-        _cache_put(key, indicators)
+        history = normalized
         if normalized:
             try:
                 import database
                 database.save_market_candles(key, "1m", normalized)
+                persisted = database.get_market_candles(
+                    key, "1m", limit=MAX_HISTORY_CANDLES
+                )
+                if persisted:
+                    history, _history_quality = normalize_ohlcv_rows(persisted)
                 now = time.monotonic()
                 if now - _last_prune >= 3600:
                     try:
@@ -394,6 +402,9 @@ def fetch_pool_indicators(pool_address, force=False):
                     _last_prune = now
             except Exception as error:
                 print("[TROJAN V2] OHLCV STORAGE WARNING:", type(error).__name__, flush=True)
+        indicators = calculate_multi_timeframe_indicators(history)
+        indicators["pool_address"] = key
+        _cache_put(key, indicators)
         return indicators
     except Exception as error:
         return {"ready": False, "pool_address": key, "reason": str(error)[:220]}
