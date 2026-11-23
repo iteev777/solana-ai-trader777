@@ -23,6 +23,20 @@ A commit or passing unit suite is not, by itself, proof of trading performance.
 - **Restore implementation added in code:** `database.restore_database()` validates SQLite integrity and exact schema version, creates an emergency snapshot, atomically replaces the database in offline maintenance mode, and requires restart. Automated restore tests are now added; the deployed backup/restore drill is still required.
 - A review of live provider error/latency telemetry during a sustained run.
 
+## ScreenerBot workflow parity
+
+**Implemented for paper-mode testing**
+- Multi-source token discovery, candidate provenance/quality ranking and durable source-health telemetry.
+- Ordered candidate filtering, configurable MAIN/SNIPER rule trees and multi-timeframe OHLCV indicators with freshness gates.
+- Optional PumpPortal live trade-window observation for Pump.fun candidates, including buyer count, volume, buy/sell ratio, concentration and price movement. It is off by default because the provider meters trade subscriptions; enable only with an explicit API key and environment flag.
+- RugCheck and confirmed on-chain mint/pool validation, multi-pool DEX quote comparison, paper position/exit management, copy-wallet paper signals, adaptive paper sizing and authenticated mobile dashboard telemetry.
+- The observer and discovery use one shared PumpPortal WebSocket; no per-token sockets are opened.
+
+**Not an acceptance claim**
+- The trade observer does not cover every non-PumpPortal venue with buyer-level events. Other venues use their market windows, OHLCV and on-chain pool snapshots; missing buyer-level data is not fabricated.
+- Provider API key setup and any metered trade-stream usage remain user-controlled. The observer stays disabled unless explicitly enabled.
+- No profitability or ScreenerBot outperformance is claimed without a sustained, same-market paper comparison.
+
 ## 2. Test runs
 
 **Automated checks**
