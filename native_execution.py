@@ -93,7 +93,10 @@ def register_native_approval(unsigned_transaction, protocol, last_valid_block_he
             or simulation.get("status") != "PASS"
             or simulation.get("signature_verification") != "DISABLED_UNSIGNED_SIMULATION"):
         raise NativeExecutionRejected("A successful unsigned RPC simulation report is required")
-    if protocol not in ("raydium_cpmm", "pumpswap", "orca_whirlpool", "meteora_dlmm"):
+    if protocol == "devnet_system_transfer":
+        if os.getenv("TROJAN_DEVNET_E2E_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
+            raise NativeExecutionRejected("Devnet test protocol is disabled")
+    elif protocol not in ("raydium_cpmm", "pumpswap", "orca_whirlpool", "meteora_dlmm"):
         raise NativeExecutionRejected("Unsupported native transaction protocol")
     if isinstance(last_valid_block_height, bool) or not isinstance(last_valid_block_height, int) or last_valid_block_height <= 0:
         raise NativeExecutionRejected("Valid block height is required")
@@ -121,6 +124,35 @@ def register_native_approval(unsigned_transaction, protocol, last_valid_block_he
         "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
         "message_sha256": entry["message_sha256"],
         "approval": "SIMULATED_SINGLE_USE",
+    }
+
+
+def consume_native_approval(signed_transaction, request_id):
+    """Verify and atomically consume an externally signed approval.
+
+    Shared by the locked live path and the isolated devnet E2E harness. This
+    helper never performs an RPC call or broadcasts a transaction.
+    """
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        raise NativeExecutionRejected("A valid single-use native request_id is required")
+    raw = _decode_transaction(signed_transaction)
+    signature, message = _split_transaction(raw, require_signature=True)
+    now = time.monotonic()
+    with _lock:
+        approval = _approvals.pop(request_id, None)
+    if approval is None:
+        raise NativeExecutionRejected("Native transaction approval is missing, expired or already consumed")
+    if approval["expires_at"] <= now:
+        raise NativeExecutionRejected("Native transaction approval has expired")
+    if not secrets.compare_digest(message, approval["message"]):
+        raise NativeExecutionRejected("Signed transaction message differs from the simulated approval")
+    return {
+        "signature": signature,
+        "message": message,
+        "protocol": approval["protocol"],
+        "last_valid_block_height": approval["last_valid_block_height"],
+        "expires_at": approval["expires_at"],
+        "message_sha256": approval["message_sha256"],
     }
 
 
@@ -194,20 +226,10 @@ def execute_native_signed_transaction(signed_transaction, request_id, confirmed=
         raise NativeExecutionLocked("Native live execution is disabled by TROJAN_NATIVE_EXECUTE_ENABLED")
     if confirmed is not True:
         raise NativeExecutionLocked("Explicit native live execution confirmation is required")
-    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
-        raise NativeExecutionRejected("A valid single-use native request_id is required")
-
-    raw = _decode_transaction(signed_transaction)
-    signature, message = _split_transaction(raw, require_signature=True)
-    now = time.monotonic()
-    with _lock:
-        approval = _approvals.pop(request_id, None)
-    if approval is None:
-        raise NativeExecutionRejected("Native transaction approval is missing, expired or already consumed")
-    if approval["expires_at"] <= now:
-        raise NativeExecutionRejected("Native transaction approval has expired")
-    if not secrets.compare_digest(message, approval["message"]):
-        raise NativeExecutionRejected("Signed transaction message differs from the simulated approval")
+    approval = consume_native_approval(signed_transaction, request_id)
+    signature = approval["signature"]
+    if approval["protocol"] == "devnet_system_transfer":
+        raise NativeExecutionRejected("Devnet test transactions cannot enter the native live execution path")
 
     try:
         current_height = chain._rpc("getBlockHeight", [{"commitment": "confirmed"}])
