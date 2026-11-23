@@ -402,3 +402,22 @@ This does not enable every Meteora DLMM pool mode or arbitrary Token-2022
 extensions. Only the explicitly validated function_type=0 path is included;
 other modes and transfer-hook mints remain blocked. Signing and broadcasting
 remain disabled.
+
+
+## Token-2022 transfer-fee handling: PumpSwap V2
+
+The native PumpSwap quote path now reads each mint's actual token-program owner,
+validates both mint extension sets and both vault token-account layouts, and
+applies a conservative transfer-fee allowance to the amount received by the
+pool on buys and sells. It then applies the output mint's transfer fee after
+PumpSwap's own trade fees, so the returned output and slippage minimum are net
+of both fee layers. Unsupported extensions such as transfer hooks remain
+fail-closed.
+
+The unsigned V2 builder rechecks the quote's base/quote token-program pair
+against the confirmed mint snapshot, validates the pool vaults, wallet ATAs,
+and configured buyback-recipient quote ATA using the correct token program,
+and places the base and quote token-program IDs in their respective V2
+instruction account slots. Token-2022 ATAs use their extension-aware account
+layouts; the builder does not assume 165 bytes for them. No account is created
+by the swap builder, and no signing or broadcasting is performed.
