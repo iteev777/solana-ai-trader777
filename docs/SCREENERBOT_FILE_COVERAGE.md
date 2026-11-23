@@ -833,8 +833,8 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/apis/manager.rs` | PENDING |  |
 | `src/apis/mod.rs` | PENDING |  |
 | `src/apis/native_price.rs` | PENDING |  |
-| `src/apis/rugcheck/mod.rs` | PENDING |  |
-| `src/apis/rugcheck/types.rs` | PENDING |  |
+| `src/apis/rugcheck/mod.rs` | MAPPED | `rugcheck.py`, `discovery/screenerbot_sources.py`, `api_client.py` | Report fetch/cache and four stats feeds map; Trojan uses shared HTTP telemetry/rate limiting and strict per-feed payload handling. Reference comment mentions summary/batch endpoints but this source revision implements report + new/recent/trending/verified only. |
+| `src/apis/rugcheck/types.rs` | MAPPED | `rugcheck.py`, `discovery/screenerbot_sources.py` | Trojan's flexible dict parser covers report fields and feed metadata; raw and normalized scores are now kept distinct. Reference uses typed response structures and authority fallback from nested token fields. |
 | `src/apis/stats.rs` | PENDING |  |
 | `src/arguments/banner.rs` | PENDING |  |
 | `src/arguments/help.rs` | PENDING |  |
@@ -905,7 +905,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/connectivity/raptor.rs` | PENDING |  |
 | `src/chains/solana/constants.rs` | PENDING |  |
 | `src/chains/solana/error.rs` | PENDING |  |
-| `src/chains/solana/filtering.rs` | MAPPED | `filter_pipeline.py`, `token_security.py`, `blacklist.py` | Mint/freeze authority and concentration signals partly map; known authority cache, full creator/update-authority integration and mandatory decimals resolver remain gaps. |
+| `src/chains/solana/filtering.rs` | MAPPED | `token_security.py`, `filter_pipeline.py`, `blacklist.py` | Strict mint/supply/holder RPC parsing and mint/freeze authority gates map. Reference also resolves decimals and known scam authorities through a dedicated cache; Trojan's metadata authority integration remains open. |
 | `src/chains/solana/layout.rs` | PENDING |  |
 | `src/chains/solana/mod.rs` | PENDING |  |
 | `src/chains/solana/pools/analyzer.rs` | PENDING |  |
@@ -996,8 +996,8 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/chains/solana/swaps/direct/venues/pumpfun_amm.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/pumpfun_legacy.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/venues/raydium_amm_v4.rs` | PENDING |  |
-| `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` | MAPPED | `raydium_clmm_quote.py`, `raydium_clmm_builder.py`, `tests/test_raydium_clmm_direct_quote.py` | Trojan read-only quote plus unsigned SWAP_V2 builder maps pool state, bitmap extension, tick arrays, Token-2022 transfer fees and fixed instruction accounts. Builder deliberately does not sign/broadcast; price-impact field semantics differ. |
-| `src/chains/solana/swaps/direct/venues/raydium_cpmm.rs` | PENDING |  |
+| `src/chains/solana/swaps/direct/venues/raydium_clmm.rs` | MAPPED | `token2022_inspector.py`, `raydium_clmm_quote.py`, `raydium_clmm_builder.py` | Token-2022 transfer-fee configuration and account extension allowlist map; unsupported transfer hooks/confidential/permanent-delegate/pausable behavior is rejected. Trojan uses conservative max of both epoch fees rather than fetching current epoch. |
+| `src/chains/solana/swaps/direct/venues/raydium_cpmm.rs` | MAPPED | `token2022_inspector.py`, `raydium_cpmm_quote.py`, `raydium_cpmm_builder.py` | Token-2022 compatibility checks map to shared inspector; exact per-venue Token-2022 instruction behavior remains separately audited. |
 | `src/chains/solana/swaps/direct/venues/token2022.rs` | PENDING |  |
 | `src/chains/solana/swaps/direct/verify.rs` | PENDING |  |
 | `src/chains/solana/swaps/funds.rs` | PENDING |  |
@@ -1168,7 +1168,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/filtering/sources/mod.rs` | PENDING |  |
 | `src/filtering/sources/rejection.rs` | PENDING |  |
 | `src/filtering/sources/rejection/tests.rs` | PENDING |  |
-| `src/filtering/sources/rugcheck.rs` | MAPPED | `rugcheck.py`, `main.py`, `blacklist.py` | RugCheck is mandatory in Trojan pre-strategy security after local filter pipeline rather than a first-class filter stage; source report checks and blacklist matching are split across modules. |
+| `src/filtering/sources/rugcheck.rs` | MAPPED | `rugcheck.py`, `main.py` | Trojan runs mandatory pre-strategy RugCheck analysis separately from the local filter stages; it applies holder, authority, insider, creator, transfer-fee and LP-lock controls. Default behavior is stricter in some missing-data/high-risk cases. |
 | `src/filtering/sources/symbols.rs` | MAPPED | `filter_pipeline.py` | Empty/numeric symbol handling maps; Trojan uses optional single-character policy and provider fallback. |
 | `src/filtering/stage.rs` | MAPPED | `filter_pipeline.py` | Trojan's ten-stage local pipeline maps broad responsibilities but currently keeps WAIT as a distinct state and has no per-chain stage applicability model; first-failure execution now lazy. |
 | `src/filtering/store.rs` | PENDING |  |
@@ -1542,7 +1542,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/tokens/search.rs` | PENDING |  |
 | `src/tokens/security/mod.rs` | PENDING |  |
 | `src/tokens/security/risk_band.rs` | PENDING |  |
-| `src/tokens/security/rugcheck.rs` | PENDING |  |
+| `src/tokens/security/rugcheck.rs` | MAPPED | `rugcheck.py`, `database.py`, `api_client.py` | Trojan has persistent report cache, in-flight request coalescing and analysis; reference additionally stores structured RugcheckData with 30-minute refresh and snapshots/events. Full persistence parity remains open. |
 | `src/tokens/security/rugcheck_server.rs` | PENDING |  |
 | `src/tokens/security/rugcheck_tests.rs` | PENDING |  |
 | `src/tokens/service.rs` | PENDING |  |
