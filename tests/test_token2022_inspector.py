@@ -81,6 +81,27 @@ class Token2022InspectorTests(unittest.TestCase):
                 {"basis_points": 100, "maximum_fee": 100}, True
             )
 
+    def test_tlv_parser_rejects_invalid_expected_account_type(self):
+        with self.assertRaisesRegex(ValueError, "account type is invalid"):
+            inspector.parse_tlv_extensions(mint_data(tlv(1, bytes(108))), 99)
+
+    def test_epoch_selection_rejects_values_outside_u64(self):
+        with self.assertRaisesRegex(ValueError, "u64"):
+            inspector.select_transfer_fee_schedule(
+                {"older": {}, "newer": {"epoch": 2}}, 1 << 64
+            )
+
+    def test_rpc_account_requires_explicit_base64_encoding(self):
+        with patch("solana_onchain._rpc", return_value={
+            "value": {
+                "owner": chain.TOKEN_2022_PROGRAM,
+                "data": ["AA==", "base58"],
+                "lamports": 1,
+            }
+        }):
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                inspector._read_account(key(33))
+
     def test_transfer_fee_config_rejects_wrong_extension_length(self):
         with self.assertRaisesRegex(ValueError, "108 bytes"):
             inspector.decode_transfer_fee_config(mint_data(tlv(1, bytes(107))))
