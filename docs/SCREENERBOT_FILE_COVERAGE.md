@@ -1365,7 +1365,7 @@ Tilarajat: PENDING = ei tarkastettu; MAPPED = Trojan-vastine tunnistettu ja vert
 | `src/secure_storage/mod.rs` | PENDING |  |
 | `src/secure_storage/password.rs` | PENDING |  |
 | `src/services/global.rs` | IMPLEMENT | Trojanilla ei ole prosessitason service manager singletonia; `service_health.py` vain lukee readiness-tietoja. Uusi itsenäinen `service_manager.py` tarvitaan managerin rekisteröinti-, status-cache- ja singleton-access -vastuulle, integrointi `main.py`:hin vasta lifecycle-auditin jälkeen. |
-| `src/services/health.rs` | MAPPED | Trojan `service_health.py` | Trojanin aggregate readiness report tarkistaa required/optional dependencies ja heartbeats; reference antaa per-service typed states Healthy/Degraded/Unhealthy/Starting/Stopping/Disabled. Tulevien heartbeatien fail-closed korjaus ja viisi testiä lisätty (`1c67eba`, `tests/test_service_health.py`); per-service health state -malli jää parity gapiksi. |
+| `src/services/health.rs` | MAPPED | Trojan `service_health.py` | Trojanin aggregate readiness report tarkistaa required/optional dependencies ja heartbeats; reference antaa per-service typed states Healthy/Degraded/Unhealthy/Starting/Stopping/Disabled. Tulevien heartbeatien fail-closed korjaus ja viisi testiä lisätty (`1c67eba`, `tests/test_service_health.py`); 1 056 unit testiä ja full validation hyväksytty (`45258652977`, `45258652675`). Per-service health state -malli jää parity gapiksi. |
 | `src/services/implementations/account_service.rs` | PENDING |  |
 | `src/services/implementations/assistant_scheduled_tasks_service.rs` | PENDING |  |
 | `src/services/implementations/ata_cleanup_service.rs` | PENDING |  |
