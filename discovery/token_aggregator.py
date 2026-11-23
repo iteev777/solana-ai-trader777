@@ -41,8 +41,18 @@ def _geckoterminal_scanners_from_env():
             if _env_enabled(env_name, True)]
 
 
+def _birdeye_meme_scanners_from_env():
+    """Birdeye's meme-platform listing is a Birdeye feed, not Pump.fun RPC."""
+    enabled = _env_enabled(
+        "TROJAN_BIRDEYE_MEME_LISTING_ENABLED",
+        _env_enabled("TROJAN_PUMPFUN_ENABLED", True),
+    )
+    return [("birdeye_meme_listing", scan_pumpfun)] if enabled else []
+
+
 def _pumpfun_scanners_from_env():
-    return [("pumpfun", scan_pumpfun)] if _env_enabled("TROJAN_PUMPFUN_ENABLED", True) else []
+    """Backward-compatible helper name; this feed is sourced from Birdeye."""
+    return _birdeye_meme_scanners_from_env()
 
 
 def _birdeye_scanners_from_env():
@@ -108,7 +118,7 @@ def _defillama_scanners_from_env():
 # Source enablement is read at process startup, matching the other provider switches.
 SCANNERS = [
     *_geckoterminal_scanners_from_env(),
-    *_pumpfun_scanners_from_env(),
+    *_birdeye_meme_scanners_from_env(),
     *_birdeye_scanners_from_env(),
     *_dexscreener_scanners_from_env(),
     *_rugcheck_scanners_from_env(),
@@ -126,7 +136,12 @@ _last_scan_at = None
 
 def _provider_family(source):
     value = str(source or "").strip().lower()
-    for prefix in ("geckoterminal", "dexscreener", "birdeye", "pumpfun",
+    # The legacy "pumpfun" label was attached to a Birdeye meme-listing API
+    # endpoint. Keep old persisted source names grouped with Birdeye so one
+    # vendor can never receive two independent-provider consensus votes.
+    if value == "pumpfun" or value.startswith("pumpfun_"):
+        return "birdeye"
+    for prefix in ("geckoterminal", "dexscreener", "birdeye",
                    "pumpportal", "rugcheck", "jupiter", "coingecko", "defillama"):
         if value == prefix or value.startswith(prefix + "_"):
             return prefix
