@@ -186,7 +186,7 @@ class OrcaWhirlpoolDirectQuoteTests(unittest.TestCase):
 
     def test_protocol_fees_are_subtracted_from_spendable_vault_reserves(self):
         state = bytearray(self.state)
-        state[93:101] = (10**12 - 1).to_bytes(8, "little")
+        state[85:93] = (10**12 - 1).to_bytes(8, "little")
         accounts = list(self.accounts)
         accounts[0] = {"owner": chain.PROGRAMS["orca_whirlpool"], "data": bytes(state)}
         with self.assertRaisesRegex(ValueError, "spendable vault reserves"):
