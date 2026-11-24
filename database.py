@@ -4,7 +4,7 @@ import json
 import math
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # ==========================================
@@ -23,7 +23,7 @@ DATABASE = os.path.join(DATA_DIR, "trading_history.db")
 
 VALID_MODES = ("paper", "live")
 VALID_STRATEGIES = ("main", "sniper")
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 11
 
 # Conservative paper estimate for each swap side; actual DEX costs vary.
 PAPER_FEE_RATE = 0.0075
@@ -155,6 +155,32 @@ def _ensure_daily_stats_current(connection, mode):
 def initialize_database():
 
     with connect() as connection:
+
+        # Refuse a database written by a newer Trojan schema before changing
+        # journal mode, creating tables or applying additive migrations.
+        schema_table = connection.execute("""
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_meta'
+        """).fetchone()
+        if schema_table:
+            try:
+                version_row = connection.execute(
+                    "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+                ).fetchone()
+            except sqlite3.DatabaseError as error:
+                raise RuntimeError("Database schema metadata is unreadable") from error
+            if version_row is not None:
+                try:
+                    stored_version = int(version_row["value"])
+                except (TypeError, ValueError, OverflowError) as error:
+                    raise RuntimeError("Database schema version is invalid") from error
+                if stored_version < 0:
+                    raise RuntimeError("Database schema version cannot be negative")
+                if stored_version > SCHEMA_VERSION:
+                    raise RuntimeError(
+                        "Database schema is newer than this Trojan build "
+                        f"({stored_version} > {SCHEMA_VERSION}); refusing to modify it"
+                    )
 
         connection.execute("PRAGMA journal_mode = WAL")
 
@@ -354,6 +380,35 @@ def initialize_database():
             )
         """)
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS subject_asset_deltas (
+                chain TEXT NOT NULL,
+                wallet_address TEXT NOT NULL,
+                signature TEXT NOT NULL,
+                mint TEXT NOT NULL,
+                slot INTEGER,
+                block_time INTEGER,
+                tx_index INTEGER NOT NULL,
+                delta_raw TEXT NOT NULL,
+                before_raw TEXT,
+                after_raw TEXT,
+                decimals INTEGER NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('trade', 'transfer', 'defi', 'other')),
+                venue TEXT,
+                fee_native_raw TEXT,
+                success INTEGER NOT NULL CHECK(success IN (0, 1)),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(chain, wallet_address, signature, mint, tx_index)
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subject_asset_deltas_wallet_time
+            ON subject_asset_deltas(wallet_address, block_time DESC, tx_index DESC)
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_subject_asset_deltas_mint_time
+            ON subject_asset_deltas(mint, block_time DESC)
+        """)
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS protocol_validation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 protocol TEXT NOT NULL,
@@ -398,6 +453,49 @@ def initialize_database():
         connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_pool_registry_updated_at
             ON pool_registry(updated_at)
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_source_health (
+                source TEXT PRIMARY KEY,
+                provider_family TEXT NOT NULL,
+                total_runs INTEGER NOT NULL DEFAULT 0,
+                successes INTEGER NOT NULL DEFAULT 0,
+                failures INTEGER NOT NULL DEFAULT 0,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                last_success_at REAL,
+                last_error_at REAL,
+                last_count INTEGER NOT NULL DEFAULT 0,
+                last_ok INTEGER NOT NULL DEFAULT 0 CHECK(last_ok IN (0, 1)),
+                last_error TEXT,
+                latency_ms REAL NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS discovery_scan_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                last_scan_at REAL,
+                token_count INTEGER NOT NULL DEFAULT 0,
+                source_count INTEGER NOT NULL DEFAULT 0,
+                independent_provider_count INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS native_transaction_approvals (
+                request_id TEXT PRIMARY KEY,
+                message BLOB NOT NULL,
+                message_sha256 TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                last_valid_block_height INTEGER NOT NULL,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_native_approvals_expiry
+            ON native_transaction_approvals(expires_at)
         """)
 
         connection.execute("""
@@ -1252,6 +1350,50 @@ def get_recent_trades(mode="paper", limit=20):
     return [dict(row) for row in rows]
 
 
+def get_period_realized_loss(mode="paper", window_hours=24):
+    """Return absolute realized losses from closed SELL rows in a rolling window."""
+    validate_mode(mode)
+    if isinstance(window_hours, bool):
+        raise ValueError("Loss window must be positive")
+    try:
+        hours = float(window_hours)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Loss window must be positive")
+    if not math.isfinite(hours) or hours <= 0 or hours > 24 * 31:
+        raise ValueError("Loss window must be between 0 and 744 hours")
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    with connect() as connection:
+        row = connection.execute("""
+            SELECT COALESCE(SUM(CASE WHEN profit_loss < 0
+                THEN -profit_loss ELSE 0 END), 0) AS realized_loss
+            FROM trades
+            WHERE mode = ? AND action = 'SELL' AND timestamp >= ?
+        """, (mode, since)).fetchone()
+    return max(0.0, float(row["realized_loss"] or 0.0))
+
+
+def get_last_exit_timestamp(token_address, mode="paper", strategy=None):
+    """Return the latest closed SELL timestamp for one token, mode and optional strategy."""
+    validate_mode(mode)
+    if strategy is not None:
+        validate_strategy(strategy)
+    if not isinstance(token_address, str) or not token_address.strip():
+        raise ValueError("Token address is required")
+    query = """
+        SELECT timestamp
+        FROM trades
+        WHERE token_address = ? AND mode = ? AND action = 'SELL'
+    """
+    params = [token_address.strip(), mode]
+    if strategy is not None:
+        query += " AND strategy = ?"
+        params.append(strategy)
+    query += " ORDER BY timestamp DESC, id DESC LIMIT 1"
+    with connect() as connection:
+        row = connection.execute(query, params).fetchone()
+    return row["timestamp"] if row else None
+
+
 # ==========================================
 # ANALYSES
 # ==========================================
@@ -1558,7 +1700,8 @@ def get_market_candles(pool_address, timeframe="1m", limit=200):
         limit = int(limit)
     except (TypeError, ValueError, OverflowError):
         limit = 200
-    limit = max(1, min(limit, 1000))
+    # 30 days of 1m candles at the default retention period.
+    limit = max(1, min(limit, 43200))
     with connect() as connection:
         rows = connection.execute("""
             SELECT open_time AS timestamp, open, high, low, close, volume
@@ -1675,17 +1818,117 @@ def delete_copy_watch_wallet(wallet):
 
 
 def record_copy_trade_event(wallet, signature, action=None, token_mint=None,
-                            token_delta=None, sol_delta=None, raw_summary=None):
+                            token_delta=None, sol_delta=None, raw_summary=None,
+                            asset_deltas=None):
     if not wallet or not signature:
         return False
+    if not isinstance(wallet, str) or not isinstance(signature, str):
+        raise ValueError("copy event wallet and signature must be strings")
+    if asset_deltas is None:
+        asset_deltas = []
+    if not isinstance(asset_deltas, (list, tuple)):
+        raise ValueError("asset_deltas must be a list")
+    normalized_deltas = [
+        _normalize_subject_asset_delta(item, wallet.strip(), signature.strip())
+        for item in asset_deltas
+    ]
     with connect() as connection:
         connection.execute("""
             INSERT OR IGNORE INTO copy_trade_events
             (wallet, signature, action, token_mint, token_delta, sol_delta, raw_summary, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (str(wallet), str(signature), action, token_mint,
+        """, (wallet.strip(), signature.strip(), action, token_mint,
               token_delta, sol_delta, str(raw_summary or "")[:1500], now()))
-        return connection.total_changes > 0
+        event_inserted = connection.total_changes > 0
+        if normalized_deltas:
+            connection.executemany("""
+                INSERT OR IGNORE INTO subject_asset_deltas (
+                    chain, wallet_address, signature, mint, slot, block_time,
+                    tx_index, delta_raw, before_raw, after_raw, decimals, kind,
+                    venue, fee_native_raw, success, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [row + (now(),) for row in normalized_deltas])
+        return event_inserted
+
+
+def _normalize_subject_asset_delta(item, wallet, signature):
+    if hasattr(item, "as_dict") and callable(item.as_dict):
+        item = item.as_dict()
+    if not isinstance(item, dict):
+        raise ValueError("subject asset delta must be an object")
+
+    def integer(value, label, minimum, maximum, optional=False):
+        if optional and value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError(label + " must be an integer")
+        try:
+            result = int(value)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError(label + " must be an integer") from error
+        if isinstance(value, float) and value != result:
+            raise ValueError(label + " must be an exact integer")
+        if result < minimum or result > maximum:
+            raise ValueError(label + " is outside the allowed range")
+        return result
+
+    chain = item.get("chain")
+    address = item.get("wallet_address")
+    row_signature = item.get("signature")
+    mint = item.get("mint")
+    kind = item.get("kind")
+    venue = item.get("venue")
+    success = item.get("success")
+    if not isinstance(chain, str) or not chain or len(chain) > 32:
+        raise ValueError("asset delta chain is invalid")
+    if address != wallet or row_signature != signature:
+        raise ValueError("asset delta subject or signature does not match its event")
+    if not isinstance(mint, str) or not mint or len(mint) > 128:
+        raise ValueError("asset delta mint is invalid")
+    if hasattr(kind, "value"):
+        kind = kind.value
+    if kind not in ("trade", "transfer", "defi", "other"):
+        raise ValueError("asset delta kind is invalid")
+    if venue is not None and (not isinstance(venue, str) or len(venue) > 128):
+        raise ValueError("asset delta venue is invalid")
+    if not isinstance(success, bool):
+        raise ValueError("asset delta success must be boolean")
+    return (
+        chain, address, row_signature, mint,
+        integer(item.get("slot"), "asset delta slot", 1, (1 << 64) - 1, True),
+        integer(item.get("block_time"), "asset delta block time", 0, (1 << 63) - 1, True),
+        integer(item.get("tx_index"), "asset delta tx index", 0, (1 << 32) - 1),
+        str(integer(item.get("delta_raw"), "asset delta amount", -(1 << 127), (1 << 127) - 1)),
+        None if item.get("before_raw") is None else str(integer(item.get("before_raw"), "asset delta before", 0, (1 << 128) - 1)),
+        None if item.get("after_raw") is None else str(integer(item.get("after_raw"), "asset delta after", 0, (1 << 128) - 1)),
+        integer(item.get("decimals"), "asset delta decimals", 0, 18),
+        kind, venue,
+        None if item.get("fee_native_raw") is None else str(integer(item.get("fee_native_raw"), "asset delta fee", 0, (1 << 128) - 1)),
+        1 if success else 0,
+    )
+
+
+def get_subject_asset_deltas(wallet, limit=100):
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    with connect() as connection:
+        rows = connection.execute("""
+            SELECT * FROM subject_asset_deltas
+            WHERE wallet_address = ?
+            ORDER BY COALESCE(block_time, 0) DESC, tx_index DESC
+            LIMIT ?
+        """, (wallet.strip(), limit)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["delta_raw"] = int(item["delta_raw"])
+        for field in ("before_raw", "after_raw", "fee_native_raw"):
+            item[field] = int(item[field]) if item[field] is not None else None
+        item["success"] = bool(item["success"])
+        result.append(item)
+    return result
 
 
 def get_recent_copy_trade_events(limit=50):
@@ -1695,6 +1938,50 @@ def get_recent_copy_trade_events(limit=50):
             "SELECT * FROM copy_trade_events ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_copy_watch_cursor(wallet):
+    """Return the last fully processed signature for a watched wallet."""
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch_cursors (
+                wallet TEXT PRIMARY KEY,
+                signature TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        row = connection.execute(
+            "SELECT signature FROM copy_wallet_watch_cursors WHERE wallet = ?",
+            (wallet.strip(),)
+        ).fetchone()
+    return row["signature"] if row else None
+
+
+def set_copy_watch_cursor(wallet, signature):
+    """Persist a cursor only after the complete older-to-newer range was processed."""
+    if not isinstance(wallet, str) or not wallet.strip():
+        raise ValueError("wallet address is required")
+    if not isinstance(signature, str) or not signature.strip() or len(signature) > 128:
+        raise ValueError("signature cursor is invalid")
+    address = wallet.strip()
+    with connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS copy_wallet_watch_cursors (
+                wallet TEXT PRIMARY KEY,
+                signature TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("""
+            INSERT INTO copy_wallet_watch_cursors (wallet, signature, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                signature=excluded.signature,
+                updated_at=excluded.updated_at
+        """, (address, signature.strip(), now()))
+    return signature.strip()
 
 
 # ==========================================
@@ -1780,6 +2067,95 @@ def backup_database(backup_dir=None, keep=7):
         "size_bytes": os.path.getsize(destination),
         "integrity": "ok",
         "retained": len(list_database_backups(directory)),
+    }
+
+
+
+def restore_database(backup_name, backup_dir=None):
+    """Restore a verified snapshot while the application is in offline maintenance mode.
+
+    This deliberately is not exposed as a normal dashboard action: replacing a
+    SQLite database while application workers are writing to it is unsafe.
+    Stop all workers, set TROJAN_RESTORE_MAINTENANCE_MODE=true, then invoke this
+    operation from a one-shot maintenance process.
+    """
+    if os.getenv("TROJAN_RESTORE_MAINTENANCE_MODE", "").strip().lower() not in ("1", "true", "yes"):
+        raise RuntimeError("Database restore requires offline maintenance mode")
+    if not isinstance(backup_name, str) or not backup_name or os.path.basename(backup_name) != backup_name:
+        raise ValueError("A backup filename, not a path, is required")
+    if not backup_name.endswith(".sqlite3"):
+        raise ValueError("Only .sqlite3 backup files can be restored")
+
+    directory = backup_dir or os.getenv("TROJAN_BACKUP_DIR") or os.path.join(DATA_DIR, "backups")
+    source_path = os.path.realpath(os.path.join(directory, backup_name))
+    if os.path.commonpath((os.path.realpath(directory), source_path)) != os.path.realpath(directory):
+        raise ValueError("Backup path is outside the configured backup directory")
+    if not os.path.isfile(source_path) or os.path.getsize(source_path) <= 0:
+        raise FileNotFoundError("Selected database backup does not exist or is empty")
+
+    # Verify the candidate before touching the active database.
+    candidate = sqlite3.connect(source_path, timeout=30)
+    try:
+        integrity = candidate.execute("PRAGMA integrity_check").fetchone()
+        version = candidate.execute(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise sqlite3.DatabaseError("Selected backup failed SQLite integrity_check")
+        # Schema 10 is the immediately previous compatible layout. Its tables
+        # are migrated by initialize_database after the verified restore.
+        if not version or int(version[0]) not in (SCHEMA_VERSION - 1, SCHEMA_VERSION):
+            raise sqlite3.DatabaseError("Selected backup schema version is incompatible")
+    finally:
+        candidate.close()
+
+    # Create an emergency snapshot of the current database before replacement.
+    emergency = backup_database(directory, keep=90)
+    destination = DATABASE
+    temporary = destination + ".restore.tmp"
+    source = None
+    target = None
+    try:
+        source = sqlite3.connect(source_path, timeout=30)
+        target = sqlite3.connect(temporary, timeout=30)
+        source.backup(target, pages=256, sleep=0.01)
+        target.commit()
+        restored_integrity = target.execute("PRAGMA integrity_check").fetchone()
+        if not restored_integrity or restored_integrity[0] != "ok":
+            raise sqlite3.DatabaseError("Restored temporary database failed integrity_check")
+    except Exception:
+        if target is not None:
+            target.close()
+            target = None
+        if source is not None:
+            source.close()
+            source = None
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
+    finally:
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
+
+    # This replacement must run only after every application worker has stopped.
+    for suffix in ("-wal", "-shm"):
+        sidecar = destination + suffix
+        if os.path.exists(sidecar):
+            os.remove(sidecar)
+    os.replace(temporary, destination)
+    # Apply additive schema migrations while still in offline maintenance mode.
+    initialize_database()
+    return {
+        "restored": True,
+        "backup": backup_name,
+        "integrity": "ok",
+        "schema_version": SCHEMA_VERSION,
+        "emergency_backup": emergency["backup"],
+        "requires_application_restart": True,
     }
 
 

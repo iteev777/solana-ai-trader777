@@ -1,10 +1,11 @@
 """Read-only exact-input quotes for Meteora DLMM bin pools.
 
-This adapter walks at most three consecutive bin arrays in the requested
-direction. It models market-making bin liquidity and dynamic fees, but not
+This adapter walks a bounded set of consecutive bin arrays in the requested
+direction. Bitmap-extension traversal beyond the configured pool range remains unsupported. It models market-making bin liquidity and dynamic fees, but not
 limit-order fills or Token-2022 transfer hooks; unsupported account modes fail
 closed rather than assuming extra output.
 """
+import hashlib
 import math
 import time
 
@@ -17,6 +18,7 @@ FEE_PRECISION = 1_000_000_000
 MAX_FEE_RATE = 100_000_000
 BASIS_POINT_MAX = 10_000
 MAX_SLIPPAGE_BPS = 300
+MAX_BIN_ARRAYS = 8
 MAX_SNAPSHOT_AGE_SECONDS = 5.0
 CLOCK_SYSVAR = "SysvarC1ock11111111111111111111111111111111"
 
@@ -126,11 +128,15 @@ def _fee_rate(state, active_bin_id):
     return min(base + variable, MAX_FEE_RATE), volatility
 
 
-def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id):
+def _array_indices(active_id, zero_for_one, min_bin_id, max_bin_id,
+                   max_arrays=MAX_BIN_ARRAYS):
+    if (isinstance(max_arrays, bool) or not isinstance(max_arrays, int)
+            or not 1 <= max_arrays <= MAX_BIN_ARRAYS):
+        raise ValueError("Meteora DLMM bin-array traversal limit is invalid")
     active_index = active_id // BINS_PER_ARRAY
     direction = -1 if zero_for_one else 1
     indices = []
-    for offset in range(3):
+    for offset in range(max_arrays):
         index = active_index + direction * offset
         first_bin = index * BINS_PER_ARRAY
         last_bin = first_bin + BINS_PER_ARRAY - 1
@@ -339,7 +345,6 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         pool_address, first["reserve_x"], first["reserve_y"],
         first["mint_x"], first["mint_y"], CLOCK_SYSVAR, bitmap_address,
     ] + array_addresses
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Meteora DLMM confirmed snapshot has an incomplete account list")
@@ -363,12 +368,30 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         raise ValueError("Meteora DLMM confirmed snapshot is missing a mint, vault or Clock sysvar")
     if bitmap_acc is not None and bitmap_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
         raise ValueError("Meteora DLMM bitmap-extension owner is invalid")
-    if mint_x_acc.get("owner") != chain.TOKEN_PROGRAM or mint_y_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DLMM Token-2022 mints are refused until transfer hooks and fees are modelled")
-    if reserve_x_acc.get("owner") != chain.TOKEN_PROGRAM or reserve_y_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Meteora DLMM reserves must use the legacy SPL Token program")
-    reserve_x = chain._token_amount(reserve_x_acc, state["mint_x"])
-    reserve_y = chain._token_amount(reserve_y_acc, state["mint_y"])
+    import token2022_inspector as token2022
+    token_program_x = mint_x_acc.get("owner")
+    token_program_y = mint_y_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_x not in supported_programs or token_program_y not in supported_programs:
+        raise ValueError("Meteora DLMM mint uses an unsupported token program")
+    if reserve_x_acc.get("owner") != token_program_x or reserve_y_acc.get("owner") != token_program_y:
+        raise ValueError("Meteora DLMM reserve token program does not match its mint")
+    mint_x_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_x_acc.get("data", b""))
+        if token_program_x == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint_y_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_y_acc.get("data", b""))
+        if token_program_y == chain.TOKEN_2022_PROGRAM else None
+    )
+    reserve_x = token2022.validate_token_account_for_program(
+        reserve_x_acc, token_program_x, state["mint_x"], pool_address,
+        "Meteora DLMM reserve X",
+    )
+    reserve_y = token2022.validate_token_account_for_program(
+        reserve_y_acc, token_program_y, state["mint_y"], pool_address,
+        "Meteora DLMM reserve Y",
+    )
     if reserve_x <= 0 or reserve_y <= 0:
         raise ValueError("Meteora DLMM reserve vaults are empty")
 
@@ -390,22 +413,37 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
     if not loaded_indices or loaded_indices[0] != array_indices[0]:
         raise ValueError("Meteora DLMM active bin array is not initialized")
 
-    quote = _quote_bins(state, bins, input_is_x, amount_in)
+    input_token2022 = mint_x_token2022 if input_is_x else mint_y_token2022
+    output_token2022 = mint_y_token2022 if input_is_x else mint_x_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
+    quote = _quote_bins(state, bins, input_is_x, received_by_pool)
     protocol_fee = state["protocol_fee_y"] if input_is_x else state["protocol_fee_x"]
     output_reserve = reserve_y if input_is_x else reserve_x
     spendable_reserve = max(0, output_reserve - protocol_fee)
     if quote["out_amount"] >= spendable_reserve:
         raise ValueError("Meteora DLMM quote exceeds spendable output reserve")
+    gross_output = quote["out_amount"]
+    expected_output_amount = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), gross_output
+    )
+    if expected_output_amount <= 0:
+        raise ValueError("Token-2022 output transfer fee consumes the entire output amount")
 
     spot_price = quote["active_bin_price"]
     if spot_price is None or spot_price <= 0:
         raise ValueError("Meteora DLMM active bin price is unavailable")
     spot_ratio = spot_price / (1 << 64) if input_is_x else (1 << 64) / spot_price
-    average_ratio = quote["out_amount"] / amount_in
+    average_ratio = expected_output_amount / amount_in
     impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
     if not math.isfinite(impact):
         raise ValueError("Meteora DLMM price impact is invalid")
-    age = time.time() - snapshot_started
+    # Use the on-chain Clock sysvar captured in the same account batch, not
+    # local RPC request latency, to measure snapshot age.
+    age = time.time() - now
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Meteora DLMM confirmed snapshot is stale")
 
@@ -419,8 +457,15 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "input_mint": input_mint,
         "output_mint": expected_output,
         "input_amount": amount_in,
-        "out_amount": quote["out_amount"],
-        "minimum_out_amount": quote["out_amount"] * (10_000 - slippage_bps) // 10_000,
+        "out_amount": expected_output_amount,
+        "gross_out_amount": gross_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": expected_output_amount < gross_output,
+        "token2022_output_gross_amount": gross_output,
+        "token_program_input": token_program_x if input_is_x else token_program_y,
+        "token_program_output": token_program_y if input_is_x else token_program_x,
+        "minimum_out_amount": expected_output_amount * (10_000 - slippage_bps) // 10_000,
         "fee_mint": fee_mint,
         "fee_amount": quote["fee_amount"],
         "trade_fee_amount": quote["fee_amount"],
@@ -432,6 +477,19 @@ def quote_meteora_dlmm_pool(pool_address, input_mint, amount_in, slippage_bps=10
         "bins_crossed": quote["bins_crossed"],
         "active_id_after": quote["active_id_after"],
         "loaded_bin_arrays": len(loaded_indices),
+        "loaded_bin_array_indices": loaded_indices,
+        "loaded_bin_array_addresses": array_addresses[:len(loaded_indices)],
+        "loaded_bin_array_sha256": [
+            hashlib.sha256(accounts[7 + offset]["data"]).hexdigest()
+            for offset in range(len(loaded_indices))
+        ],
+        "pool_state_sha256": hashlib.sha256(pool_acc["data"]).hexdigest(),
+        "bitmap_extension_present": bitmap_acc is not None,
+        "bitmap_extension_sha256": (
+            hashlib.sha256(bitmap_acc["data"]).hexdigest()
+            if bitmap_acc is not None else None
+        ),
+        "slippage_bps": slippage_bps,
         "volatility_accumulator_end": state["volatility_accumulator"],
         "price_impact_percent": round(impact, 6),
         "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_BIN_SNAPSHOT",

@@ -59,6 +59,26 @@ class StrategyConditionTests(unittest.TestCase):
         self.assertEqual(len(strategy_conditions.CONDITION_TYPES), 24)
         self.assertEqual(len(strategy_conditions.get_condition_catalog()), 24)
 
+    def test_indicator_conditions_can_select_each_published_timeframe(self):
+        self.context["indicators"]["timeframes"] = {
+            "1h": dict(self.context["indicators"], rsi_14=75, timestamp=time.time())
+        }
+        passed, _ = self.evaluate("Rsi", {
+            "comparison": "ABOVE", "threshold": 60, "timeframe": "1h"
+        })
+        self.assertTrue(passed)
+        passed, reasons = self.evaluate("Rsi", {
+            "comparison": "ABOVE", "threshold": 60, "timeframe": "12h"
+        })
+        self.assertFalse(passed)
+        self.assertIn("timeframe data unavailable", reasons[0])
+
+    def test_indicator_condition_rejects_unsupported_timeframe(self):
+        with self.assertRaises(ValueError):
+            strategy_conditions.validate_condition({
+                "condition": "Rsi", "params": {"timeframe": "2h"}
+            })
+
     def test_rsi_and_bollinger_conditions(self):
         self.assertTrue(self.evaluate("Rsi", {"comparison": "ABOVE", "threshold": 30})[0])
         self.assertTrue(self.evaluate("BollingerBands", {"comparison": "ABOVE", "threshold": 0.5})[0])
@@ -229,6 +249,10 @@ class StrategyConditionTests(unittest.TestCase):
         self.assertTrue(policy["enabled"])
         self.assertEqual(policy["max_age_seconds"], 90.0)
         self.assertEqual(policy["missing_timestamp"], "reject")
+        catalog = strategy_catalog.get_strategy_catalog()
+        self.assertEqual(catalog["evaluation_policy"]["timeout_ms"], 50)
+        self.assertEqual(catalog["evaluation_policy"]["maximum_rule_depth"], 4)
+        self.assertEqual(catalog["evaluation_policy"]["maximum_group_children"], 30)
 
     def test_invalid_indicator_freshness_configuration_uses_safe_default(self):
         with patch.dict("os.environ", {"TROJAN_STRATEGY_MAX_INDICATOR_AGE_SECONDS": "nan"}):

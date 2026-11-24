@@ -1,6 +1,7 @@
 import hmac
 import os
 import threading
+import math
 import time
 from datetime import datetime, timezone
 
@@ -214,8 +215,10 @@ def dashboard_home():
 def api_overview():
     import trading_manager as manager
     import risk_manager
+    import native_execution
     from api_client import get_api_status
     from market_data import get_market_data_status
+    import candidate_observer
 
     account = manager.get_account_summary("paper")
     stats = database.get_trade_stats("paper")
@@ -233,6 +236,8 @@ def api_overview():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": "PAPER TRADING",
         "live_execution": "LOCKED",
+        "trading_control": __import__("trading_control").get_force_stop_status(),
+        "native_execution": native_execution.get_native_execution_status(),
         "account": account,
         "stats": stats,
         "risk": risk_manager.get_risk_summary(),
@@ -250,6 +255,41 @@ def api_overview():
         "runtime": _runtime(),
         "market_data": get_market_data_status(),
         "api": get_api_status(),
+        "candidate_observation": candidate_observer.get_status(),
+    })
+
+
+@app.get("/api/force-stop")
+def api_force_stop_status():
+    import trading_control
+    return jsonify(trading_control.get_force_stop_status())
+
+
+@app.post("/api/force-stop")
+def api_set_force_stop():
+    import trading_control
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("stopped"), bool):
+        return jsonify({"error": "Expected JSON object with boolean 'stopped'"}), 400
+    try:
+        return jsonify(trading_control.set_force_stopped(
+            payload["stopped"], payload.get("reason")
+        ))
+    except (TypeError, ValueError) as error:
+        return jsonify({"error": str(error)}), 400
+
+
+@app.get("/api/observation")
+def api_candidate_observation():
+    import candidate_observer
+    import sniper_scanner
+    return jsonify({
+        "observation": candidate_observer.get_status(),
+        "stream": sniper_scanner.get_trade_subscription_status(),
+        "mode": "paper_only",
+        "live_execution": "locked",
     })
 
 
@@ -662,6 +702,59 @@ def api_route_comparison():
         return jsonify({"error": "Quote comparison failed", "detail": str(error)[:180]}), 502
 
 
+@app.get("/api/dex-execution-status")
+def api_dex_execution_status():
+    from dex_execution import get_execution_status
+    return jsonify(get_execution_status())
+
+
+@app.post("/api/dex-order")
+def api_dex_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from dex_execution import create_order
+        order = create_order(
+            payload.get("input_mint"),
+            payload.get("output_mint"),
+            payload.get("amount"),
+            payload.get("taker"),
+            payload.get("slippage_bps"),
+            simulate=payload.get("simulate", True) is True,
+        )
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception as error:
+        return jsonify({"error": "Jupiter order failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/dex-execute")
+def api_dex_execute():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    if request.headers.get("X-Trojan-Confirm-Live") != "1":
+        return jsonify({"error": "Explicit live execution confirmation is required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from dex_execution import execute_signed_order
+        result = execute_signed_order(
+            payload.get("signed_transaction"),
+            payload.get("request_id"),
+            confirmed=True,
+        )
+        return jsonify(result)
+    except Exception as error:
+        from dex_execution import ExecutionLocked
+        status = 403 if isinstance(error, ExecutionLocked) else 400
+        return jsonify({"error": str(error)[:240]}), status
+
+
 @app.get("/api/dex-status")
 def api_dex_status():
     from dex_engine import get_engine_status
@@ -682,6 +775,411 @@ def api_dex_route():
         return jsonify({"error": str(error)}), 400
     except Exception as error:
         return jsonify({"error": "DEX route selection failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/raydium-cpmm-quote")
+def api_raydium_cpmm_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from solana_onchain import quote_raydium_cpmm_pool
+        quote = quote_raydium_cpmm_pool(
+            pool_address, input_mint, int(amount_raw), slippage
+        )
+        quote["slippage_bps"] = slippage
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Raydium CPMM quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/raydium-cpmm-order")
+def api_raydium_cpmm_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from raydium_cpmm_builder import (
+            build_raydium_cpmm_swap,
+            simulate_raydium_cpmm_transaction,
+        )
+        order = build_raydium_cpmm_swap(
+            payload.get("quote"),
+            payload.get("wallet"),
+            payload.get("user_input_token_account"),
+            payload.get("user_output_token_account"),
+        )
+        simulation = simulate_raydium_cpmm_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            # Do not return a transaction that failed simulation.
+            return jsonify({
+                "created": False,
+                "simulation": simulation,
+                "execution": "LOCKED",
+                "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "raydium_cpmm", order["last_valid_block_height"], simulation
+        )
+        order.update(approval)
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Raydium CPMM native order failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/pumpswap-v2-quote")
+def api_pumpswap_v2_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from solana_onchain import quote_pumpswap_pool
+        quote = quote_pumpswap_pool(
+            pool_address, input_mint, int(amount_raw), slippage
+        )
+        quote["slippage_bps"] = slippage
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "PumpSwap V2 quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/pumpswap-v2-order")
+def api_pumpswap_v2_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from pumpswap_v2_builder import (
+            build_pumpswap_v2_swap,
+            simulate_pumpswap_v2_transaction,
+        )
+        order = build_pumpswap_v2_swap(
+            payload.get("quote"),
+            payload.get("wallet"),
+            payload.get("user_base_token_account"),
+            payload.get("user_quote_token_account"),
+        )
+        simulation = simulate_pumpswap_v2_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            return jsonify({
+                "created": False,
+                "simulation": simulation,
+                "execution": "LOCKED",
+                "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "pumpswap", order["last_valid_block_height"], simulation
+        )
+        order.update(approval)
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "PumpSwap V2 native order failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/orca-whirlpool-quote")
+def api_orca_whirlpool_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    output_mint = request.args.get("output_mint", "").strip() or None
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from orca_whirlpool_quote import quote_orca_whirlpool_pool
+        quote = quote_orca_whirlpool_pool(
+            pool_address, input_mint, int(amount_raw), slippage,
+            output_mint=output_mint,
+        )
+        quote["slippage_bps"] = slippage
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Orca Whirlpool quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/orca-whirlpool-order")
+def api_orca_whirlpool_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from orca_whirlpool_builder import (
+            build_orca_whirlpool_swap, simulate_orca_whirlpool_transaction,
+        )
+        order = build_orca_whirlpool_swap(
+            payload.get("quote"), payload.get("wallet"),
+            payload.get("user_input_token_account"),
+            payload.get("user_output_token_account"),
+        )
+        simulation = simulate_orca_whirlpool_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            return jsonify({
+                "created": False, "simulation": simulation,
+                "execution": "LOCKED", "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "orca_whirlpool",
+            order["last_valid_block_height"], simulation,
+        )
+        order.update(approval)
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Orca Whirlpool native order failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/meteora-dlmm-quote")
+def api_meteora_dlmm_quote():
+    pool_address = request.args.get("pool_address", "").strip()
+    input_mint = request.args.get("input_mint", "").strip()
+    amount_raw = request.args.get("amount", "").strip()
+    slippage = request.args.get("slippage_bps", default=100, type=int)
+    output_mint = request.args.get("output_mint", "").strip() or None
+    try:
+        if not amount_raw.isdigit():
+            raise ValueError("Amount must be a positive integer in base units")
+        from meteora_dlmm_quote import quote_meteora_dlmm_pool
+        quote = quote_meteora_dlmm_pool(
+            pool_address, input_mint, int(amount_raw), slippage,
+            output_mint=output_mint,
+        )
+        return jsonify(quote)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Meteora DLMM quote failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/meteora-dlmm-order")
+def api_meteora_dlmm_order():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from meteora_dlmm_builder import (
+            build_meteora_dlmm_swap, simulate_meteora_dlmm_transaction,
+        )
+        order = build_meteora_dlmm_swap(
+            payload.get("quote"), payload.get("wallet"),
+            payload.get("user_input_token_account"),
+            payload.get("user_output_token_account"),
+        )
+        simulation = simulate_meteora_dlmm_transaction(order["transaction"])
+        if simulation.get("status") != "PASS":
+            return jsonify({
+                "created": False, "simulation": simulation,
+                "execution": "LOCKED", "signing": "DISABLED",
+                "broadcast": "DISABLED",
+            }), 422
+        from native_execution import register_native_approval
+        approval = register_native_approval(
+            order["transaction"], "meteora_dlmm",
+            order["last_valid_block_height"], simulation,
+        )
+        order.update(approval)
+        order["simulation"] = simulation
+        order["created"] = True
+        order["execution"] = "LOCKED"
+        order["signing"] = "EXTERNAL_WALLET_ONLY"
+        order["broadcast"] = "DISABLED"
+        return jsonify(order)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Meteora DLMM native order failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/wallet-preflight")
+def api_wallet_preflight():
+    """Read-only confirmed-RPC wallet funding and token-account checks."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from wallet_preflight import preflight_wallet_swap
+        result = preflight_wallet_swap(
+            payload.get("wallet"),
+            payload.get("input_mint"),
+            payload.get("output_mint"),
+            payload.get("input_token_account"),
+            payload.get("output_token_account"),
+            payload.get("input_amount"),
+            payload.get("min_sol_reserve_lamports"),
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Wallet preflight failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/token2022-account-inspect")
+def api_token2022_account_inspect():
+    """Read-only Token-2022 token-account inspection."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from token2022_inspector import inspect_token2022_account
+        return jsonify(inspect_token2022_account(payload.get("account")))
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Token-2022 account inspection failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/token2022-inspect")
+def api_token2022_inspect():
+    """Read-only inspection of Token-2022 mint extensions; never authorizes a swap."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from token2022_inspector import inspect_token2022_mint
+        return jsonify(inspect_token2022_mint(payload.get("mint")))
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Token-2022 inspection failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/ata-order")
+def api_ata_order():
+    """Build and simulate an unsigned legacy SPL ATA creation order."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from ata_manager import create_ata_order
+        result = create_ata_order(
+            payload.get("wallet"),
+            payload.get("mint"),
+            payload.get("min_sol_reserve_lamports"),
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "ATA order preparation failed", "detail": str(error)[:180]}), 502
+
+
+@app.post("/api/ata-close-order")
+def api_ata_close_order():
+    """Build and simulate an unsigned empty-ATA close order; never signs or broadcasts."""
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from ata_close_manager import close_empty_ata_order
+        result = close_empty_ata_order(
+            payload.get("wallet"),
+            payload.get("token_account"),
+            payload.get("min_sol_reserve_lamports"),
+        )
+        return jsonify(result)
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "ATA close order preparation failed", "detail": str(error)[:180]}), 502
+
+
+@app.get("/api/native-execution-status")
+def api_native_execution_status():
+    from native_execution import get_native_execution_status
+    return jsonify(get_native_execution_status())
+
+
+@app.post("/api/native-execute")
+def api_native_execute():
+    if request.headers.get("X-Trojan-Action") != "1":
+        return jsonify({"error": "Missing action header"}), 400
+    if request.headers.get("X-Trojan-Confirm-Live") != "1":
+        return jsonify({"error": "Explicit live execution confirmation is required"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
+    try:
+        from native_execution import (
+            execute_native_signed_transaction,
+            NativeExecutionLocked,
+        )
+        result = execute_native_signed_transaction(
+            payload.get("signed_transaction"),
+            payload.get("request_id"),
+            confirmed=True,
+        )
+        return jsonify(result)
+    except Exception as error:
+        from native_execution import NativeExecutionLocked
+        status = 403 if isinstance(error, NativeExecutionLocked) else 400
+        return jsonify({"error": str(error)[:240]}), status
+
+
+@app.get("/api/native-transaction-status")
+def api_native_transaction_status():
+    from native_execution import get_native_transaction_status
+    try:
+        return jsonify(get_native_transaction_status(request.args.get("signature", "")))
+    except ValueError as error:
+        return jsonify({"error": str(error)[:240]}), 400
+    except Exception as error:
+        return jsonify({"error": "Native transaction status lookup failed", "detail": str(error)[:180]}), 502
 
 
 @app.get("/api/strategy-catalog")
@@ -804,7 +1302,7 @@ main{max-width:1440px;padding-top:16px}
 
 </style></head><body>
 <header><div><h1>TROJAN V2 <span style="color:#6da9ff">/ COMMAND CENTER</span></h1><div class="sub">Solana AI paper scalper · system overview</div></div>
-<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><button class="refresh" onclick="loadHome();loadWallet()">Refresh</button></div></header>
+<div class="actions"><span class="pill">● PAPER MODE · LIVE LOCKED</span><span id="force-stop-label" class="muted">Trading active</span><button id="force-stop-button" class="refresh" type="button" onclick="toggleForceStop()">Force stop</button><button class="refresh" onclick="loadHome();loadWallet()">Refresh</button></div></header>
 <main id="overview"><section class="app-view active" id="view-home"><div class="grid">
 <div class="metric"><small>Paper balance</small><strong id="balance">—</strong></div><div class="metric wallet-metric"><small>Phantom wallet · SOL</small><strong id="wallet-sol">—</strong><span class="sub" id="wallet-usd">Loading wallet…</span></div><div class="metric"><small>Realized P/L</small><strong id="pnl">—</strong></div>
 <div class="metric"><small>Win rate</small><strong id="winrate">—</strong></div><div class="metric"><small>Open positions</small><strong id="open">—</strong></div>
@@ -830,6 +1328,7 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>DATABASE INTEGRITY & BACKUPS</h2><div class="health" id="database-health"><div class="muted">Loading database health…</div></div><div class="actions" style="margin-top:12px"><button class="refresh" type="button" onclick="createDatabaseBackup()">Create verified backup</button><span class="muted" id="database-backup-status"></span></div></section>
 <section class="panel section"><h2>ADAPTIVE LEARNING · PAPER ONLY</h2><div class="muted" style="margin-bottom:10px">Closed paper outcomes adjust future paper position size only after the minimum sample; live execution remains locked.</div><div class="health" id="adaptive-learning"><div class="muted">Loading adaptive profile…</div></div></section>
 <section class="panel section"><h2>TOKEN DISCOVERY SOURCES</h2><div class="muted" style="margin-bottom:10px">Per-source candidate counts from the latest completed scan. A zero count can mean no matches or a provider outage; check the status.</div><div class="health" id="discovery-sources"><div class="muted">Loading discovery sources…</div></div></section>
+<section class="panel section"><h2>CANDIDATE TRADE OBSERVATION</h2><div class="muted" style="margin-bottom:10px">Pump.fun trade-window confirmation: trades, unique buyers, buy/sell pressure, buyer concentration and price movement. PumpPortal trade subscriptions are metered and remain disabled until explicitly enabled.</div><div class="health" id="candidate-observation"><div class="muted">Loading observation status…</div></div></section>
 <section class="panel section"><h2>COPY WALLET PAPER PERFORMANCE</h2><div class="muted" style="margin-bottom:10px">Wallet-attributed realized paper P/L, win rate, open exposure and observed activity.</div><div class="health" id="copy-performance"><div class="muted">Loading wallet performance…</div></div></section>
 <section class="panel section"><h2>COPY WALLET WATCHLIST</h2><div class="muted" style="margin-bottom:10px">Manage up to 20 public wallet addresses. Changes reconnect the read-only monitor automatically; only confirmed, classified BUY/SELL events can enter paper-copy.</div><div class="actions" style="flex-wrap:wrap"><input id="copy-watch-wallet" placeholder="Solana wallet address" style="min-width:250px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><input id="copy-watch-label" placeholder="Label (optional)" style="min-width:150px;flex:1;padding:10px;background:#0b1322;color:#edf3ff;border:1px solid #24324a;border-radius:8px"><button class="refresh" type="button" onclick="addCopyWallet()">Add wallet</button></div><div class="health" id="copy-watchlist-items" style="margin-top:12px"><div class="muted">Loading watchlist…</div></div><div class="muted" id="copy-watchlist-status" style="margin-top:8px"></div></section>
 <section class="panel section"><h2>11-PROTOCOL MAINNET VALIDATION</h2><div class="muted" style="margin-bottom:10px">Counts only confirmed on-chain pool decodes observed by this running bot; zero means not yet verified.</div><div class="health" id="protocol-validation"><div class="muted">Loading protocol validation…</div></div></section>
@@ -884,9 +1383,42 @@ async function runRouteComparison(){
   target.innerHTML=rows+'<div class="muted">Best: '+esc(result.best_provider||'No valid route')+' · execution '+esc(result.execution)+'</div>';
  }catch(err){target.textContent='Quote comparison failed: '+err.message;}
 }
+
+function renderForceStop(status){
+ const stopped=!!(status&&status.is_stopped);
+ const label=document.getElementById('force-stop-label');
+ const button=document.getElementById('force-stop-button');
+ if(label)label.textContent=stopped?'FORCE STOP ACTIVE':'Trading active';
+ if(label)label.className=stopped?'bad':'good';
+ if(button)button.textContent=stopped?'Resume trading':'Force stop';
+ if(button)button.disabled=false;
+}
+async function toggleForceStop(){
+ const button=document.getElementById('force-stop-button');
+ const label=document.getElementById('force-stop-label');
+ if(button)button.disabled=true;
+ if(label)label.textContent='Updating safety control…';
+ try{
+  const current=await get('/api/force-stop');
+  const stopped=!current.is_stopped;
+  const response=await fetch('/api/force-stop',{
+   method:'POST',
+   headers:{'Content-Type':'application/json','X-Trojan-Action':'1'},
+   body:JSON.stringify({stopped:stopped,reason:stopped?'Dashboard emergency stop':null})
+  });
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Could not update force stop');
+  renderForceStop(data);
+  await loadHome();
+ }catch(err){
+  if(label)label.textContent='Safety control error: '+err.message;
+  if(button)button.disabled=false;
+ }
+}
 async function loadHome(){
  try{
   const o=await get('/api/overview'),a=o.account,s=o.stats;
+  renderForceStop(o.trading_control||{});
   document.getElementById('balance').textContent=usd(a.balance);
   document.getElementById('pnl').textContent=usd(s.total_profit);
   document.getElementById('pnl').className=s.total_profit>=0?'good':'bad';
@@ -900,7 +1432,7 @@ async function loadHome(){
   document.getElementById('positions').innerHTML=positionRows;
   document.getElementById('positions-copy').innerHTML=positionRows;
   const m=o.market_data,r=o.runtime,pr=m.pool_registry||{};
-  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['DexScreener pool queue',pr.dex_pending||0],['Gecko pool queue',pr.gecko_pending||0],['Pool source jobs completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Live execution','LOCKED'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
+  const checks=[['Market worker',m.worker_running?'Running':'Stopped'],['Pending market requests',m.pending_addresses],['Pool registry tokens',pr.token_count||0],['DexScreener pool queue',pr.dex_pending||0],['Gecko pool queue',pr.gecko_pending||0],['Pool source jobs completed / failed',(pr.completed||0)+' / '+(pr.failed||0)],['Analyses queued',r.pending_analyses],['Discovery queue',r.discovery_pending],['Sniper queue',r.sniper_pending],['Force stop',o.trading_control&&o.trading_control.is_stopped?'ACTIVE':'Inactive'],['Live execution','LOCKED'],['Native broadcast',o.native_execution&&o.native_execution.code_hard_lock?'HARD LOCKED':'CHECK CONFIG'],['Market cache',m.cache_entries],['Daily loss limit',usd(o.risk.max_daily_loss)]];
   document.getElementById('health').innerHTML=checks.map(function(x){return '<div><b>'+x[0]+'</b><span class="muted">'+x[1]+'</span></div>';}).join('');
   document.getElementById('updated').textContent='Updated '+new Date(o.timestamp).toLocaleString();
  }catch(err){if(err.message!=='auth')document.getElementById('updated').textContent='Dashboard error: '+err.message;}
@@ -984,9 +1516,10 @@ async function loadAdvanced(){
   const values=await Promise.all([
    get('/api/strategies'),get('/api/readiness'),get('/api/copy-trades'),
    get('/api/copy-performance'),get('/api/protocol-validation'),
-   get('/api/adaptive-learning'),get('/api/discovery'),get('/api/copy-watchlist')
+   get('/api/adaptive-learning'),get('/api/discovery'),get('/api/copy-watchlist'),
+   get('/api/observation')
   ]);
-  const s=values[0],h=values[1],c=values[2],cp=values[3],pv=values[4],al=values[5],ds=values[6],cw=values[7];
+  const s=values[0],h=values[1],c=values[2],cp=values[3],pv=values[4],al=values[5],ds=values[6],cw=values[7],ob=values[8];
   document.getElementById('rules-main').value=JSON.stringify(s.rules.main||{},null,2);
   document.getElementById('rules-sniper').value=JSON.stringify(s.rules.sniper||{},null,2);
   document.getElementById('rules-status').textContent=s.valid?'Rules valid · '+(s.enabled?'custom rules active':'no custom rules'):'Rule error: '+s.error;
@@ -1004,9 +1537,22 @@ async function loadAdvanced(){
   document.getElementById('copy-performance').innerHTML=cp.length?cp.map(x=>'<div><b class="token">'+esc(short(x.wallet))+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Win rate '+fmt(x.win_rate,1)+'% · closed '+x.closed_trades+' · daily loss '+usd(x.daily_loss)+' · open '+x.open_positions+' · exposure '+usd(x.open_exposure_usd)+' · observed '+x.observed_events+'</div></div>').join(''):'<div class="muted">No copy-wallet performance recorded yet</div>';
    renderCopyWatchlist(cw);
   document.getElementById('protocol-validation').innerHTML=(pv.protocols||[]).map(x=>'<div><b>'+esc(x.protocol)+'</b><span class="'+(x.successes>0?'good':'muted')+'">'+x.successes+' / '+x.attempts+' verified</span><div class="muted">Failures '+x.failures+' · success '+fmt(x.success_rate,1)+'%'+(x.last_error?' · '+esc(x.last_error):'')+'</div></div>').join('');
-  document.getElementById('adaptive-learning').innerHTML=(al.strategies||[]).map(x=>'<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.status==='learning_active'?'good':'muted')+'">'+esc(x.status.replaceAll('_',' '))+' · size '+fmt(x.size_multiplier,2)+'x</span><div class="muted">Closed '+x.closed_trades+'/'+x.minimum_sample+' · win rate '+fmt(x.win_rate,1)+'% · PF '+fmt(x.profit_factor,2)+' · realized '+usd(x.realized_pnl)+'</div></div>').join('')+'<div class="muted">'+esc(al.policy||'')+'</div>';
+  document.getElementById('adaptive-learning').innerHTML=(al.strategies||[]).map(x=>'<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.status==='learning_active'?'good':'muted')+'">'+esc(x.status.replaceAll('_',' '))+' · size '+fmt(x.size_multiplier,2)+'x</span><div class="muted">Closed '+x.closed_trades+'/'+x.minimum_sample+' · win rate '+fmt(x.win_rate,1)+'% · PF '+fmt(x.profit_factor,2)+' · expectancy '+usd(x.average_pnl)+' / trade</div><div class="muted">Losing streak '+x.current_losing_streak+' (max '+x.max_losing_streak+') · max realized P/L drawdown '+usd(x.max_drawdown_usd)+' · ignored invalid rows '+(x.invalid_rows_ignored||0)+'</div></div>').join('')+'<div class="muted">'+esc(al.policy||'')+'</div>';
   const dq=ds.quality||{tiers:{}};
   document.getElementById('discovery-sources').innerHTML='<div><b>Candidate quality</b><span>'+((dq.candidate_count||0)+' scored · '+((dq.tiers||{}).strong||0)+' strong · '+((dq.tiers||{}).watch||0)+' watch · '+((dq.tiers||{}).weak||0)+' weak · '+((dq.tiers||{}).reject||0)+' hard rejects')+'</span><div class="muted">Multi-window liquidity, volume, transaction flow, source consensus, pool age and momentum. Scoring prioritises candidates; missing data is not treated as unsafe.</div></div>'+(ds.sources||[]).map(x=>'<div><b>'+esc(x.name)+'</b><span class="'+(x.ok?'good':'bad')+'">'+(x.ok?'OK':'ERROR')+' · '+x.count+' candidates</span><div class="muted">'+esc(x.error||'Latest scan result')+'</div></div>').join('')||'<div class="muted">Waiting for the first discovery cycle…</div>';
+  const obs=ob.observation||{},stream=ob.stream||{},limits=obs.limits||{},ostats=obs.stats||{};
+  document.getElementById('candidate-observation').innerHTML=[
+   ['Mode',obs.enabled?'ENABLED':'DISABLED'],
+   ['Metered feed',obs.api_key_configured?'API key configured':'API key not configured'],
+   ['WebSocket',stream.connected?'CONNECTED':'DISCONNECTED'],
+   ['Active windows',(obs.active_count||0)+' / '+(obs.max_concurrent||0)],
+   ['Window',String(obs.duration_seconds||0)+' seconds'],
+   ['Sessions',String(ostats.sessions_completed||0)+' completed · '+String(ostats.sessions_passed||0)+' passed · '+String(ostats.sessions_rejected||0)+' rejected'],
+   ['Trade events',String(ostats.events_received||0)+' received · '+String(ostats.events_ignored||0)+' ignored'],
+   ['Entry thresholds',String(limits.min_trades||0)+' trades · '+String(limits.min_unique_buyers||0)+' buyers · '+String(limits.min_buy_volume_sol||0)+' SOL buy volume'],
+   ['Concentration / pressure','max '+String(limits.max_single_buyer_pct||0)+'% buyer · ratio '+String(limits.min_buy_sell_ratio||0)],
+   ['Execution','PAPER ONLY · LIVE LOCKED']
+  ].map(x=>'<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>').join('')+'<div class="muted">'+esc(obs.note||'')+'</div>';
  }catch(err){if(err.message!=='auth')document.getElementById('rules-status').textContent='Advanced dashboard: '+err.message;}
 }
 document.querySelectorAll(".app-nav button").forEach(button=>button.addEventListener("click",()=>{
@@ -1036,7 +1582,7 @@ def start_dashboard():
 
     with _server_lock:
         if _server_thread and _server_thread.is_alive():
-            return True
+            return _server_thread
 
         host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
         port = int(os.getenv("PORT", os.getenv("DASHBOARD_PORT", "8080")))
@@ -1054,4 +1600,32 @@ def start_dashboard():
         + " | AUTH: BASIC TOKEN | MODE: READ ONLY",
         flush=True
     )
+    return _server_thread
+
+
+def stop_dashboard(timeout=5.0):
+    """Stop the Werkzeug server and join its daemon thread gracefully."""
+    global _server, _server_thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a finite non-negative number")
+    if not math.isfinite(float(timeout)) or timeout < 0:
+        raise ValueError("timeout must be a finite non-negative number")
+    with _server_lock:
+        server = _server
+        thread = _server_thread
+    if server is not None:
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception as error:
+            print("[TROJAN V2] DASHBOARD SHUTDOWN ERROR:", repr(error), flush=True)
+            return False
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(float(timeout))
+        if thread.is_alive():
+            return False
+    with _server_lock:
+        if _server_thread is thread:
+            _server = None
+            _server_thread = None
     return True

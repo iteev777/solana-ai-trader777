@@ -33,6 +33,28 @@ SCAN_COOLDOWN = 3
 
 _last_scan_time = 0
 _scan_lock = threading.Lock()
+_source_health_lock = threading.Lock()
+_source_health = {}
+
+
+def _record_source_health(name, status, count=0, error=None):
+    with _source_health_lock:
+        _source_health[name] = {
+            "status": status,
+            "count": int(count),
+            "last_checked_at": time.time(),
+            "last_error": str(error)[:240] if error else None,
+        }
+
+
+def get_scanner_status():
+    with _source_health_lock:
+        sources = {name: dict(value) for name, value in _source_health.items()}
+    return {
+        "running": _scan_lock.locked(),
+        "last_scan_at": _last_scan_time or None,
+        "sources": sources,
+    }
 
 
 def fetch_source(name, url):
@@ -45,9 +67,12 @@ def fetch_source(name, url):
         )
 
         if not isinstance(data, list):
+            error = "INVALID_SOURCE_RESPONSE_SHAPE"
+            _record_source_health(name, "ERROR", error=error)
             print("INVALID SOURCE DATA:", name)
             return []
 
+        _record_source_health(name, "HEALTHY", count=len(data))
         print(
             "SOURCE:",
             name,
@@ -58,6 +83,7 @@ def fetch_source(name, url):
         return data
 
     except requests.RequestException as error:
+        _record_source_health(name, "ERROR", error=error)
         print(
             "SOURCE REQUEST ERROR:",
             name,
@@ -66,6 +92,7 @@ def fetch_source(name, url):
         return []
 
     except Exception as error:
+        _record_source_health(name, "ERROR", error=error)
         print(
             "SOURCE ERROR:",
             name,
@@ -85,15 +112,24 @@ def normalize_token(token):
 
     address = token.get("tokenAddress")
 
-    if not isinstance(address, str):
+    if not isinstance(address, str) or address != address.strip():
         return None
 
-    address = address.strip()
-
-    if not address:
+    try:
+        from market_data import valid_address
+        if not valid_address(address):
+            return None
+    except Exception:
         return None
 
     return address
+
+
+def name_slug(value):
+    return "_".join(
+        part for part in str(value).strip().lower().replace("-", " ").split()
+        if part
+    )
 
 
 def scan_tokens():
@@ -147,22 +183,37 @@ def scan_tokens():
                         "tokenAddress": address,
                         "chainId": "solana",
                         "discovery_sources": [],
+                        "discovery_feeds": [],
                         "discovery_timestamp": current_time
                     }
 
                 candidate = discovered[address]
-                if source_name not in candidate["discovery_sources"]:
-                    candidate["discovery_sources"].append(source_name)
+                # All four endpoints are DexScreener feeds, not four
+                # independent providers. Preserve feed-level evidence while
+                # counting the provider only once for consensus scoring.
+                if "dexscreener" not in candidate["discovery_sources"]:
+                    candidate["discovery_sources"].append("dexscreener")
+                feed_key = "dexscreener_" + name_slug(source_name)
+                if feed_key not in candidate["discovery_feeds"]:
+                    candidate["discovery_feeds"].append(feed_key)
 
                 for key, value in token.items():
-                    if key not in candidate:
+                    existing = candidate.get(key)
+                    missing = existing is None or (
+                        isinstance(existing, str)
+                        and existing.strip().lower() in {"", "unknown", "n/a", "none", "null"}
+                    )
+                    incoming_present = value is not None and not (
+                        isinstance(value, str) and not value.strip()
+                    )
+                    if key not in candidate or (missing and incoming_present):
                         candidate[key] = value
 
         results = list(discovered.values())
 
         results.sort(
             key=lambda token: (
-                len(token["discovery_sources"]),
+                len(token["discovery_feeds"]),
                 token["discovery_timestamp"]
             ),
             reverse=True

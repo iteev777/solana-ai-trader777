@@ -37,7 +37,15 @@ _dirty_pools = set()
 _batch_refreshing = False
 _batch_status = {"last_refresh_pools": 0, "last_priced_pools": 0,
                  "last_failed_pools": 0, "last_skipped_pools": 0,
-                 "last_rpc_batches": 0, "last_accounts_requested": 0}
+                 "last_rpc_batches": 0, "last_accounts_requested": 0,
+                 "last_position_refresh_ms": 0.0, "last_candidate_refresh_ms": 0.0,
+                 "last_total_refresh_ms": 0.0,
+                 "last_position_pools": 0, "last_position_priced_pools": 0,
+                 "last_position_failed_pools": 0, "last_position_rpc_batches": 0,
+                 "last_candidate_pools": 0, "last_candidate_priced_pools": 0,
+                 "last_candidate_failed_pools": 0, "last_candidate_rpc_batches": 0,
+                 "last_position_pools_per_second": 0.0,
+                 "last_candidate_pools_per_second": 0.0}
 
 
 def _rpc_ws_url():
@@ -180,13 +188,24 @@ def should_refresh_pool(key, now=None):
 
 
 def store_pool_snapshot(key, snapshot):
-    """Publish a verified pool snapshot for WebSocket and dashboard readers."""
-    if not isinstance(key, (tuple, list)) or len(key) != 3 or not isinstance(snapshot, dict):
+    """Publish only a decoder-verified pool snapshot for readers."""
+    if (
+        not isinstance(key, (tuple, list))
+        or len(key) != 3
+        or not all(isinstance(part, str) and part.strip() for part in key)
+        or not isinstance(snapshot, dict)
+        or snapshot.get("onchainVerified") is not True
+    ):
         return False
     observed = snapshot.get("observedAt")
-    if not isinstance(observed, (int, float)) or observed <= 0:
+    if (
+        isinstance(observed, bool)
+        or not isinstance(observed, (int, float))
+        or not math.isfinite(observed)
+        or observed <= 0
+    ):
         observed = time.time()
-    normalized_key = tuple(key)
+    normalized_key = tuple(part.strip() for part in key)
     with _lock:
         _snapshots[normalized_key] = {"data": dict(snapshot), "observed_at": observed}
         _status["last_update"] = observed
@@ -202,12 +221,14 @@ def _refresh(key):
         snapshot = decode_pool_snapshot(
             pool, protocol, mint, _force=True, _register_watch=False
         )
-        if isinstance(snapshot, dict):
-            store_pool_snapshot(key, snapshot)
-            with _lock:
-                _status["last_latency_ms"] = round(
-                    (time.perf_counter() - started) * 1000, 1
-                )
+        if not isinstance(snapshot, dict) or snapshot.get("onchainVerified") is not True:
+            raise ValueError("pool snapshot decoder returned no verified snapshot")
+        if not store_pool_snapshot(key, snapshot):
+            raise ValueError("verified pool snapshot could not be published")
+        with _lock:
+            _status["last_latency_ms"] = round(
+                (time.perf_counter() - started) * 1000, 1
+            )
     except Exception as error:
         with _lock:
             _status["refresh_errors"] += 1
@@ -217,20 +238,88 @@ def _refresh(key):
             _refreshing.discard(key)
 
 
-def _refresh_many(keys, prune_unwatched=False):
+def partition_refresh_priority(position_keys, candidate_keys, requested_keys=None):
+    """Keep open-position pools ahead of discovery candidates, preserving stable order."""
+    positions = list(dict.fromkeys(position_keys or []))
+    candidates = list(dict.fromkeys(candidate_keys or []))
+    requested = None if requested_keys is None else set(requested_keys)
+    if requested is not None:
+        positions = [key for key in positions if key in requested]
+        candidates = [key for key in candidates if key in requested]
+    position_set = set(positions)
+    candidates = [key for key in candidates if key not in position_set]
+    return positions, candidates
+
+
+def _refresh_many(position_keys, candidate_keys=None, prune_unwatched=False):
+    """Refresh open positions first and expose per-class runtime measurements."""
     global _batch_refreshing
     started = time.perf_counter()
     try:
         import pool_account_fetcher
-        result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=prune_unwatched)
+        positions, candidates = partition_refresh_priority(position_keys, candidate_keys or [])
+        totals = {"last_refresh_pools": 0, "last_priced_pools": 0,
+                  "last_failed_pools": 0, "last_skipped_pools": 0,
+                  "last_rpc_batches": 0, "last_accounts_requested": 0}
+        measurements = {
+            "position": {"duration_ms": 0.0, "pools": 0, "priced": 0,
+                         "failed": 0, "rpc_batches": 0},
+            "candidate": {"duration_ms": 0.0, "pools": 0, "priced": 0,
+                          "failed": 0, "rpc_batches": 0},
+        }
+
+        # Separate passes are intentional: discovery candidates never consume
+        # RPC batch capacity until every open-position pool has been refreshed.
+        for label, keys in (("position", positions), ("candidate", candidates)):
+            if not keys:
+                continue
+            pass_started = time.perf_counter()
+            result = pool_account_fetcher.refresh_pools(keys, prune_unwatched=False)
+            elapsed_ms = max(0.0, (time.perf_counter() - pass_started) * 1000)
+            measurements[label] = {
+                "duration_ms": round(elapsed_ms, 2),
+                "pools": int(result.get("last_refresh_pools", 0) or 0),
+                "priced": int(result.get("last_priced_pools", 0) or 0),
+                "failed": int(result.get("last_failed_pools", 0) or 0),
+                "rpc_batches": int(result.get("last_rpc_batches", 0) or 0),
+            }
+            for name in totals:
+                totals[name] += int(result.get(name, 0) or 0)
+
+        if prune_unwatched:
+            pool_account_fetcher.prune_pool_account_cache(positions + candidates)
+
+        position = measurements["position"]
+        candidate = measurements["candidate"]
+        total_ms = max(0.0, (time.perf_counter() - started) * 1000)
+        position_rate = (
+            position["pools"] / (position["duration_ms"] / 1000)
+            if position["duration_ms"] > 0 else 0.0
+        )
+        candidate_rate = (
+            candidate["pools"] / (candidate["duration_ms"] / 1000)
+            if candidate["duration_ms"] > 0 else 0.0
+        )
         with _lock:
-            for name in _batch_status:
-                _batch_status[name] = result.get(name, _batch_status[name])
-            _status["last_latency_ms"] = round(
-                (time.perf_counter() - started) * 1000, 1
-            )
-            _status["last_error"] = None if result.get("last_failed_pools", 0) == 0 else (
-                "BATCH POOL REFRESH HAD " + str(result.get("last_failed_pools")) + " FAILURES"
+            _batch_status.update(totals)
+            _batch_status.update({
+                "last_position_refresh_ms": position["duration_ms"],
+                "last_candidate_refresh_ms": candidate["duration_ms"],
+                "last_total_refresh_ms": round(total_ms, 2),
+                "last_position_pools": position["pools"],
+                "last_position_priced_pools": position["priced"],
+                "last_position_failed_pools": position["failed"],
+                "last_position_rpc_batches": position["rpc_batches"],
+                "last_candidate_pools": candidate["pools"],
+                "last_candidate_priced_pools": candidate["priced"],
+                "last_candidate_failed_pools": candidate["failed"],
+                "last_candidate_rpc_batches": candidate["rpc_batches"],
+                "last_position_pools_per_second": round(position_rate, 3),
+                "last_candidate_pools_per_second": round(candidate_rate, 3),
+            })
+            _status["last_latency_ms"] = round(total_ms, 1)
+            _status["last_error"] = None if totals["last_failed_pools"] == 0 else (
+                "BATCH POOL REFRESH HAD " + str(totals["last_failed_pools"]) + " FAILURES"
             )
     except Exception as error:
         with _lock:
@@ -275,13 +364,19 @@ def _run():
                     batch_keys = None
                     prune_unwatched = False
                     if current and not _batch_refreshing and (_dirty_pools or poll_due):
-                        batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
+                        requested = set(current) if poll_due else (set(_dirty_pools) & current)
+                        position_keys, candidate_keys = partition_refresh_priority(
+                            sorted(_watches), sorted(_candidate_watches), requested
+                        )
+                        batch_keys = position_keys + candidate_keys
                         prune_unwatched = poll_due
                         _dirty_pools.difference_update(batch_keys)
                         _batch_refreshing = True
                         next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
                 if batch_keys:
-                    _batch_refresh_pool.submit(_refresh_many, batch_keys, prune_unwatched)
+                    _batch_refresh_pool.submit(
+                        _refresh_many, position_keys, candidate_keys, prune_unwatched
+                    )
 
                 # Remove every pool's state and reserve subscriptions when it leaves
                 # both the position set and the candidate LRU.

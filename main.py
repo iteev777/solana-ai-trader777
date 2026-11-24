@@ -5,7 +5,10 @@
 
 import time
 import queue
+import os
 import math
+import signal
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import paper_trading as paper
@@ -76,6 +79,8 @@ last_statistics_time = 0
 
 last_prices = {}
 
+_shutdown_event = threading.Event()
+
 
 # ==========================================
 # HELPERS
@@ -129,6 +134,77 @@ def get_token_address(token):
     address = address.strip()
 
     return address if address else None
+
+
+
+def merge_candidate_metadata(market_data, candidate):
+    """Preserve discovery metadata when market providers omit token metadata."""
+    merged = dict(market_data) if isinstance(market_data, dict) else {}
+    candidate = candidate if isinstance(candidate, dict) else {}
+    candidate_meta = candidate.get("tokenMeta") if isinstance(candidate.get("tokenMeta"), dict) else {}
+
+    def useful(value):
+        return (
+            isinstance(value, str)
+            and value.strip()
+            and value.strip().lower() not in {"unknown", "n/a", "none", "null"}
+        )
+
+    base_token = merged.get("baseToken") if isinstance(merged.get("baseToken"), dict) else {}
+    for key in ("name", "symbol"):
+        incoming = candidate.get(key)
+        current = merged.get(key) if useful(merged.get(key)) else base_token.get(key)
+        if useful(incoming) and not useful(current):
+            merged[key] = incoming.strip()
+
+    image = next((
+        value for value in (
+            candidate.get("icon"), candidate.get("logoURI"),
+            candidate.get("logo_uri"), candidate.get("imageUrl"),
+            candidate_meta.get("image"),
+        ) if useful(value) and value.strip().startswith(("https://", "http://"))
+    ), None)
+    info = merged.get("info") if isinstance(merged.get("info"), dict) else {}
+    if image and not useful(info.get("imageUrl")) and not useful(merged.get("logoURI")):
+        merged["logoURI"] = image
+
+    market_website_list = merged.get("websites")
+    if not isinstance(market_website_list, list):
+        market_website_list = info.get("websites")
+    market_website = merged.get("website") or merged.get("website_url")
+    has_market_website = useful(market_website) or (
+        isinstance(market_website_list, list)
+        and any(
+            isinstance(item, dict) and useful(item.get("url"))
+            for item in market_website_list
+        )
+    )
+
+    candidate_websites = candidate.get("websites")
+    if isinstance(candidate_websites, list) and candidate_websites:
+        existing_info = dict(info)
+        existing_websites = merged.get("websites")
+        if not isinstance(existing_websites, list) or not existing_websites:
+            existing_websites = existing_info.get("websites")
+        if not isinstance(existing_websites, list) or not existing_websites:
+            existing_info["websites"] = candidate_websites
+            merged["info"] = existing_info
+            merged["websites"] = candidate_websites
+    direct_website = candidate.get("website") or candidate.get("website_url")
+    if useful(direct_website) and not has_market_website:
+        merged["website"] = direct_website.strip()
+
+    for key in (
+        "mintAuthority", "mint_authority", "freezeAuthority", "freeze_authority",
+        "updateAuthority", "update_authority", "creator", "creatorAddress",
+        "creator_address", "mutable", "isMutable", "is_mutable",
+    ):
+        if candidate.get(key) is not None and merged.get(key) is None:
+            merged[key] = candidate[key]
+    if candidate_meta.get("updateAuthority") is not None and merged.get("updateAuthority") is None:
+        merged["updateAuthority"] = candidate_meta["updateAuthority"]
+
+    return merged
 
 
 def get_liquidity(pair):
@@ -344,11 +420,141 @@ def check_rugcheck(token_address, report=_RUGCHECK_REPORT_UNSET):
         return False
 
 
+def evaluate_pre_strategy_security(token_address):
+    """Run mandatory risk checks before observation or strategy scoring.
+
+    RugCheck always runs. On-chain mint/account checks run when RPC is configured.
+    Set TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true to fail closed without RPC.
+    """
+    try:
+        rugcheck_report = get_rugcheck_report(token_address)
+    except Exception as error:
+        log_event("RUGCHECK FETCH FAILED", token_address, repr(error))
+        return {
+            "status": "REJECT",
+            "reason": "RUGCHECK_UNAVAILABLE",
+            "rugcheck": None,
+            "token_security": None,
+        }
+
+    rugcheck_analysis = (
+        rugcheck_report.get("analysis")
+        if isinstance(rugcheck_report, dict)
+        and isinstance(rugcheck_report.get("analysis"), dict)
+        else None
+    )
+    if not check_rugcheck(token_address, rugcheck_report):
+        return {
+            "status": "REJECT",
+            "reason": "RUGCHECK_FAILED",
+            "rugcheck": rugcheck_analysis,
+            "token_security": None,
+        }
+
+    token_security_report = {
+        "status": "SKIPPED",
+        "reason": "SOLANA_RPC_NOT_CONFIGURED",
+    }
+    try:
+        rpc_configured = bool(get_onchain_status().get("rpc_configured"))
+    except Exception as error:
+        log_event("ONCHAIN STATUS CHECK FAILED", token_address, repr(error))
+        return {
+            "status": "REJECT",
+            "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
+            "rugcheck": rugcheck_analysis,
+            "token_security": None,
+        }
+
+    require_onchain = os.getenv(
+        "TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    if not rpc_configured:
+        if require_onchain:
+            return {
+                "status": "REJECT",
+                "reason": "ONCHAIN_TOKEN_SECURITY_REQUIRED_BUT_RPC_MISSING",
+                "rugcheck": rugcheck_analysis,
+                "token_security": token_security_report,
+            }
+        log_event(
+            "ONCHAIN TOKEN SECURITY SKIPPED",
+            token_address,
+            "RPC NOT CONFIGURED; set TROJAN_REQUIRE_ONCHAIN_TOKEN_SECURITY=true to fail closed",
+        )
+    else:
+        try:
+            from token_security import (
+                get_token_security_report,
+                evaluate_token_security,
+            )
+            import blacklist
+
+            token_security_report = get_token_security_report(token_address)
+            account_matches = blacklist.match_token_security_accounts(
+                token_security_report
+            )
+            if account_matches:
+                match = account_matches[0]
+                log_event(
+                    "BLACKLIST REJECT",
+                    token_address,
+                    "BLACKLISTED_ACCOUNT: " + match["reason"],
+                )
+                return {
+                    "status": "REJECT",
+                    "reason": "BLACKLISTED_ACCOUNT",
+                    "blacklist": {
+                        "entry_type": match["entry_type"],
+                        "entry_value": match["entry_value"],
+                        "reason": match["reason"],
+                        "source": match["source"],
+                    },
+                    "rugcheck": rugcheck_analysis,
+                    "token_security": token_security_report,
+                }
+
+            decision = evaluate_token_security(token_security_report)
+            if not decision.get("allowed"):
+                return {
+                    "status": "REJECT",
+                    "reason": decision.get(
+                        "reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"
+                    ),
+                    "rugcheck": rugcheck_analysis,
+                    "token_security": token_security_report,
+                }
+        except Exception as error:
+            log_event("ONCHAIN TOKEN SECURITY FAILED", token_address, repr(error))
+            return {
+                "status": "REJECT",
+                "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
+                "rugcheck": rugcheck_analysis,
+                "token_security": token_security_report,
+            }
+
+    return {
+        "status": "PASS",
+        "reason": "PRE_STRATEGY_SECURITY_PASSED",
+        "rugcheck": rugcheck_analysis,
+        "token_security": token_security_report,
+    }
+
+
 # ==========================================
 # TOKEN ANALYSIS
 # ==========================================
 
 def analyze_token_task(address, strategy_name, token):
+
+    import trading_control
+    if trading_control.is_force_stopped():
+        return {
+            "status": "waiting",
+            "reason": "FORCE STOP ACTIVE",
+            "address": address,
+        }
 
     token = token if isinstance(token, dict) else {}
     pair = token.get("market_data")
@@ -401,10 +607,25 @@ def analyze_token_task(address, strategy_name, token):
         # before any market, strategy, or paper-entry work is performed.
         try:
             import blacklist
-            blacklist_matches = blacklist.match_entries([
+            token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
+            authority_values = (
+                token.get("mintAuthority"), token.get("mint_authority"),
+                token.get("freezeAuthority"), token.get("freeze_authority"),
+                token.get("updateAuthority"), token.get("update_authority"),
+                token.get("creator"), token.get("creatorAddress"),
+                token.get("creator_address"),
+                token_meta.get("updateAuthority"),
+            )
+            blacklist_queries = [
                 ("token", address),
                 ("pool", pool_address),
-            ])
+            ]
+            blacklist_queries.extend(
+                ("account", value)
+                for value in authority_values
+                if isinstance(value, str) and value.strip()
+            )
+            blacklist_matches = blacklist.match_entries(blacklist_queries)
         except Exception as blacklist_error:
             log_event("BLACKLIST LOOKUP FAILED", address, repr(blacklist_error))
             return {
@@ -414,7 +635,11 @@ def analyze_token_task(address, strategy_name, token):
             }
         if blacklist_matches:
             match = blacklist_matches[0]
-            reason = "BLACKLISTED_TOKEN" if match["entry_type"] == "token" else "BLACKLISTED_POOL"
+            reason = {
+                "token": "BLACKLISTED_TOKEN",
+                "pool": "BLACKLISTED_POOL",
+                "account": "BLACKLISTED_ACCOUNT",
+            }.get(match["entry_type"], "BLACKLISTED_ENTRY")
             log_event("BLACKLIST REJECT", address, reason + ": " + match["reason"])
             return {
                 "status": "rejected",
@@ -521,7 +746,7 @@ def analyze_token_task(address, strategy_name, token):
             }
         )
 
-        token_data = dict(pair)
+        token_data = merge_candidate_metadata(pair, token)
         token_data["address"] = address
         token_data["indicators"] = indicators
         token_data["onchain_verified"] = bool(
@@ -581,6 +806,38 @@ def analyze_token_task(address, strategy_name, token):
                 "address": address,
             }
 
+        # Security checks precede observation and strategy scoring. A candidate
+        # cannot receive a BUY decision until the independent risk gates pass.
+        security_result = evaluate_pre_strategy_security(address)
+        if security_result.get("status") != "PASS":
+            return {
+                "status": "rejected",
+                "reason": security_result.get("reason", "PRE_STRATEGY_SECURITY_REJECTED"),
+                "address": address,
+                "rugcheck": security_result.get("rugcheck"),
+                "token_security": security_result.get("token_security"),
+                "blacklist": security_result.get("blacklist"),
+            }
+        rugcheck_analysis = security_result.get("rugcheck")
+        token_security_report = security_result.get("token_security")
+
+        # Optional ScreenerBot-style live trade observation. PumpPortal trade
+        # subscriptions are metered, so this stage is disabled unless the user
+        # explicitly enables it and configures a PumpPortal API key.
+        import candidate_observer
+        observation_report = candidate_observer.observe_candidate(
+            address, token_data.get("discovery_sources", [])
+        )
+        if not observation_report.get("ok"):
+            return {
+                "status": "waiting",
+                "reason": observation_report.get("reason", "OBSERVATION_WAIT"),
+                "observation": observation_report,
+                "filter_report": filter_report,
+                "address": address,
+            }
+        token_data["candidate_observation"] = observation_report
+
         account = paper.get_account_summary()
 
         open_positions = len(paper.get_positions())
@@ -618,66 +875,6 @@ def analyze_token_task(address, strategy_name, token):
                 "score": trade_decision.get("score", 0),
                 "address": address
             }
-
-        # Fetch once, evaluate once, and carry the exact same report through
-        # the candidate result so the dashboard/API can inspect its risk signals.
-        rugcheck_report = get_rugcheck_report(address)
-        rugcheck_analysis = (
-            rugcheck_report.get("analysis")
-            if isinstance(rugcheck_report, dict)
-            and isinstance(rugcheck_report.get("analysis"), dict)
-            else None
-        )
-        if not check_rugcheck(address, rugcheck_report):
-
-            return {
-                "status": "rejected",
-                "reason": "RUGCHECK_FAILED",
-                "address": address,
-                "rugcheck": rugcheck_analysis
-            }
-
-        token_security_report = {
-            "status": "SKIPPED",
-            "reason": "SOLANA_RPC_NOT_CONFIGURED"
-        }
-        if get_onchain_status().get("rpc_configured"):
-            try:
-                from token_security import get_token_security_report, evaluate_token_security
-                token_security_report = get_token_security_report(address)
-                account_matches = blacklist.match_token_security_accounts(token_security_report)
-                if account_matches:
-                    match = account_matches[0]
-                    log_event("BLACKLIST REJECT", address, "BLACKLISTED_ACCOUNT: " + match["reason"])
-                    return {
-                        "status": "rejected",
-                        "reason": "BLACKLISTED_ACCOUNT",
-                        "blacklist": {
-                            "entry_type": match["entry_type"],
-                            "entry_value": match["entry_value"],
-                            "reason": match["reason"],
-                            "source": match["source"],
-                        },
-                        "address": address,
-                        "token_security": token_security_report,
-                    }
-                security_decision = evaluate_token_security(token_security_report)
-                if not security_decision.get("allowed"):
-                    return {
-                        "status": "rejected",
-                        "reason": security_decision.get("reason", "ONCHAIN_TOKEN_SECURITY_REJECTED"),
-                        "address": address,
-                        "token_security": token_security_report,
-                        "rugcheck": rugcheck_analysis
-                    }
-            except Exception as security_error:
-                log_event("ONCHAIN TOKEN SECURITY FAILED", address, repr(security_error))
-                return {
-                    "status": "rejected",
-                    "reason": "ONCHAIN_TOKEN_SECURITY_UNAVAILABLE",
-                    "address": address,
-                    "rugcheck": rugcheck_analysis
-                }
 
         score = safe_float(trade_decision.get("score"))
 
@@ -732,6 +929,7 @@ def analyze_token_task(address, strategy_name, token):
             "token_security": token_security_report,
             "rugcheck": rugcheck_analysis,
             "entry_intelligence": entry_intelligence,
+            "candidate_observation": observation_report,
             "copy_wallet": token.get("copy_wallet") if isinstance(token, dict) else None,
             "copy_signature": token.get("copy_signature") if isinstance(token, dict) else None,
             "copy_latency_seconds": token.get("copy_latency_seconds") if isinstance(token, dict) else None
@@ -1133,6 +1331,7 @@ def process_completed_tasks():
                     "onchain_verified": result.get("onchain_verified"),
                     "token_security": result.get("token_security"),
                     "entry_intelligence": result.get("entry_intelligence"),
+                    "candidate_observation": result.get("candidate_observation"),
                     "copy_wallet": result.get("copy_wallet"),
                     "copy_signature": result.get("copy_signature"),
                     "copy_latency_seconds": result.get("copy_latency_seconds")
@@ -1553,7 +1752,8 @@ def monitor_positions():
 
             liquidity_status = check_liquidity(
                 address,
-                liquidity
+                liquidity,
+                pool_address=pair.get("pairAddress"),
             )
 
             if liquidity_status == "COLLAPSE":
@@ -1589,9 +1789,17 @@ def monitor_positions():
 
         try:
 
+            price_timestamp = next((
+                pair.get(key) for key in (
+                    "priceUpdatedAt", "price_updated_at", "updatedAt",
+                    "updated_at", "timestamp", "lastUpdated", "last_updated",
+                )
+                if pair.get(key) is not None
+            ), None)
             result = paper.update_position(
                 address,
-                price
+                price,
+                price_timestamp=price_timestamp,
             )
 
             record_sale(address, result)
@@ -1647,11 +1855,153 @@ def print_statistics():
 # MAIN LOOP
 # ==========================================
 
-def run_bot():
+def _service_manager_health():
+    """Create the managed background services used by the main runtime."""
+    import dashboard
+    import copy_trade
+    import pool_registry
+    import telegram_alerts
+    import rpc_transport
+    from service_manager import ServiceManager, ServiceSpec, set_global_service_manager
 
+    def dashboard_health():
+        thread = dashboard._server_thread
+        running = bool(thread and thread.is_alive())
+        return {
+            "status": "healthy" if running else "degraded",
+            "message": None if running else "dashboard worker is not running",
+        }
+
+    def sniper_health():
+        thread = sniper._listener_thread
+        running = bool(thread and thread.is_alive())
+        connected = bool(sniper.get_trade_subscription_status().get("connected"))
+        if not running:
+            return {"status": "unhealthy", "message": "sniper listener worker exited"}
+        return {
+            "status": "healthy" if connected else "degraded",
+            "message": None if connected else "PumpPortal listener reconnecting",
+        }
+
+    def copy_health():
+        status = copy_trade.get_copy_monitor_status()
+        if not status.get("configured"):
+            return {"status": "disabled", "message": "copy wallet monitor not configured"}
+        return {
+            "status": "healthy" if status.get("running") else "degraded",
+            "message": None if status.get("running") else status.get("last_error") or "copy monitor connecting",
+        }
+
+    def pool_registry_health():
+        status = pool_registry.get_pool_registry_status()
+        if status.get("worker_stopping"):
+            return {"status": "degraded", "message": "pool registry worker is stopping"}
+        return {
+            "status": "healthy" if status.get("worker_running") else "unhealthy",
+            "message": None if status.get("worker_running") else "pool registry worker is not running",
+        }
+
+    def telegram_health():
+        status = telegram_alerts.get_telegram_status()
+        if not status.get("configured"):
+            return {"status": "disabled", "message": "Telegram notifications not configured"}
+        if status.get("worker_stopping"):
+            return {"status": "degraded", "message": "Telegram alert worker is stopping"}
+        return {
+            "status": "healthy" if status.get("worker_running") else "unhealthy",
+            "message": None if status.get("worker_running") else "Telegram alert worker is not running",
+        }
+
+    def rpc_transport_health():
+        status = rpc_transport.get_rpc_status()
+        return {
+            "status": "healthy" if status.get("configured") else "unhealthy",
+            "message": None if status.get("configured") else "No secure read-only RPC endpoint configured",
+        }
+
+    def start_sniper():
+        thread = sniper.start_listener()
+        if thread is None:
+            raise RuntimeError("sniper listener thread did not start")
+        return thread
+
+    service_manager = ServiceManager(stop_grace_seconds=5.0, cache_ttl_seconds=5.0)
+    service_manager.register(ServiceSpec(
+        name="dashboard",
+        start=dashboard.start_dashboard,
+        stop=lambda _handle: dashboard.stop_dashboard(),
+        health=dashboard_health,
+        priority=10,
+        essential=False,
+        enabled=lambda: bool(os.getenv("TROJAN_DASHBOARD_TOKEN")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="sniper_listener",
+        start=start_sniper,
+        stop=lambda _handle: sniper.stop_listener(),
+        health=sniper_health,
+        priority=20,
+        essential=False,
+        enabled=True,
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="copy_wallet_monitor",
+        start=copy_trade.start_copy_monitor,
+        stop=lambda _handle: copy_trade.stop_copy_monitor(),
+        health=copy_health,
+        priority=30,
+        essential=False,
+        enabled=lambda: bool(copy_trade.get_copy_monitor_status().get("configured")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="pool_registry_worker",
+        start=pool_registry.start_pool_registry_worker,
+        stop=lambda _handle: pool_registry.stop_pool_registry_worker(timeout=5.0),
+        health=pool_registry_health,
+        priority=25,
+        essential=False,
+        enabled=True,
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="telegram_alert_worker",
+        start=telegram_alerts.start_telegram_alert_worker,
+        stop=lambda _handle: telegram_alerts.stop_telegram_alert_worker(timeout=5.0),
+        health=telegram_health,
+        priority=40,
+        essential=False,
+        enabled=lambda: bool(telegram_alerts.get_telegram_status().get("configured")),
+        stops_alone=True,
+    ))
+    service_manager.register(ServiceSpec(
+        name="rpc_transport",
+        start=lambda: rpc_transport.get_rpc_status(),
+        stop=lambda _handle: rpc_transport.shutdown_rpc_sidecars(timeout=1.0),
+        health=rpc_transport_health,
+        priority=10,
+        essential=False,
+        enabled=lambda: bool(rpc_transport.get_rpc_status().get("configured")),
+        stops_alone=True,
+    ))
+    set_global_service_manager(service_manager)
+    return service_manager
+
+
+def _request_shutdown(_signum=None, _frame=None):
+    _shutdown_event.set()
+
+
+def run_bot():
     global last_scan_time
     global last_statistics_time
     global discovery_future
+
+    service_manager = None
+    previous_signal_handlers = {}
+    _shutdown_event.clear()
 
     print("====================================")
     print("TROJAN V2 - SOLANA AI TRADING BOT")
@@ -1663,86 +2013,103 @@ def run_bot():
     print("LIVE EXECUTION: LOCKED")
     print("====================================")
 
-    initialize_database()
-    paper.refresh_account()
-
     try:
-        from dashboard import start_dashboard
-        start_dashboard()
-    except Exception as dashboard_error:
-        log_event("DASHBOARD START ERROR", reason=repr(dashboard_error))
-
-    sniper.start_listener()
-
-    try:
-        from copy_trade import start_copy_monitor
-        start_copy_monitor()
-    except Exception as copy_error:
-        log_event("COPY WATCH START ERROR", reason=repr(copy_error))
-
-    log_event("SNIPER THREAD STARTED")
-    log_event("BOT STARTED")
-
-    while True:
-
-        loop_start = time.time()
-
-        try:
-
-            # Free completed task slots first.
-
-            process_completed_tasks()
-            process_copy_signals()
-
-            # Receive and schedule new tokens.
-
-            receive_sniper_tokens()
-            process_sniper_tokens()
-            process_discovery_pending()
-
-            # Run network-heavy discovery separately so API latency cannot
-            # block the position monitor and stop-loss checks.
-            if discovery_future is not None and discovery_future.done():
-
+        # Railway sends SIGTERM during deploy/restart. Convert it to the same
+        # graceful stop path as Ctrl+C; signal handlers are installed only from
+        # the main thread, as required by Python.
+        if threading.current_thread() is threading.main_thread():
+            for signum in (signal.SIGINT, signal.SIGTERM):
                 try:
-                    discovery_future.result()
-                except Exception as error:
-                    log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
+                    previous_signal_handlers[signum] = signal.getsignal(signum)
+                    signal.signal(signum, _request_shutdown)
+                except (ValueError, OSError):
+                    previous_signal_handlers.pop(signum, None)
 
-                discovery_future = None
+        initialize_database()
+        paper.refresh_account()
 
-            if (
-                discovery_future is None
-                and time.time() - last_scan_time >= SCAN_INTERVAL
-            ):
-
-                discovery_future = discovery_executor.submit(
-                    add_discovery_tokens
-                )
-
-                last_scan_time = time.time()
-                log_event("BACKGROUND DISCOVERY STARTED")
-
-            # Monitor all positions through batch market data.
-
-            monitor_positions()
-            import service_health
-            service_health.heartbeat("main_loop")
-
-            if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
-
-                print_statistics()
-                last_statistics_time = time.time()
-
-        except Exception as error:
-
-            log_event("MAIN LOOP ERROR", reason=repr(error))
-
-        elapsed = time.time() - loop_start
-
-        time.sleep(
-            max(1, POSITION_CHECK_INTERVAL - elapsed)
+        service_manager = _service_manager_health()
+        startup = service_manager.start_all()
+        for failure in startup.get("failures", []):
+            log_event("SERVICE START FAILURE", address=failure.get("name"), reason=failure.get("error"))
+        for blocked in startup.get("blocked", []):
+            log_event("SERVICE START BLOCKED", address=blocked.get("name"), reason=blocked.get("reason"))
+        log_event(
+            "SERVICE MANAGER STARTED",
+            reason="started=" + ",".join(startup.get("started", []))
+            + " | disabled=" + ",".join(startup.get("disabled", [])),
         )
+        log_event("BOT STARTED")
+
+        while not _shutdown_event.is_set():
+            loop_start = time.time()
+            try:
+                process_completed_tasks()
+                process_copy_signals()
+                receive_sniper_tokens()
+                process_sniper_tokens()
+                process_discovery_pending()
+
+                # Network-heavy discovery stays separate from the position monitor.
+                if discovery_future is not None and discovery_future.done():
+                    try:
+                        discovery_future.result()
+                    except Exception as error:
+                        log_event("BACKGROUND DISCOVERY ERROR", reason=repr(error))
+                    discovery_future = None
+
+                if (
+                    discovery_future is None
+                    and time.time() - last_scan_time >= SCAN_INTERVAL
+                ):
+                    discovery_future = discovery_executor.submit(add_discovery_tokens)
+                    last_scan_time = time.time()
+                    log_event("BACKGROUND DISCOVERY STARTED")
+
+                monitor_positions()
+                import service_health
+                service_health.heartbeat("main_loop")
+
+                if time.time() - last_statistics_time >= STATISTICS_INTERVAL:
+                    print_statistics()
+                    last_statistics_time = time.time()
+
+            except Exception as error:
+                log_event("MAIN LOOP ERROR", reason=repr(error))
+
+            elapsed = time.time() - loop_start
+            _shutdown_event.wait(max(1, POSITION_CHECK_INTERVAL - elapsed))
+
+    except KeyboardInterrupt:
+        _shutdown_event.set()
+    finally:
+        _shutdown_event.set()
+        log_event("BOT SHUTTING DOWN")
+        if service_manager is not None:
+            try:
+                stopped = service_manager.stop_all()
+                for failure in stopped.get("failures", []):
+                    log_event("SERVICE STOP FAILURE", address=failure.get("name"), reason=failure.get("reason"))
+                log_event(
+                    "SERVICE MANAGER STOPPED",
+                    reason="stopped=" + ",".join(stopped.get("stopped", [])),
+                )
+            except Exception as error:
+                log_event("SERVICE MANAGER SHUTDOWN ERROR", reason=repr(error))
+            try:
+                from service_manager import clear_global_service_manager
+                clear_global_service_manager()
+            except Exception as error:
+                log_event("SERVICE MANAGER CLEAR ERROR", reason=repr(error))
+
+        executor.shutdown(wait=False, cancel_futures=True)
+        discovery_executor.shutdown(wait=False, cancel_futures=True)
+
+        for signum, previous in previous_signal_handlers.items():
+            try:
+                signal.signal(signum, previous)
+            except (ValueError, OSError):
+                pass
 
 
 # ==========================================
@@ -1750,21 +2117,4 @@ def run_bot():
 # ==========================================
 
 if __name__ == "__main__":
-
-    try:
-
-        run_bot()
-
-    except KeyboardInterrupt:
-
-        log_event("BOT SHUTTING DOWN")
-
-        executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
-
-        discovery_executor.shutdown(
-            wait=False,
-            cancel_futures=True
-        )
+    run_bot()

@@ -7,6 +7,7 @@ configuration from the same pool snapshot.
 """
 from dataclasses import dataclass
 import math
+import time
 
 CPMM_FEE_DENOMINATOR = 1_000_000
 BPS_DENOMINATOR = 10_000
@@ -29,10 +30,22 @@ class CpmmSnapshot:
     status_enabled: bool = True
 
 
-def _positive_int(value, name):
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError(name + " must be a positive integer")
+def _positive_int(value, name, maximum=2**64 - 1):
+    if (
+        isinstance(value, bool) or not isinstance(value, int)
+        or not 0 < value <= maximum
+    ):
+        raise ValueError(name + " must be a positive bounded integer")
     return value
+
+
+def _finite_positive(value, name):
+    if (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        or not math.isfinite(float(value)) or value <= 0
+    ):
+        raise ValueError(name + " must be positive and finite")
+    return float(value)
 
 
 def validate_cpmm_snapshot(snapshot, max_age_seconds=5.0, now=None):
@@ -40,29 +53,45 @@ def validate_cpmm_snapshot(snapshot, max_age_seconds=5.0, now=None):
         raise ValueError("A decoded CpmmSnapshot is required")
     if snapshot.protocol != "raydium_cpmm":
         raise ValueError("Unsupported CPMM protocol")
-    if not snapshot.pool_id or not snapshot.mint_a or not snapshot.mint_b:
-        raise ValueError("Pool identity and both mints are required")
+    for value, name in (
+        (snapshot.pool_id, "pool_id"),
+        (snapshot.mint_a, "mint_a"),
+        (snapshot.mint_b, "mint_b"),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(name + " must be a non-empty string")
     if snapshot.mint_a == snapshot.mint_b:
         raise ValueError("Pool mints must differ")
     _positive_int(snapshot.reserve_a, "reserve_a")
     _positive_int(snapshot.reserve_b, "reserve_b")
-    if snapshot.trade_fee_rate < 0 or snapshot.creator_fee_rate < 0:
-        raise ValueError("Fee rates cannot be negative")
+    for value, name in (
+        (snapshot.trade_fee_rate, "trade_fee_rate"),
+        (snapshot.creator_fee_rate, "creator_fee_rate"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(name + " must be a non-negative integer")
     if snapshot.trade_fee_rate + snapshot.creator_fee_rate >= CPMM_FEE_DENOMINATOR:
         raise ValueError("Combined fee rate is invalid")
     if snapshot.trade_fee_rate > CPMM_FEE_DENOMINATOR:
         raise ValueError("Trade fee rate is invalid")
+    if not isinstance(snapshot.creator_fee_on_input, bool):
+        raise ValueError("creator_fee_on_input must be a boolean")
     if snapshot.creator_fee_rate and not snapshot.creator_fee_on_input:
         raise ValueError("Creator fee mode is not supported by this quote adapter")
+    if not isinstance(snapshot.transfer_fee_present, bool):
+        raise ValueError("transfer_fee_present must be a boolean")
     if snapshot.transfer_fee_present:
         raise ValueError("Token-2022 transfer-fee mints require a dedicated fee decoder")
+    if not isinstance(snapshot.status_enabled, bool):
+        raise ValueError("status_enabled must be a boolean")
     if not snapshot.status_enabled:
         raise ValueError("Pool swaps are disabled")
-    if snapshot.slot <= 0 or snapshot.observed_at <= 0:
-        raise ValueError("Pool snapshot must include a confirmed slot and timestamp")
-    current = now if now is not None else __import__("time").time()
-    age = current - snapshot.observed_at
-    if age < 0 or age > max_age_seconds:
+    _positive_int(snapshot.slot, "slot")
+    observed_at = _finite_positive(snapshot.observed_at, "observed_at")
+    age_limit = _finite_positive(max_age_seconds, "max_age_seconds")
+    current = _finite_positive(now, "now") if now is not None else time.time()
+    age = current - observed_at
+    if age < 0 or age > age_limit:
         raise ValueError("Pool snapshot is stale or has a future timestamp")
     return age
 
@@ -101,14 +130,21 @@ def quote_raydium_cpmm_exact_in(snapshot, input_mint, amount_in,
     if amount_out <= 0 or amount_out >= reserve_out:
         raise ValueError("Quote rounds to zero or drains the pool")
     minimum_out = amount_out * (BPS_DENOMINATOR - slippage_bps) // BPS_DENOMINATOR
+    if minimum_out <= 0:
+        raise ValueError("Minimum output rounds to zero")
 
-    # Compare marginal spot with the post-trade marginal pool price.
-    # The fee-inclusive amount enters the vault; fee balances are accounted separately.
-    post_reserve_in = reserve_in + amount_in
-    post_reserve_out = reserve_out - amount_out
-    impact = 1.0 - ((post_reserve_out / post_reserve_in) / (reserve_out / reserve_in))
-    if not math.isfinite(impact) or impact < 0:
+    # Match the reference venue convention: compare the pool's marginal
+    # spot rate with the realised rate on the amount that reached the curve.
+    # The fee is reported separately and must not be counted as price impact.
+    swapped_input = amount_in - fee_amount
+    if swapped_input <= 0:
+        raise ValueError("Input is fully consumed by fees")
+    spot_rate = reserve_out / reserve_in
+    realised_rate = amount_out / swapped_input
+    impact = ((spot_rate - realised_rate) / spot_rate) * 100.0
+    if not math.isfinite(impact):
         raise ValueError("Calculated price impact is invalid")
+    impact = min(100.0, max(0.0, impact))
 
     return {
         "provider": "raydium_cpmm_direct_math",
@@ -123,7 +159,7 @@ def quote_raydium_cpmm_exact_in(snapshot, input_mint, amount_in,
         "fee_rate": fee_rate,
         "out_amount": amount_out,
         "minimum_out_amount": minimum_out,
-        "price_impact_percent": round(impact * 100, 6),
+        "price_impact_percent": round(impact, 6),
         "status": "QUOTED_FROM_VALIDATED_SNAPSHOT",
         "execution": "DISABLED",
         "signing": "DISABLED",

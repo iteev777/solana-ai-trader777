@@ -33,21 +33,60 @@ class RpcTransportTests(unittest.TestCase):
 
 
 class AdaptiveLearningTests(unittest.TestCase):
+    def _report(self, rows):
+        with patch.object(adaptive_learning.database, "get_recent_trades", return_value=rows), \
+             patch.object(adaptive_learning, "_cache", {"updated_at": 0.0, "report": None}):
+            return adaptive_learning.get_learning_report(force=True)
+
     def test_no_sizing_change_before_minimum_sample(self):
         rows = [{"action": "SELL", "strategy": "main", "profit_loss": 1.0}] * 5
-        with patch.object(adaptive_learning.database, "get_recent_trades", return_value=rows), patch.object(adaptive_learning, "_cache", {"updated_at": 0.0, "report": None}):
-            profile = adaptive_learning.get_learning_report(force=True)["strategies"][0]
+        profile = self._report(rows)["strategies"][0]
         self.assertEqual(profile["size_multiplier"], 1.0)
         self.assertEqual(profile["status"], "collecting_sample")
 
     def test_positive_and_negative_samples_are_bounded(self):
         wins = [{"action": "SELL", "strategy": "main", "profit_loss": 2.0}] * 24
         losses = [{"action": "SELL", "strategy": "main", "profit_loss": -1.0}] * 6
-        with patch.object(adaptive_learning.database, "get_recent_trades", return_value=wins + losses), patch.object(adaptive_learning, "_cache", {"updated_at": 0.0, "report": None}):
-            profile = adaptive_learning.get_learning_report(force=True)["strategies"][0]
+        profile = self._report(wins + losses)["strategies"][0]
         self.assertEqual(profile["status"], "learning_active")
         self.assertGreaterEqual(profile["size_multiplier"], 0.80)
         self.assertLessEqual(profile["size_multiplier"], 1.15)
+
+    def test_five_recent_losses_cap_multiplier_even_after_profitable_history(self):
+        wins = [{"action": "SELL", "strategy": "main", "profit_loss": 2.0}] * 25
+        losses = [{"action": "SELL", "strategy": "main", "profit_loss": -0.25}] * 5
+        profile = self._report(list(reversed(wins + losses)))["strategies"][0]
+        self.assertEqual(profile["current_losing_streak"], 5)
+        self.assertEqual(profile["size_multiplier"], 0.8)
+
+    def test_three_recent_losses_cap_multiplier_at_point_nine(self):
+        wins = [{"action": "SELL", "strategy": "main", "profit_loss": 2.0}] * 27
+        losses = [{"action": "SELL", "strategy": "main", "profit_loss": -0.25}] * 3
+        profile = self._report(list(reversed(wins + losses)))["strategies"][0]
+        self.assertEqual(profile["current_losing_streak"], 3)
+        self.assertLessEqual(profile["size_multiplier"], 0.9)
+
+    def test_non_finite_pnl_is_ignored_and_reported(self):
+        rows = [{"action": "SELL", "strategy": "main", "profit_loss": float("nan")}]
+        profile = self._report(rows)["strategies"][0]
+        self.assertEqual(profile["closed_trades"], 0)
+        self.assertEqual(profile["invalid_rows_ignored"], 1)
+        self.assertEqual(profile["size_multiplier"], 1.0)
+
+    def test_strategy_samples_are_isolated(self):
+        rows = (
+            [{"action": "SELL", "strategy": "main", "profit_loss": 1.0}] * 30
+            + [{"action": "SELL", "strategy": "sniper", "profit_loss": -1.0}] * 5
+        )
+        report = self._report(rows)
+        main, sniper = report["strategies"]
+        self.assertEqual(main["closed_trades"], 30)
+        self.assertEqual(sniper["closed_trades"], 5)
+        self.assertEqual(sniper["status"], "collecting_sample")
+
+    def test_invalid_environment_minimum_sample_falls_back_safely(self):
+        with patch.dict(os.environ, {"TROJAN_ADAPTIVE_MIN_TRADES": "not-a-number"}):
+            self.assertEqual(adaptive_learning._minimum_sample(), 30)
 
 
 class PoolRefreshCoalescingTests(unittest.TestCase):

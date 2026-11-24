@@ -23,7 +23,7 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(
             [row["stage"] for row in result["decisions"]],
-            ["metadata", "market", "age", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
+            ["metadata", "age", "onchain", "market", "valuation", "pool_metrics", "activity", "momentum", "provenance", "quality"],
         )
 
     def test_numeric_symbol_is_rejected(self):
@@ -32,12 +32,54 @@ class FilterPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "REJECT")
         self.assertEqual(result["reason"], "NUMERIC_SYMBOL")
 
-    def test_missing_symbol_waits_instead_of_being_fabricated(self):
+    def test_missing_symbol_is_rejected_like_screenerbot_symbol_stage(self):
         token = dict(self.token)
         token.pop("symbol")
         result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "EMPTY_SYMBOL")
+
+    def test_empty_symbol_can_be_configured_to_wait(self):
+        token = dict(self.token, symbol="   ")
+        with patch.dict(os.environ, {"TROJAN_FILTER_REJECT_EMPTY_SYMBOLS": "false"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "WAIT")
         self.assertEqual(result["reason"], "SYMBOL_UNKNOWN")
+
+    def test_single_character_ascii_letter_is_not_rejected_by_default(self):
+        token = dict(self.token, symbol="A")
+        self.assertEqual(filter_pipeline.evaluate_token(token, "Mint111")["status"], "PASS")
+
+    def test_non_letter_single_character_can_be_rejected_when_enabled(self):
+        token = dict(self.token, symbol="!")
+        with patch.dict(os.environ, {"TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
+
+    def test_immutable_metadata_with_active_freeze_authority_is_rejected(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_known_scam_authority_flag_is_rejected(self):
+        token = dict(self.token, known_scam_authority=True)
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["reason"], "KNOWN_SCAM_AUTHORITY")
+
+    def test_onchain_filter_can_be_disabled_explicitly(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "false"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+
+    def test_onchain_filter_accepts_numeric_false_environment_value(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "0"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
 
     def test_zero_liquidity_rejected_but_missing_liquidity_waits(self):
         zero = dict(self.token, liquidity={"usd": 0})
@@ -118,6 +160,70 @@ class FilterPipelineTests(unittest.TestCase):
         with patch.dict(os.environ, {"TROJAN_FILTER_MIN_QUALITY_SCORE": "60"}):
             result = filter_pipeline.evaluate_token(token, "Mint111")
         self.assertEqual(result["status"], "PASS")
+
+    def test_filter_stages_short_circuit_after_first_rejection(self):
+        token = dict(self.token, symbol="")
+        with patch.object(filter_pipeline, "_activity_stage", side_effect=AssertionError("later stage ran")):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "EMPTY_SYMBOL")
+        self.assertEqual([item["stage"] for item in result["decisions"]], ["metadata"])
+
+    def test_invalid_boolean_environment_value_preserves_safe_default(self):
+        token = dict(self.token, mutable=False, freezeAuthority="Authority111")
+        with patch.dict(os.environ, {"TROJAN_FILTER_ONCHAIN_ENABLED": "flase"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_unknown_authority_is_not_treated_as_revoked(self):
+        token = dict(self.token, mutable=False, freezeAuthority="unknown")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_string_false_mutability_is_normalized(self):
+        token = dict(self.token, mutable="false", freezeAuthority="Authority111")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    def test_metadata_name_falls_back_to_base_token_when_top_level_is_empty(self):
+        token = dict(self.token, name=None, baseToken={"name": "Base Name", "address": "Mint111"})
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["decisions"][0]["metrics"]["name"], "Base Name")
+
+    def test_whitespace_symbol_falls_back_to_base_token_symbol(self):
+        token = dict(self.token, symbol=" ", baseToken={"symbol": "BASE", "address": "Mint111"})
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["decisions"][0]["metrics"]["symbol"], "BASE")
+
+    def test_invalid_primary_logo_falls_back_to_nested_image(self):
+        token = dict(self.token, logoURI="not-a-url", info={"imageUrl": "https://example.test/logo.png"})
+        with patch.dict(os.environ, {"TROJAN_FILTER_REQUIRE_LOGO_URL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["decisions"][0]["metrics"]["logo_available"])
+
+    def test_invalid_primary_website_falls_back_to_nested_website(self):
+        token = dict(
+            self.token,
+            websites=[{"url": "javascript:alert(1)"}],
+            info={"websites": [{"url": "https://example.test"}]},
+        )
+        with patch.dict(os.environ, {"TROJAN_FILTER_REQUIRE_WEBSITE_URL": "true"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["decisions"][0]["metrics"]["website_available"])
+
+    def test_token_mint_mismatch_is_rejected(self):
+        token = dict(self.token, address="DifferentMint")
+        result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "TOKEN_MINT_MISMATCH")
+
+    def test_quality_score_outside_unit_interval_is_rejected(self):
+        token = dict(self.token, candidate_quality={"score": 101, "tier": "strong"})
+        with patch.dict(os.environ, {"TROJAN_FILTER_MIN_QUALITY_SCORE": "60"}):
+            result = filter_pipeline.evaluate_token(token, "Mint111")
+        self.assertEqual(result["reason"], "INVALID_CANDIDATE_QUALITY_SCORE")
 
     def test_missing_optional_momentum_does_not_block_by_default(self):
         token = dict(self.token)

@@ -6,6 +6,8 @@ source never prevents the remaining discovery sources from running.
 import os
 import re
 
+from solders.pubkey import Pubkey
+
 from api_client import get_json
 
 JUPITER_BASE = "https://lite-api.jup.ag/tokens/v2"
@@ -18,10 +20,16 @@ BASE58_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
 def _is_solana_mint(value):
+    """Match Solana Pubkey parsing, not merely a base58-looking string."""
     if not isinstance(value, str):
         return False
     value = value.strip()
-    return bool(BASE58_RE.fullmatch(value))
+    if not BASE58_RE.fullmatch(value):
+        return False
+    try:
+        return len(bytes(Pubkey.from_string(value))) == 32
+    except (ValueError, TypeError):
+        return False
 
 
 def _items(payload):
@@ -54,10 +62,58 @@ def _candidate(mint, source, item=None, name=None, symbol=None):
         ("icon", "icon"), ("logoURI", "icon"), ("logo", "icon"),
         ("usdPrice", "priceUsd"), ("liquidity", "liquidity_usd"),
         ("mcap", "marketCap"), ("fdv", "fdv"),
+        ("decimals", "decimals"),
+        ("creator", "creator"), ("mintAuthority", "mint_authority"),
+        ("freezeAuthority", "freeze_authority"), ("program", "token_program"),
+        ("createAt", "created_at"), ("updatedAt", "updated_at"),
+        ("tokenType", "token_type"),
     ):
         value = item.get(source_key)
         if value is not None and target_key not in result:
+            if target_key == "decimals":
+                if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255:
+                    result[target_key] = value
+            elif isinstance(value, str) and value.strip():
+                result[target_key] = value.strip()
+
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = item.get("tokenMeta")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for source_key, target_key in (
+        ("uri", "token_uri"), ("updateAuthority", "update_authority"),
+    ):
+        value = metadata.get(source_key)
+        if isinstance(value, str) and value.strip():
+            result[target_key] = value.strip()
+    if isinstance(metadata.get("mutable"), bool):
+        result["is_mutable"] = metadata["mutable"]
+
+    for source_key, target_key in (
+        ("score", "rugcheck_score"), ("user_visits", "rugcheck_user_visits"),
+        ("visits", "rugcheck_visits"), ("vote_count", "rugcheck_vote_count"),
+        ("up_count", "rugcheck_up_count"),
+    ):
+        value = item.get(source_key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             result[target_key] = value
+    for source_key, target_key in (
+        ("payer", "rugcheck_payer"), ("description", "rugcheck_description"),
+    ):
+        value = item.get(source_key)
+        if isinstance(value, str) and value.strip():
+            result[target_key] = value.strip()
+    for source_key, target_key in (
+        ("jup_verified", "jup_verified"), ("jup_strict", "jup_strict"),
+    ):
+        if isinstance(item.get(source_key), bool):
+            result[target_key] = item[source_key]
+    links = item.get("links")
+    if isinstance(links, (dict, list)) and len(links) <= 20:
+        result["rugcheck_links"] = links
+    events = item.get("events")
+    if isinstance(events, (dict, list)) and len(events) <= 20:
+        result["rugcheck_events"] = events
     return result
 
 
@@ -86,8 +142,12 @@ def scan_rugcheck():
         for item in _items(payload):
             if not isinstance(item, dict):
                 continue
-            metadata = item.get("tokenMeta")
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = item.get("tokenMeta")
             metadata = metadata if isinstance(metadata, dict) else {}
+            if source == "rugcheck_recent" and not metadata:
+                continue
             token = _candidate(
                 item.get("mint") or item.get("address"),
                 source, item,
@@ -98,39 +158,155 @@ def scan_rugcheck():
                 mint = token["tokenAddress"]
                 if mint not in found:
                     found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
+                else:
+                    _merge_rugcheck_candidate(found[mint], token)
     print("RUGCHECK DISCOVERY TOKENS:", len(found), flush=True)
     return list(found.values())
 
 
-def scan_jupiter():
-    """Jupiter recent, organic-score, traded and trending token lists."""
-    feeds = (
-        ("jupiter_recent", f"{JUPITER_BASE}/recent"),
-        ("jupiter_organic", f"{JUPITER_BASE}/toporganicscore/1h?limit=100"),
-        ("jupiter_traded", f"{JUPITER_BASE}/toptraded/1h?limit=100"),
-        ("jupiter_trending", f"{JUPITER_BASE}/toptrending/1h?limit=100"),
+
+def _scan_rugcheck_feed(source, endpoint):
+    """Fetch one RugCheck stats feed; raise on transport/HTTP/JSON/schema errors.
+
+    RugCheck's documented stats response is a list or JSON null (empty list).
+    A failed feed must remain visible to the aggregator's per-source health.
+    """
+    payload = get_json(
+        f"{RUGCHECK_BASE}/{endpoint}",
+        headers={"Accept": "application/json"},
+        timeout=TIMEOUT,
+        cache_ttl=45,
+        max_retries=1,
     )
+    if payload is None:
+        return []
+    if not isinstance(payload, list):
+        raise ValueError(f"{source} returned an invalid stats-list payload")
     found = {}
-    for source, url in feeds:
-        payload = _safe_fetch(source, url, ttl=30)
-        for item in _items(payload):
-            if not isinstance(item, dict):
-                continue
-            token = _candidate(
-                item.get("id") or item.get("mint") or item.get("address"),
-                source, item
-            )
-            if token:
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = item.get("tokenMeta")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        # ScreenerBot's recent feed requires its metadata object; entries
+        # without it are not discovery candidates.
+        if source == "rugcheck_recent" and not metadata:
+            continue
+        token = _candidate(
+            item.get("mint") or item.get("address"),
+            source,
+            item,
+            name=item.get("name") or metadata.get("name"),
+            symbol=item.get("symbol") or metadata.get("symbol"),
+        )
+        if token:
+            mint = token["tokenAddress"]
+            if mint not in found:
+                found[mint] = token
+            else:
+                _merge_rugcheck_candidate(found[mint], token)
+    return list(found.values())
+
+
+def _merge_rugcheck_candidate(existing, incoming):
+    """Keep first useful metadata and union independent RugCheck feed labels."""
+    merge_keys = (
+        "name", "symbol", "icon", "priceUsd", "liquidity_usd", "marketCap", "fdv",
+        "decimals", "creator", "mint_authority", "freeze_authority", "token_program",
+        "created_at", "updated_at", "token_type", "token_uri", "update_authority",
+        "is_mutable", "rugcheck_score", "rugcheck_user_visits", "rugcheck_visits",
+        "rugcheck_vote_count", "rugcheck_up_count", "rugcheck_payer",
+        "rugcheck_description", "jup_verified", "jup_strict", "rugcheck_links",
+        "rugcheck_events",
+    )
+    for key in merge_keys:
+        current = existing.get(key)
+        value = incoming.get(key)
+        current_missing = (
+            current is None
+            or (isinstance(current, str) and current.strip().lower() in {"", "unknown"})
+        )
+        incoming_missing = (
+            value is None
+            or (isinstance(value, str) and value.strip().lower() in {"", "unknown"})
+        )
+        if current_missing and not incoming_missing:
+            existing[key] = value
+    for source in incoming.get("discovery_sources", []):
+        if source not in existing["discovery_sources"]:
+            existing["discovery_sources"].append(source)
+
+
+def scan_rugcheck_new():
+    return _scan_rugcheck_feed("rugcheck_new", "new_tokens")
+
+
+def scan_rugcheck_recent():
+    return _scan_rugcheck_feed("rugcheck_recent", "recent")
+
+
+def scan_rugcheck_trending():
+    return _scan_rugcheck_feed("rugcheck_trending", "trending")
+
+
+def scan_rugcheck_verified():
+    return _scan_rugcheck_feed("rugcheck_verified", "verified")
+
+
+def _scan_jupiter_feed(source, endpoint, *, interval=None, limit=100):
+    """Fetch one Jupiter V2 list so failures are visible per endpoint."""
+    url = f"{JUPITER_BASE}/{endpoint}"
+    params = {"limit": limit} if endpoint != "recent" else None
+    if interval:
+        url = f"{url}/{interval}"
+    payload = get_json(
+        url, params=params, headers={"Accept": "application/json"},
+        timeout=15, cache_ttl=30, max_retries=1
+    )
+    if not isinstance(payload, list):
+        raise ValueError(f"{source} returned an invalid Jupiter token-list payload")
+    found = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        token = _candidate(item.get("id") or item.get("mint") or item.get("address"), source, item)
+        if token:
+            found[token["tokenAddress"]] = token
+    return list(found.values())
+
+
+def scan_jupiter_recent():
+    return _scan_jupiter_feed("jupiter_recent", "recent")
+
+
+def scan_jupiter_organic():
+    return _scan_jupiter_feed("jupiter_organic", "toporganicscore", interval="1h")
+
+
+def scan_jupiter_traded():
+    return _scan_jupiter_feed("jupiter_traded", "toptraded", interval="1h")
+
+
+def scan_jupiter_trending():
+    return _scan_jupiter_feed("jupiter_trending", "toptrending", interval="1h")
+
+
+def scan_jupiter():
+    """Backward-compatible combined view; aggregator schedules each feed alone."""
+    found = {}
+    for scanner in (scan_jupiter_recent, scan_jupiter_organic, scan_jupiter_traded, scan_jupiter_trending):
+        try:
+            for token in scanner():
                 mint = token["tokenAddress"]
                 if mint not in found:
                     found[mint] = token
-                elif source not in found[mint]["discovery_sources"]:
-                    found[mint]["discovery_sources"].append(source)
-    print("JUPITER DISCOVERY TOKENS:", len(found), flush=True)
+                else:
+                    _merge_rugcheck_candidate(found[mint], token)
+        except Exception as error:
+            print("JUPITER DISCOVERY FEED ERROR:", repr(error), flush=True)
     return list(found.values())
-
 
 def scan_coingecko():
     """CoinGecko coin list filtered to actual Solana platform addresses."""
@@ -138,10 +314,12 @@ def scan_coingecko():
     api_key = os.getenv("COINGECKO_API_KEY", "").strip()
     if api_key:
         headers["x-cg-demo-api-key"] = api_key
-    payload = _safe_fetch(
-        "coingecko_solana", COINGECKO_URL,
-        params={"include_platform": "true"}, headers=headers, ttl=3600
+    payload = get_json(
+        COINGECKO_URL, params={"include_platform": "true"}, headers=headers,
+        timeout=20, cache_ttl=3600, max_retries=1
     )
+    if not isinstance(payload, list):
+        raise ValueError("CoinGecko returned an invalid coins/list payload")
     found = {}
     for item in _items(payload):
         if not isinstance(item, dict):
@@ -162,14 +340,19 @@ def scan_coingecko():
 
 def scan_defillama():
     """DeFiLlama protocol registry filtered to Solana contract addresses."""
-    payload = _safe_fetch("defillama_solana", DEFILLAMA_URL, ttl=3600)
+    payload = get_json(
+        DEFILLAMA_URL, headers={"Accept": "application/json"},
+        timeout=25, cache_ttl=3600, max_retries=1
+    )
+    if not isinstance(payload, list):
+        raise ValueError("DeFiLlama returned an invalid protocols payload")
     found = {}
     for item in _items(payload):
         if not isinstance(item, dict):
             continue
         chains = item.get("chains")
         if not isinstance(chains, list) or not any(
-            isinstance(chain, str) and chain.lower() == "solana"
+            isinstance(chain, str) and "solana" in chain.lower()
             for chain in chains
         ):
             continue

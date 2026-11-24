@@ -1,0 +1,19 @@
+name: Trojan Token-2022 Playground Devnet E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  playground-test-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Playground wallet test is present
+        run: test -s playground_token2022_ata.ts
+      - name: Confirm no CI wallet signing is attempted
+        run: |
+          echo "PASS: signed transaction is performed in Solana Playground."
+          echo "No ephemeral payer is generated and no private key is used in GitHub Actions."

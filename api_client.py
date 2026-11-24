@@ -8,8 +8,11 @@ import time
 import json
 import copy
 import hashlib
+import ipaddress
+import math
 import threading
 import requests
+from requests.adapters import HTTPAdapter
 
 from urllib.parse import urlparse
 from email.utils import parsedate_to_datetime
@@ -23,7 +26,7 @@ HOST_INTERVALS = {
     "api.dexscreener.com": 1.1,
     "public-api.birdeye.so": 3.0,
     "api.geckoterminal.com": 7.0,
-    "api.rugcheck.xyz": 2.0,
+    "api.rugcheck.xyz": 1.0,  # ScreenerBot parity: 60 requests/minute
     "lite-api.jup.ag": 1.2,
     "api.jup.ag": 1.2,
     "api.coingecko.com": 1.5,
@@ -32,6 +35,9 @@ HOST_INTERVALS = {
 
 ENDPOINT_INTERVALS = {
     ("api.dexscreener.com", "tokens_batch"): 0.25,
+    # Separate discovery budgets: profiles and boosts each have a 60/min lane.
+    ("api.dexscreener.com", "dexscreener_profiles"): 1.1,
+    ("api.dexscreener.com", "dexscreener_boosts"): 1.1,
 }
 
 DEFAULT_429_COOLDOWN = 30
@@ -52,9 +58,68 @@ bucket_next_request = {}
 host_blocked_until = {}
 
 cache = {}
+_api_stats = {}
+_inflight_cache_requests = {}
+_http_session_local = threading.local()
 
 cache_lock = threading.Lock()
 state_lock = threading.Lock()
+
+
+def get_http_session():
+    """Return a persistent connection-pooled HTTP session for this worker thread.
+
+    requests.Session is not treated as a shared cross-thread object. Each worker
+    owns its session, while urllib3 pools keep provider connections reusable.
+    """
+    session = getattr(_http_session_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=10,
+            max_retries=0,
+            pool_block=True,
+        )
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _http_session_local.session = session
+    return session
+
+
+# ==========================================
+# ENDPOINT VALIDATION
+# ==========================================
+
+def validate_api_request(url, params, headers, timeout, cache_ttl, max_retries):
+    if not isinstance(url, str) or not url:
+        raise ValueError("API URL must be a non-empty string")
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if (parsed.scheme != "https" or not host or parsed.username or parsed.password
+            or parsed.fragment or parsed.port not in (None, 443)
+            or host in {"localhost"} or host.endswith((".localhost", ".local", ".internal", ".lan"))):
+        raise ValueError("API requests require a public HTTPS endpoint without URL credentials")
+    try:
+        address = ipaddress.ip_address(host)
+        if not address.is_global:
+            raise ValueError("API requests cannot target private or reserved IP addresses")
+    except ValueError as error:
+        if "cannot target" in str(error):
+            raise
+        # A non-IP hostname is expected for public API providers.
+    if params is not None and not isinstance(params, (dict, list, tuple)):
+        raise ValueError("API params must be a mapping or sequence")
+    if headers is not None and not isinstance(headers, dict):
+        raise ValueError("API headers must be a mapping")
+    if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+            or not math.isfinite(float(timeout)) or not 1 <= float(timeout) <= 60):
+        raise ValueError("API timeout must be between 1 and 60 seconds")
+    if (isinstance(cache_ttl, bool) or not isinstance(cache_ttl, (int, float))
+            or not math.isfinite(float(cache_ttl)) or not 0 <= float(cache_ttl) <= 86400):
+        raise ValueError("API cache TTL must be between 0 and 86400 seconds")
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 0 <= max_retries <= 5:
+        raise ValueError("API max_retries must be an integer between 0 and 5")
 
 
 # ==========================================
@@ -68,12 +133,12 @@ def get_rate_bucket(url):
     host = (parsed.hostname or "").lower()
     path = parsed.path.lower()
 
-    if (
-        host == "api.dexscreener.com"
-        and path.startswith("/tokens/v1/")
-    ):
+    if host == "api.dexscreener.com" and path.startswith("/tokens/v1/"):
         endpoint = "tokens_batch"
-
+    elif host == "api.dexscreener.com" and path.startswith("/token-profiles/latest/"):
+        endpoint = "dexscreener_profiles"
+    elif host == "api.dexscreener.com" and path.startswith("/token-boosts/"):
+        endpoint = "dexscreener_boosts"
     else:
         endpoint = "default"
 
@@ -89,14 +154,18 @@ def get_rate_bucket(url):
 # HOST LOCK
 # ==========================================
 
-def get_host_lock(host):
+def get_host_lock(host, endpoint="default"):
+
+    # Separate locks allow independent provider budgets to run concurrently.
+    # Calls sharing the same endpoint bucket remain serialized and rate-limited.
+    key = (host, endpoint)
 
     with state_lock:
 
-        if host not in host_locks:
-            host_locks[host] = threading.Lock()
+        if key not in host_locks:
+            host_locks[key] = threading.Lock()
 
-        return host_locks[host]
+        return host_locks[key]
 
 
 # ==========================================
@@ -194,10 +263,10 @@ def get_retry_delay(response, attempt):
 
             try:
 
-                retry_date = parsedate_to_datetime(
-                    retry_after
-                )
-
+                retry_date = parsedate_to_datetime(retry_after)
+                if retry_date.tzinfo is None:
+                    from datetime import timezone
+                    retry_date = retry_date.replace(tzinfo=timezone.utc)
                 delay = (
                     retry_date.timestamp()
                     - time.time()
@@ -221,8 +290,10 @@ def get_retry_delay(response, attempt):
             * (2 ** attempt)
         )
 
+    if not math.isfinite(float(delay)):
+        delay = DEFAULT_429_COOLDOWN
     return min(
-        max(delay, 1),
+        max(float(delay), 1.0),
         MAX_429_COOLDOWN
     )
 
@@ -241,7 +312,7 @@ def wait_for_request_slot(
 
         with state_lock:
 
-            now = time.time()
+            now = time.monotonic()
 
             blocked_until = host_blocked_until.get(
                 host,
@@ -285,7 +356,7 @@ def wait_for_request_slot(
 # API REQUEST
 # ==========================================
 
-def get_json(
+def _get_json_impl(
     url,
     params=None,
     headers=None,
@@ -323,7 +394,7 @@ def get_json(
     # One request at a time per host.
     # This also makes host cooldown reliable
     # across different endpoint buckets.
-    lock = get_host_lock(host)
+    lock = get_host_lock(host, endpoint)
 
     with lock:
 
@@ -351,7 +422,7 @@ def get_json(
 
             try:
 
-                response = requests.get(
+                response = get_http_session().get(
                     url,
                     params=params,
                     headers=headers,
@@ -371,8 +442,8 @@ def get_json(
                     "| TIME:",
                     round(elapsed, 2),
                     "s",
-                    "| ERROR:",
-                    repr(error),
+                    "| ERROR TYPE:",
+                    type(error).__name__,
                     flush=True
                 )
 
@@ -419,7 +490,7 @@ def get_json(
 
                     host_blocked_until[host] = max(
                         host_blocked_until.get(host, 0),
-                        time.time() + cooldown
+                        time.monotonic() + cooldown
                     )
 
                 print(
@@ -536,6 +607,121 @@ def get_json(
             return data
 
 
+def _record_api_stat(host, endpoint, *, success=None, elapsed_ms=0.0, error=None, cache_hit=False, cache_miss=False):
+    key = (host, endpoint)
+    with state_lock:
+        stat = _api_stats.setdefault(key, {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "last_request_time": None,
+            "last_success_time": None,
+            "last_error_time": None,
+            "last_error_message": None,
+            "average_response_time_ms": 0.0,
+        })
+        if cache_hit:
+            stat["cache_hits"] += 1
+            return
+        stat["total_requests"] += 1
+        if cache_miss:
+            stat["cache_misses"] += 1
+        stat["last_request_time"] = time.time()
+        total = stat["total_requests"]
+        stat["average_response_time_ms"] += (
+            elapsed_ms - stat["average_response_time_ms"]
+        ) / total
+        if success:
+            stat["successful_requests"] += 1
+            stat["last_success_time"] = time.time()
+        else:
+            stat["failed_requests"] += 1
+            stat["last_error_time"] = time.time()
+            stat["last_error_message"] = str(error)[:300] if error else "Unknown API error"
+
+
+def get_json(
+    url,
+    params=None,
+    headers=None,
+    timeout=DEFAULT_TIMEOUT,
+    cache_ttl=0,
+    max_retries=1
+):
+    """Fetch JSON with cache single-flight and thread-safe request statistics."""
+    validate_api_request(url, params, headers, timeout, cache_ttl, max_retries)
+    host, endpoint, _interval = get_rate_bucket(url)
+    if not host:
+        raise ValueError("Invalid API URL")
+
+    key = cache_key(url, params, headers)
+    inflight_event = None
+
+    if cache_ttl > 0:
+        # Coalesce concurrent identical cacheable requests. A waiter counts as a
+        # cache hit only after the leader has successfully populated the cache.
+        while True:
+            cached_data = get_cached(key)
+            if cached_data is not None:
+                _record_api_stat(host, endpoint, cache_hit=True)
+                return cached_data
+
+            with state_lock:
+                inflight_event = _inflight_cache_requests.get(key)
+                if inflight_event is None:
+                    inflight_event = threading.Event()
+                    _inflight_cache_requests[key] = inflight_event
+                    is_leader = True
+                else:
+                    is_leader = False
+
+            if is_leader:
+                break
+
+            wait_timeout = (
+                max(1.0, float(timeout)) * (max(0, int(max_retries)) + 1)
+                + MAX_429_COOLDOWN * max(0, int(max_retries))
+                + 5.0
+            )
+            if not inflight_event.wait(wait_timeout):
+                raise TimeoutError("Timed out waiting for identical in-flight API request")
+            # Recheck cache. If the leader failed, one waiter becomes the next leader.
+
+    started = time.perf_counter()
+    try:
+        result = _get_json_impl(
+            url,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            cache_ttl=cache_ttl,
+            max_retries=max_retries,
+        )
+    except Exception as error:
+        _record_api_stat(
+            host, endpoint, success=False,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            error=type(error).__name__,
+            cache_miss=cache_ttl > 0,
+        )
+        raise
+    else:
+        _record_api_stat(
+            host, endpoint, success=True,
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+            cache_miss=cache_ttl > 0,
+        )
+        return result
+    finally:
+        if inflight_event is not None:
+            with state_lock:
+                if _inflight_cache_requests.get(key) is inflight_event:
+                    _inflight_cache_requests.pop(key, None)
+                inflight_event.set()
+
+
 # ==========================================
 # CACHE CONTROL
 # ==========================================
@@ -557,11 +743,11 @@ def clear_cache():
 
 def get_api_status():
 
-    now = time.time()
+    now = time.monotonic()
 
     with state_lock:
 
-        hosts = list(host_locks.keys())
+        hosts = sorted({host for host, _endpoint in host_locks})
 
         bucket_data = dict(
             bucket_next_request
@@ -612,8 +798,26 @@ def get_api_status():
     with cache_lock:
         cache_entries = len(cache)
 
+    with state_lock:
+        stats = {}
+        for key, value in _api_stats.items():
+            host, endpoint = key
+            item = dict(value)
+            total = item["total_requests"]
+            item["success_rate"] = (
+                round(item["successful_requests"] / total * 100.0, 2)
+                if total else 0.0
+            )
+            cache_total = item["cache_hits"] + item["cache_misses"]
+            item["cache_hit_rate"] = (
+                round(item["cache_hits"] / cache_total * 100.0, 2)
+                if cache_total else 0.0
+            )
+            stats.setdefault(host, {})[endpoint] = item
+
     return {
         "hosts": status,
+        "stats": stats,
         "cache_entries": cache_entries
     }
 

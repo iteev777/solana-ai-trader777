@@ -1,9 +1,12 @@
 import threading
+import os
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
 import rugcheck
+from requests import HTTPError
 
 
 class FakeResponse:
@@ -32,6 +35,12 @@ class FakeRateLimitedResponse:
 
 class RugCheckCacheConcurrencyTests(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.database_patch = patch.object(
+            rugcheck.database, "DATABASE",
+            os.path.join(self.temp_dir.name, "rugcheck-cache.sqlite3"),
+        )
+        self.database_patch.start()
         rugcheck.clear_rugcheck_cache()
         with rugcheck._cache_lock:
             rugcheck._inflight.clear()
@@ -40,16 +49,34 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         rugcheck.clear_rugcheck_cache()
         with rugcheck._cache_lock:
             rugcheck._inflight.clear()
+        self.database_patch.stop()
+        self.temp_dir.cleanup()
 
-    @patch("rugcheck.requests.get")
+    @patch("rugcheck.get_json")
     def test_successful_report_is_cached(self, get):
-        get.return_value = FakeResponse()
+        get.return_value = FakeResponse().json()
         first = rugcheck.get_rugcheck_report("MintCache1")
         second = rugcheck.get_rugcheck_report("MintCache1")
         self.assertIs(first, second)
+        get.assert_called_once_with(
+            "https://api.rugcheck.xyz/v1/tokens/MintCache1/report",
+            headers={"Accept": "application/json"},
+            timeout=15,
+            cache_ttl=0,
+            max_retries=1,
+        )
+
+    @patch("rugcheck.get_json")
+    def test_report_survives_process_local_cache_reset_via_sqlite(self, get):
+        get.return_value = FakeResponse().json()
+        first = rugcheck.get_rugcheck_report("MintPersisted")
+        with rugcheck._cache_lock:
+            rugcheck._cache.clear()
+        second = rugcheck.get_rugcheck_report("MintPersisted")
+        self.assertEqual(first, second)
         get.assert_called_once()
 
-    @patch("rugcheck.requests.get")
+    @patch("rugcheck.get_json")
     def test_concurrent_same_mint_requests_are_coalesced(self, get):
         entered = threading.Event()
         release = threading.Event()
@@ -57,7 +84,7 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         def delayed_get(*args, **kwargs):
             entered.set()
             release.wait(timeout=2)
-            return FakeResponse()
+            return FakeResponse().json()
 
         get.side_effect = delayed_get
         results = []
@@ -84,18 +111,18 @@ class RugCheckCacheConcurrencyTests(unittest.TestCase):
         self.assertIs(results[0], results[1])
         get.assert_called_once()
 
-    @patch("rugcheck.requests.get")
+    @patch("rugcheck.get_json")
     def test_rate_limit_is_not_cached_and_next_call_can_retry(self, get):
-        get.side_effect = [FakeRateLimitedResponse(), FakeResponse()]
+        get.side_effect = [HTTPError("429 Too Many Requests"), FakeResponse().json()]
         self.assertIsNone(rugcheck.get_rugcheck_report("Mint429"))
         result = rugcheck.get_rugcheck_report("Mint429")
         self.assertIsInstance(result, dict)
         self.assertEqual(get.call_count, 2)
 
     @patch.dict("os.environ", {"TROJAN_RUGCHECK_CACHE_SECONDS": "0"})
-    @patch("rugcheck.requests.get")
+    @patch("rugcheck.get_json")
     def test_zero_ttl_disables_cache(self, get):
-        get.return_value = FakeResponse()
+        get.return_value = FakeResponse().json()
         first = rugcheck.get_rugcheck_report("MintNoCache")
         second = rugcheck.get_rugcheck_report("MintNoCache")
         self.assertIsNot(first, second)

@@ -139,7 +139,7 @@ class RouteComparisonTests(unittest.TestCase):
         ):
             result = route_comparison.compare_quotes("in", "out", 500, 100, "pool")
         self.assertEqual(result["best_provider"], "jupiter")
-        self.assertEqual(result["quotes"]["direct_pool"]["status"], "UNAVAILABLE")
+        self.assertEqual(result["quotes"]["direct_pool"]["status"], "ROUTER_REJECTED")
 
     def test_invalid_slippage_rejected(self):
         with self.assertRaises(ValueError):

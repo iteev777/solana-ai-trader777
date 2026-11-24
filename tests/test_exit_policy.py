@@ -138,15 +138,56 @@ class ExitPolicyTests(unittest.TestCase):
             policy = exit_policy.get_exit_policy()
         self.assertEqual(policy["trailing_bands"][1]["distance_pct"], 3.0)
 
-    def test_trailing_band_environment_rejects_loose_higher_profit_band(self):
+    def test_trailing_band_environment_allows_independent_reference_distances(self):
         from unittest.mock import patch
         import json
         raw = json.dumps([
             {"activation_pct": 10, "distance_pct": 3},
-            {"activation_pct": 20, "distance_pct": 5},
+            {"activation_pct": 20, "distance_pct": 8},
         ])
         with patch.dict("os.environ", {"TROJAN_TRAILING_BANDS_JSON": raw}):
-            with self.assertRaises(ValueError):
+            policy = exit_policy.get_exit_policy()
+        self.assertEqual(policy["trailing_bands"][1]["distance_pct"], 8.0)
+
+    def test_trailing_policy_rejects_distance_at_or_above_activation(self):
+        from unittest.mock import patch
+        with patch.dict("os.environ", {
+            "TROJAN_TRAILING_ACTIVATION_PCT": "4",
+            "TROJAN_TRAILING_DISTANCE_PCT": "4",
+        }):
+            with self.assertRaisesRegex(ValueError, "below its activation"):
+                exit_policy.get_exit_policy()
+
+    def test_trailing_bands_must_be_above_base_activation_and_below_their_distance(self):
+        import json
+        from unittest.mock import patch
+        invalid = (
+            [{"activation_pct": 4, "distance_pct": 2}],
+            [{"activation_pct": 10, "distance_pct": 10}],
+        )
+        for bands in invalid:
+            with patch.dict("os.environ", {
+                "TROJAN_TRAILING_BANDS_JSON": json.dumps(bands),
+            }):
+                with self.assertRaises(ValueError):
+                    exit_policy.get_exit_policy()
+
+    def test_break_even_offset_must_be_below_arming_profit(self):
+        from unittest.mock import patch
+        with patch.dict("os.environ", {
+            "TROJAN_BREAK_EVEN_ACTIVATION_PCT": "8",
+            "TROJAN_BREAK_EVEN_OFFSET_PCT": "8",
+        }):
+            with self.assertRaisesRegex(ValueError, "Break-even offset"):
+                exit_policy.get_exit_policy()
+
+    def test_enabled_stagnation_exit_requires_positive_band(self):
+        from unittest.mock import patch
+        with patch.dict("os.environ", {
+            "TROJAN_STAGNATION_SECONDS": "300",
+            "TROJAN_STAGNATION_BAND_PCT": "0",
+        }):
+            with self.assertRaisesRegex(ValueError, "Stagnation band"):
                 exit_policy.get_exit_policy()
 
 

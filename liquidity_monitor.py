@@ -1,5 +1,6 @@
 import math
 import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 
@@ -10,9 +11,10 @@ from datetime import datetime, timezone
 LIQUIDITY_DROP_LIMIT = 20.0
 
 CONFIRMATION_COUNT = 2
+MAX_TRACKED_TOKENS = 5000
 
 previous_liquidity = {}
-liquidity_states = {}
+liquidity_states = OrderedDict()
 
 _lock = threading.RLock()
 
@@ -25,7 +27,25 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _valid_address(value):
+    if not isinstance(value, str) or not value or value != value.strip():
+        return False
+    try:
+        import solana_onchain as chain
+        decoded = chain._b58decode(value)
+        return (
+            isinstance(decoded, (bytes, bytearray))
+            and len(decoded) == 32
+            and chain._b58encode(decoded) == value
+        )
+    except Exception:
+        return False
+
+
 def valid_liquidity(value):
+
+    if isinstance(value, bool):
+        return None
 
     try:
         value = float(value)
@@ -46,9 +66,11 @@ def valid_liquidity(value):
 # MAIN LIQUIDITY CHECK
 # ==========================================
 
-def check_liquidity(token_address, current_liquidity):
+def check_liquidity(token_address, current_liquidity, pool_address=None):
 
-    if not token_address:
+    if not _valid_address(token_address):
+        return "UNKNOWN"
+    if pool_address is not None and not _valid_address(pool_address):
         return "UNKNOWN"
 
     current = valid_liquidity(current_liquidity)
@@ -63,10 +85,18 @@ def check_liquidity(token_address, current_liquidity):
 
         state = liquidity_states.get(token_address)
 
-        # First measurement.
+        # A canonical-pool change resets the high-water mark. Comparing
+        # liquidity from two different pools would create a false collapse.
+        if state is not None and state.get("pool_address") != pool_address:
+            state = None
+            liquidity_states.pop(token_address, None)
+            previous_liquidity.pop(token_address, None)
+
+        # First measurement for this token/pool pair.
         if state is None:
 
             state = {
+                "pool_address": pool_address,
                 "peak": current,
                 "previous": current,
                 "drop_streak": 0,
@@ -75,7 +105,11 @@ def check_liquidity(token_address, current_liquidity):
             }
 
             liquidity_states[token_address] = state
+            liquidity_states.move_to_end(token_address)
             previous_liquidity[token_address] = current
+            while len(liquidity_states) > MAX_TRACKED_TOKENS:
+                expired_address, _ = liquidity_states.popitem(last=False)
+                previous_liquidity.pop(expired_address, None)
 
             if current == 0:
 
@@ -98,6 +132,7 @@ def check_liquidity(token_address, current_liquidity):
 
             return "NORMAL"
 
+        liquidity_states.move_to_end(token_address)
         previous = state["previous"]
         peak = state["peak"]
 

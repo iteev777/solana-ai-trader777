@@ -1,4 +1,5 @@
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -49,11 +50,80 @@ class StrategyRulesTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("unavailable", reason)
 
+    def test_not_does_not_turn_missing_data_into_approval(self):
+        config = '{"main":{"not":[{"field":"volume_m5","op":"gte","value":100}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reason)
+
+    def test_any_group_can_pass_when_another_branch_has_unknown_data(self):
+        config = '{"main":{"any":[{"field":"volume_m5","op":"gte","value":100},{"field":"score","op":"gte","value":70}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, _ = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertTrue(passed)
+
+    def test_all_group_does_not_hide_unknown_data_behind_true_sibling(self):
+        config = '{"main":{"all":[{"field":"volume_m5","op":"gte","value":100},{"field":"score","op":"gte","value":70}]}}'
+        token = dict(self.token, volume={"h24": 100000})
+        with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": config}, clear=False):
+            passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("unavailable", reason)
+
+    def test_concurrency_saturation_fails_closed_within_evaluation_deadline(self):
+        config = '{"main":{"all":[{"field":"liquidity_usd","op":"gte","value":10000}]}}'
+        semaphore = threading.BoundedSemaphore(1)
+        semaphore.acquire()
+        try:
+            with patch.object(strategy_rules, "_EVALUATION_SEMAPHORE", semaphore), \
+                 patch.dict(os.environ, {
+                     "TROJAN_STRATEGY_RULES": config,
+                     "TROJAN_STRATEGY_EVALUATION_TIMEOUT_MS": "1",
+                 }, clear=False):
+                passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
+            self.assertFalse(passed)
+            self.assertIn("concurrency capacity unavailable", reason)
+        finally:
+            semaphore.release()
+
     def test_invalid_config_fails_closed(self):
         with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": "{broken"}, clear=False):
             passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
         self.assertFalse(passed)
         self.assertIn("invalid", reason.lower())
+
+
+    def test_all_short_circuits_after_decisive_false(self):
+        context = strategy_rules._context(self.token, 80)
+        node = {"all": [
+            {"field": "liquidity_usd", "op": "gt", "value": 50000},
+            {"condition": "Rsi", "params": {"comparison": "BELOW", "threshold": 30}}
+        ]}
+        with patch("strategy_rules.strategy_conditions.evaluate_condition", side_effect=AssertionError("must short-circuit")):
+            state, _ = strategy_rules._evaluate(node, context)
+        self.assertEqual(state, "false")
+
+    def test_any_short_circuits_after_decisive_true(self):
+        context = strategy_rules._context(self.token, 80)
+        node = {"any": [
+            {"field": "liquidity_usd", "op": "gte", "value": 10000},
+            {"condition": "Rsi", "params": {"comparison": "BELOW", "threshold": 30}}
+        ]}
+        with patch("strategy_rules.strategy_conditions.evaluate_condition", side_effect=AssertionError("must short-circuit")):
+            state, _ = strategy_rules._evaluate(node, context)
+        self.assertEqual(state, "true")
+
+    def test_rule_evaluation_deadline_fails_closed(self):
+        state, reasons = strategy_rules._evaluate(
+            {"all": [{"field": "liquidity_usd", "op": "gte", "value": 1}]},
+            strategy_rules._context(self.token, 80),
+            deadline=0.0,
+        )
+        self.assertEqual(state, "timeout")
+        self.assertIn("timeout", reasons[0])
 
 
 if __name__ == "__main__":

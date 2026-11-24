@@ -1,0 +1,25 @@
+name: Trojan Token-2022 Devnet E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  token2022-devnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run read-only Token-2022 Devnet E2E
+        env:
+          TROJAN_DEVNET_TOKEN2022_E2E_ENABLED: "true"
+          SOLANA_RPC_URL: https://api.devnet.solana.com
+        run: python devnet_token2022_e2e.py

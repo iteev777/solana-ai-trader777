@@ -7,6 +7,7 @@ import time
 import queue
 import threading
 import os
+import math
 
 from collections import OrderedDict
 from urllib.parse import quote
@@ -34,6 +35,11 @@ seen_lock = threading.Lock()
 
 listener_lock = threading.Lock()
 listener_started = False
+_listener_thread = None
+_listener_stop_event = threading.Event()
+_subscription_lock = threading.RLock()
+_active_ws = None
+_watched_tokens = set()
 
 
 def get_new_tokens():
@@ -62,16 +68,34 @@ def remember_token(address):
 
 
 def on_open(ws):
+    if _listener_stop_event.is_set():
+        try:
+            ws.close()
+        except Exception:
+            pass
+        return
+
     print("================================")
     print("TROJAN V2 - LAUNCH SNIPER CONNECTED")
     print("MODE: PAPER TRADING ONLY")
     print("SUBSCRIPTION: NEW TOKENS")
     print("================================")
 
+    global _active_ws
+    with _subscription_lock:
+        _active_ws = ws
+        watched = list(_watched_tokens)
+
     try:
         ws.send(json.dumps({
             "method": "subscribeNewToken"
         }))
+        if API_KEY and os.getenv("TROJAN_PUMPPORTAL_OBSERVATION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}:
+            for start in range(0, len(watched), 100):
+                ws.send(json.dumps({
+                    "method": "subscribeTokenTrade",
+                    "keys": watched[start:start + 100]
+                }))
 
         print("NEW TOKEN LISTENER ACTIVE")
 
@@ -85,6 +109,17 @@ def on_message(ws, message):
         data = json.loads(message)
 
         if not isinstance(data, dict):
+            return
+
+        tx_type = str(data.get("txType") or "").strip().lower()
+        if tx_type in {"buy", "sell"}:
+            try:
+                import candidate_observer
+                candidate_observer.record_trade_event(data)
+            except Exception as observer_error:
+                print("SNIPER TRADE OBSERVATION ERROR:", repr(observer_error))
+            return
+        if tx_type and tx_type != "create":
             return
 
         address = data.get("mint")
@@ -148,8 +183,61 @@ def on_error(ws, error):
 
 
 def on_close(ws, close_status_code, close_message):
+    global _active_ws
+    with _subscription_lock:
+        if _active_ws is ws:
+            _active_ws = None
     print("SNIPER CONNECTION CLOSED")
     print("STATUS:", close_status_code, close_message)
+
+
+def watch_token(mint):
+    """Subscribe to metered trade events on the existing single WebSocket."""
+    if not API_KEY:
+        return False
+    if not isinstance(mint, str) or not mint.strip():
+        return False
+    if os.getenv("TROJAN_PUMPPORTAL_OBSERVATION_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+        return False
+    mint = mint.strip()
+    with _subscription_lock:
+        if mint in _watched_tokens:
+            return True
+        _watched_tokens.add(mint)
+        ws = _active_ws
+        if ws is not None:
+            try:
+                ws.send(json.dumps({"method": "subscribeTokenTrade", "keys": [mint]}))
+            except Exception as error:
+                print("SNIPER TRADE SUBSCRIBE QUEUED FOR RECONNECT:", repr(error))
+    return True
+
+
+def unwatch_token(mint):
+    """Remove a token subscription from the shared PumpPortal WebSocket."""
+    if not isinstance(mint, str) or not mint.strip():
+        return False
+    mint = mint.strip()
+    with _subscription_lock:
+        existed = mint in _watched_tokens
+        _watched_tokens.discard(mint)
+        ws = _active_ws
+        if existed and ws is not None and API_KEY:
+            try:
+                ws.send(json.dumps({"method": "unsubscribeTokenTrade", "keys": [mint]}))
+            except Exception as error:
+                print("SNIPER TRADE UNSUBSCRIBE ERROR:", repr(error))
+    return existed
+
+
+def get_trade_subscription_status():
+    with _subscription_lock:
+        return {
+            "connected": _active_ws is not None,
+            "watching_count": len(_watched_tokens),
+            "api_key_configured": bool(API_KEY),
+            "enabled": os.getenv("TROJAN_PUMPPORTAL_OBSERVATION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"},
+        }
 
 
 def run_sniper_listener():
@@ -158,7 +246,7 @@ def run_sniper_listener():
     else:
         url = BASE_URL
 
-    while True:
+    while not _listener_stop_event.is_set():
         try:
             print("TROJAN V2 CONNECTING TO PUMPPORTAL...")
 
@@ -178,23 +266,23 @@ def run_sniper_listener():
         except Exception as error:
             print("SNIPER ERROR:", repr(error))
 
-        print(
-            "RECONNECTING IN",
-            RECONNECT_DELAY,
-            "SECONDS..."
-        )
-
-        time.sleep(RECONNECT_DELAY)
+        if not _listener_stop_event.is_set():
+            print(
+                "RECONNECTING IN",
+                RECONNECT_DELAY,
+                "SECONDS..."
+            )
+            _listener_stop_event.wait(RECONNECT_DELAY)
 
 
 def start_sniper_listener():
-    global listener_started
+    global listener_started, _listener_thread
 
     with listener_lock:
-        if listener_started:
+        if _listener_thread is not None and _listener_thread.is_alive():
             print("SNIPER LISTENER ALREADY STARTED")
-            return
-
+            return _listener_thread
+        _listener_stop_event.clear()
         listener_started = True
 
     def start_thread():
@@ -213,15 +301,49 @@ def start_sniper_listener():
             name="TrojanV2SniperListener"
         )
 
+        with listener_lock:
+            _listener_thread = thread
         thread.start()
 
         print("TROJAN V2 SNIPER THREAD STARTED")
+        return thread
 
     except Exception as error:
         with listener_lock:
             listener_started = False
 
         print("SNIPER THREAD START ERROR:", repr(error))
+        return None
+
+
+def stop_listener(timeout=5.0):
+    """Stop the reconnect loop, close the active socket and join its worker."""
+    global listener_started, _listener_thread
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("timeout must be a finite non-negative number")
+    if not math.isfinite(float(timeout)) or timeout < 0:
+        raise ValueError("timeout must be a finite non-negative number")
+
+    _listener_stop_event.set()
+    with _subscription_lock:
+        ws = _active_ws
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception as error:
+            print("SNIPER SOCKET CLOSE ERROR:", repr(error))
+
+    with listener_lock:
+        thread = _listener_thread
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(float(timeout))
+        if thread.is_alive():
+            return False
+    with listener_lock:
+        listener_started = False
+        if _listener_thread is thread:
+            _listener_thread = None
+    return True
 
 
 # Compatibility with main.py

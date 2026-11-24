@@ -1,0 +1,25 @@
+name: Trojan devnet signed E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signed-devnet-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run isolated devnet signed transaction
+        env:
+          TROJAN_DEVNET_E2E_ENABLED: "true"
+          SOLANA_DEVNET_RPC_URL: https://api.devnet.solana.com
+        run: python devnet_e2e.py

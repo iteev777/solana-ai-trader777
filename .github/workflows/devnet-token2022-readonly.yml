@@ -1,0 +1,133 @@
+name: Solana Devnet Token-2022 read-only preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devnet-token2022-readonly
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Solana web3 client
+        run: npm install --no-save @solana/web3.js@1.98.4
+
+      - name: Check Devnet, wallet, Token-2022 mint and ATA
+        id: check
+        env:
+          RPC_URL: https://api.devnet.solana.com
+        run: |
+          node <<'NODE'
+          const { Connection, PublicKey } = require("@solana/web3.js");
+
+          const RPC = process.env.RPC_URL;
+          const EXPECTED_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+          const WALLET = new PublicKey("DrXL17U7RS2Nx6KVTUStpqhcsmDod3RfMS7RnTTSgTRH");
+          const MINT = new PublicKey("CFTBSCy68VqUzGeMwjmgzufeBgGi64i281f4iUxzavj7");
+          const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+          const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+          const EXPECTED_MINT_SIZE = 278;
+          const EXPECTED_ATA_SIZE = 182;
+
+          async function main() {
+            const connection = new Connection(RPC, "confirmed");
+            const result = {
+              test: "Token-2022 read-only preflight",
+              cluster: "devnet",
+              wallet: WALLET.toBase58(),
+              mint: MINT.toBase58(),
+              transactionsSent: 0,
+              signingRequested: false,
+              liveTrading: "LOCKED",
+              mainnetAccess: "BLOCKED"
+            };
+
+            const genesis = await connection.getGenesisHash();
+            result.genesisHash = genesis;
+            if (genesis !== EXPECTED_GENESIS) throw new Error("RPC did not identify as Solana Devnet.");
+
+            const balance = await connection.getBalance(WALLET, "confirmed");
+            result.walletBalanceSOL = Number(balance) / 1e9;
+            result.walletFunded = balance > 0;
+            if (balance <= 0) throw new Error("Expected Playground wallet has no Devnet SOL.");
+
+            const mintInfo = await connection.getAccountInfo(MINT, "confirmed");
+            if (!mintInfo) throw new Error("Configured mint account was not found on Devnet.");
+            result.mintOwner = mintInfo.owner.toBase58();
+            result.mintDataSize = mintInfo.data.length;
+            result.mintIsToken2022 = mintInfo.owner.equals(TOKEN_2022);
+            if (!result.mintIsToken2022) throw new Error("Mint is not owned by the Token-2022 program.");
+            if (mintInfo.data.length !== EXPECTED_MINT_SIZE) throw new Error("Unexpected Token-2022 mint data size.");
+
+            const [ata, bump] = PublicKey.findProgramAddressSync(
+              [WALLET.toBuffer(), TOKEN_2022.toBuffer(), MINT.toBuffer()],
+              ATA_PROGRAM
+            );
+            result.derivedATA = ata.toBase58();
+            result.ataBump = bump;
+            const ataInfo = await connection.getAccountInfo(ata, "confirmed");
+            result.ataExists = Boolean(ataInfo);
+            if (ataInfo) {
+              result.ataOwner = ataInfo.owner.toBase58();
+              result.ataDataSize = ataInfo.data.length;
+              result.ataValid = ataInfo.owner.equals(TOKEN_2022) && ataInfo.data.length === EXPECTED_ATA_SIZE;
+              if (!result.ataValid) throw new Error("Existing ATA has unexpected owner or data size.");
+            } else {
+              result.ataValid = null;
+            }
+
+            result.status = "PASS_READ_ONLY";
+            result.note = ataInfo
+              ? "Wallet, Devnet, mint and existing ATA checks passed. No transaction was sent."
+              : "Wallet, Devnet and mint checks passed; ATA does not exist yet. No transaction was sent.";
+            console.log(JSON.stringify(result, null, 2));
+            require("fs").writeFileSync("devnet-token2022-preflight.json", JSON.stringify(result, null, 2) + "\n");
+            const fs = require("fs");
+            const summary = [
+              "## Solana Devnet Token-2022 preflight",
+              "",
+              "| Check | Result |",
+              "|---|---|",
+              "| Devnet RPC | PASS |",
+              "| Wallet funded | " + (result.walletFunded ? "PASS" : "FAIL") + " |",
+              "| Token-2022 mint | " + (result.mintIsToken2022 ? "PASS" : "FAIL") + " |",
+              "| ATA | " + (result.ataExists ? "Already exists" : "Not created") + " |",
+              "| Transaction sent | NO |",
+              "| Signing requested | NO |",
+              "| Mainnet / live trading | LOCKED |",
+              "",
+              "Wallet: " + result.wallet,
+              "",
+              "Mint: " + result.mint,
+              "",
+              "Derived ATA: " + result.derivedATA,
+              "",
+              result.note
+            ].join("\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + "\n");
+          }
+          main().catch(error => {
+            console.error("PREFLIGHT_FAILED:", error.message);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Upload machine-readable result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devnet-token2022-preflight
+          path: devnet-token2022-preflight.json
+          if-no-files-found: ignore
+          retention-days: 7

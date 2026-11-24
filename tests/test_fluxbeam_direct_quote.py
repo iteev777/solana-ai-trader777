@@ -6,7 +6,7 @@ import solana_onchain as chain
 
 class FluxbeamDirectQuoteTests(unittest.TestCase):
     def setUp(self):
-        self.pool = "flux-pool"
+        self.pool = chain._b58encode(bytes([15]) * 32)
         self.base_mint = chain._b58encode(bytes([11]) * 32)
         self.quote_mint = chain._b58encode(bytes([12]) * 32)
         self.base_vault = chain._b58encode(bytes([13]) * 32)
@@ -25,17 +25,26 @@ class FluxbeamDirectQuoteTests(unittest.TestCase):
         raw[291] = 0
         self.pool_data = bytes(raw)
 
-        def token_account(mint, amount):
+        authority, _ = chain._find_program_address(
+            [chain._b58decode(self.pool)], chain.PROGRAMS["fluxbeam_amm"]
+        )
+
+        def token_account(mint, amount, owner=chain.TOKEN_PROGRAM):
             data = bytearray(165)
             data[:32] = chain._b58decode(mint)
+            data[32:64] = chain._b58decode(authority)
             data[64:72] = amount.to_bytes(8, "little")
-            return {"owner": chain.TOKEN_PROGRAM, "data": bytes(data)}
+            data[108] = 1
+            return {"owner": owner, "data": bytes(data)}
 
         def mint_account(decimals=6, owner=None):
             data = bytearray(82)
             data[44] = decimals
+            data[45] = 1
             return {"owner": owner or chain.TOKEN_PROGRAM, "data": bytes(data)}
 
+        self.token_account = token_account
+        self.mint_account = mint_account
         self.accounts = [
             {"owner": chain.PROGRAMS["fluxbeam_amm"], "data": self.pool_data},
             token_account(self.base_mint, 1_000_000),
@@ -91,14 +100,42 @@ class FluxbeamDirectQuoteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ConstantProduct"):
                 chain.quote_fluxbeam_pool(self.pool, self.base_mint, 1000)
 
-    def test_rejects_token_2022_mint(self):
+    def test_zero_fee_token2022_mint_is_supported_with_matching_vault(self):
         accounts = list(self.accounts)
-        accounts[3] = dict(accounts[3], owner=chain.TOKEN_2022_PROGRAM)
+        accounts[3] = self.mint_account(owner=chain.TOKEN_2022_PROGRAM)
+        accounts[1] = self.token_account(
+            self.base_mint, 1_000_000, owner=chain.TOKEN_2022_PROGRAM
+        )
         with patch.object(chain, "_account", return_value={
             "owner": chain.PROGRAMS["fluxbeam_amm"], "data": self.pool_data
         }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 456)):
-            with self.assertRaisesRegex(ValueError, "Token-2022"):
-                chain.quote_fluxbeam_pool(self.pool, self.base_mint, 1000)
+            result = chain.quote_fluxbeam_pool(self.pool, self.base_mint, 10_000)
+        self.assertEqual(result["token_program_base"], chain.TOKEN_2022_PROGRAM)
+        self.assertEqual(result["token_program_input"], chain.TOKEN_2022_PROGRAM)
+        self.assertTrue(result["token2022_zero_fee_supported"])
+
+    def test_nonzero_token2022_transfer_fee_remains_blocked(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        raw = bytearray(166)
+        raw[44] = 6
+        raw[45] = 1
+        raw[165] = MINT_ACCOUNT_TYPE
+        raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        accounts = list(self.accounts)
+        accounts[3] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+        accounts[1] = self.token_account(
+            self.base_mint, 1_000_000, owner=chain.TOKEN_2022_PROGRAM
+        )
+        with patch.object(chain, "_account", return_value={
+            "owner": chain.PROGRAMS["fluxbeam_amm"], "data": self.pool_data
+        }), patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 456)):
+            with self.assertRaisesRegex(ValueError, "transfer fees must be zero"):
+                chain.quote_fluxbeam_pool(self.pool, self.base_mint, 10_000)
 
     def test_rejects_invalid_fee_denominator(self):
         raw = bytearray(self.pool_data)

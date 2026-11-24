@@ -1,0 +1,426 @@
+"""Safety-gated broadcast of externally signed native Solana transactions.
+
+No private key or signing implementation is accepted here. A transaction can
+only be broadcast when its exact message matches a fresh, single-use approval
+created after successful unsigned simulation, the external wallet signature is
+present, the blockhash is still valid, signed simulation passes, and the
+code-level broadcast hard lock has been explicitly removed in a reviewed release.
+"""
+import base64
+import hashlib
+import os
+import secrets
+import threading
+import time
+
+import solana_onchain as chain
+import database
+
+
+APPROVAL_TTL_SECONDS = 120
+MAX_APPROVALS = 512
+# Phase 5 is readiness/audit only. No environment variable may enable real
+# broadcasts until a separately reviewed live-trading release removes this lock.
+NATIVE_BROADCAST_HARD_LOCK = True
+MAX_TRANSACTION_BYTES = 1232
+_lock = threading.Lock()
+
+
+class NativeExecutionLocked(RuntimeError):
+    pass
+
+
+class NativeExecutionRejected(ValueError):
+    pass
+
+
+def _enabled():
+    if NATIVE_BROADCAST_HARD_LOCK:
+        return False
+    return os.getenv("TROJAN_NATIVE_EXECUTE_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def _ensure_approval_table():
+    with database.connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS native_transaction_approvals (
+                request_id TEXT PRIMARY KEY,
+                message BLOB NOT NULL,
+                message_sha256 TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                last_valid_block_height INTEGER NOT NULL,
+                expires_at REAL NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_native_approvals_expiry
+            ON native_transaction_approvals(expires_at)
+        """)
+
+
+def _decode_transaction(value):
+    if not isinstance(value, str) or not value:
+        raise NativeExecutionRejected("Signed transaction base64 is required")
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        raise NativeExecutionRejected("Signed transaction is not valid base64")
+    if len(raw) < 100 or len(raw) > MAX_TRANSACTION_BYTES:
+        raise NativeExecutionRejected("Signed transaction size is outside Solana packet limits")
+    return raw
+
+
+def _read_shortvec(raw, offset):
+    value = 0
+    shift = 0
+    for _ in range(3):
+        if offset >= len(raw):
+            raise NativeExecutionRejected("Transaction shortvec is truncated")
+        byte = raw[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return value, offset
+        shift += 7
+    raise NativeExecutionRejected("Transaction shortvec is invalid or too large")
+
+
+def _split_transaction(raw, require_signature):
+    signature_count, offset = _read_shortvec(raw, 0)
+    if signature_count != 1:
+        raise NativeExecutionRejected("Native order must contain exactly one wallet signature")
+    end = offset + signature_count * 64
+    if end >= len(raw):
+        raise NativeExecutionRejected("Transaction signature or message is truncated")
+    signature = raw[offset:end]
+    message = raw[end:]
+    if require_signature and signature == bytes(64):
+        raise NativeExecutionRejected("External wallet signature is missing")
+    if not require_signature and signature != bytes(64):
+        raise NativeExecutionRejected("Approval transaction must be unsigned")
+    if not message or message[0] & 0x80:
+        raise NativeExecutionRejected("Only legacy Solana messages are supported by native execution")
+    return signature, message
+
+
+def register_native_approval(unsigned_transaction, protocol, last_valid_block_height, simulation):
+    """Cache exact unsigned message only when the unsigned RPC simulation passed."""
+    if (not isinstance(simulation, dict)
+            or simulation.get("status") != "PASS"
+            or simulation.get("signature_verification") != "DISABLED_UNSIGNED_SIMULATION"):
+        raise NativeExecutionRejected("A successful unsigned RPC simulation report is required")
+    if protocol == "devnet_system_transfer":
+        if os.getenv("TROJAN_DEVNET_E2E_ENABLED", "").strip().lower() not in ("1", "true", "yes"):
+            raise NativeExecutionRejected("Devnet test protocol is disabled")
+    elif protocol not in ("raydium_cpmm", "raydium_clmm", "meteora_dbc", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "pumpswap_v2", "pumpswap", "orca_whirlpool", "meteora_dlmm"):
+        raise NativeExecutionRejected("Unsupported native transaction protocol")
+    if isinstance(last_valid_block_height, bool) or not isinstance(last_valid_block_height, int) or last_valid_block_height <= 0:
+        raise NativeExecutionRejected("Valid block height is required")
+    raw = _decode_transaction(unsigned_transaction)
+    _, message = _split_transaction(raw, require_signature=False)
+    now = time.time()
+    request_id = secrets.token_urlsafe(24)
+    message_sha256 = hashlib.sha256(message).hexdigest()
+    expires_at = now + APPROVAL_TTL_SECONDS
+    _ensure_approval_table()
+    with _lock, database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM native_transaction_approvals WHERE expires_at <= ?",
+            (now,),
+        )
+        count = connection.execute(
+            "SELECT COUNT(*) FROM native_transaction_approvals"
+        ).fetchone()[0]
+        if count >= MAX_APPROVALS:
+            connection.execute("""
+                DELETE FROM native_transaction_approvals
+                WHERE request_id IN (
+                    SELECT request_id FROM native_transaction_approvals
+                    ORDER BY expires_at ASC LIMIT ?
+                )
+            """, (count - MAX_APPROVALS + 1,))
+        connection.execute("""
+            INSERT INTO native_transaction_approvals (
+                request_id, message, message_sha256, protocol,
+                last_valid_block_height, expires_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            request_id, message, message_sha256, protocol,
+            last_valid_block_height, expires_at, now,
+        ))
+    return {
+        "request_id": request_id,
+        "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
+        "message_sha256": message_sha256,
+        "approval": "PERSISTED_SIMULATED_SINGLE_USE",
+    }
+
+
+def consume_native_approval(signed_transaction, request_id):
+    """Verify and atomically consume an externally signed approval.
+
+    Shared by the locked live path and the isolated devnet E2E harness. This
+    helper never performs an RPC call or broadcasts a transaction.
+    """
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        raise NativeExecutionRejected("A valid single-use native request_id is required")
+    raw = _decode_transaction(signed_transaction)
+    signature, message = _split_transaction(raw, require_signature=True)
+    now = time.time()
+    _ensure_approval_table()
+    expired = False
+    with _lock, database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        approval = connection.execute("""
+            SELECT message, message_sha256, protocol,
+                   last_valid_block_height, expires_at
+            FROM native_transaction_approvals
+            WHERE request_id = ?
+        """, (request_id,)).fetchone()
+        if approval is None:
+            raise NativeExecutionRejected("Native transaction approval is missing, expired or already consumed")
+        if approval["expires_at"] <= now:
+            connection.execute(
+                "DELETE FROM native_transaction_approvals WHERE request_id = ?",
+                (request_id,),
+            )
+            expired = True
+        else:
+            approved_message = bytes(approval["message"])
+            if not secrets.compare_digest(message, approved_message):
+                raise NativeExecutionRejected("Signed transaction message differs from the simulated approval")
+            connection.execute(
+                "DELETE FROM native_transaction_approvals WHERE request_id = ?",
+                (request_id,),
+            )
+    if expired:
+        raise NativeExecutionRejected("Native transaction approval has expired")
+    return {
+        "signature": signature,
+        "message": message,
+        "protocol": approval["protocol"],
+        "last_valid_block_height": approval["last_valid_block_height"],
+        "expires_at": approval["expires_at"],
+        "message_sha256": approval["message_sha256"],
+    }
+
+
+def get_native_execution_status():
+    return {
+        "enabled": _enabled(),
+        "environment_variable": "TROJAN_NATIVE_EXECUTE_ENABLED",
+        "default": False,
+        "code_hard_lock": NATIVE_BROADCAST_HARD_LOCK,
+        "unlock_requires_reviewed_code_release": True,
+        "requires_external_wallet_signature": True,
+        "requires_explicit_confirmation_header": True,
+        "requires_exact_simulated_message_match": True,
+        "requires_signed_rpc_simulation": True,
+        "approval_ttl_seconds": APPROVAL_TTL_SECONDS,
+        "approval_cache": "persistent_sqlite_single_use",
+        "supported_protocols": ["raydium_cpmm", "raydium_clmm", "raydium_amm_v4", "fluxbeam_amm", "moonit_amm", "pumpfun_legacy", "meteora_damm_v2", "meteora_dbc", "pumpswap_v2", "pumpswap", "orca_whirlpool", "meteora_dlmm"],
+        "private_key_custody": False,
+        "server_signing": False,
+        "broadcast_available": _enabled(),
+    }
+
+
+def get_native_transaction_status(signature):
+    """Read-only confirmation lookup for a previously submitted signature."""
+    if not isinstance(signature, str) or not signature or len(signature) > 100:
+        raise NativeExecutionRejected("A valid Solana transaction signature is required")
+    try:
+        decoded = chain._b58decode(signature)
+    except Exception:
+        raise NativeExecutionRejected("Transaction signature is not valid base58")
+    if len(decoded) != 64:
+        raise NativeExecutionRejected("Transaction signature must decode to 64 bytes")
+    result = chain._rpc("getSignatureStatuses", [
+        [signature],
+        {"searchTransactionHistory": True},
+    ])
+    if not isinstance(result, dict) or not isinstance(result.get("value"), list) or len(result["value"]) != 1:
+        raise NativeExecutionRejected("RPC returned a malformed signature status")
+    status = result["value"][0]
+    if status is None:
+        return {"signature": signature, "status": "NOT_FOUND", "confirmed": False, "err": None}
+    if not isinstance(status, dict):
+        raise NativeExecutionRejected("RPC returned a malformed transaction status entry")
+    error = status.get("err")
+    confirmation = status.get("confirmationStatus")
+    if error is not None:
+        state = "FAILED"
+    elif confirmation == "finalized":
+        state = "FINALIZED"
+    elif confirmation == "confirmed":
+        state = "CONFIRMED"
+    elif confirmation == "processed":
+        state = "PROCESSED"
+    else:
+        state = "PENDING"
+    return {
+        "signature": signature,
+        "status": state,
+        "confirmed": state in ("CONFIRMED", "FINALIZED"),
+        "finalized": state == "FINALIZED",
+        "slot": status.get("slot"),
+        "confirmations": status.get("confirmations"),
+        "err": error,
+    }
+
+
+def execute_native_signed_transaction(signed_transaction, request_id, confirmed=False):
+    """Verify exact message and external signature, then broadcast once if gated."""
+    if not _enabled():
+        raise NativeExecutionLocked("Native live execution is disabled by TROJAN_NATIVE_EXECUTE_ENABLED")
+    if confirmed is not True:
+        raise NativeExecutionLocked("Explicit native live execution confirmation is required")
+    approval = consume_native_approval(signed_transaction, request_id)
+    signature = approval["signature"]
+    if approval["protocol"] == "devnet_system_transfer":
+        raise NativeExecutionRejected("Devnet test transactions cannot enter the native live execution path")
+
+    try:
+        current_height = chain._rpc("getBlockHeight", [{"commitment": "confirmed"}])
+    except Exception as error:
+        raise NativeExecutionRejected("Could not verify recent block height: " + str(error)[:160])
+    if isinstance(current_height, bool) or not isinstance(current_height, int):
+        raise NativeExecutionRejected("RPC returned an invalid block height")
+    if current_height > approval["last_valid_block_height"]:
+        raise NativeExecutionRejected("Approved transaction blockhash has expired")
+
+    simulation = chain._rpc("simulateTransaction", [
+        signed_transaction,
+        {
+            "encoding": "base64",
+            "sigVerify": True,
+            "replaceRecentBlockhash": False,
+            "commitment": "confirmed",
+            "innerInstructions": False,
+        },
+    ])
+    if not isinstance(simulation, dict) or not isinstance(simulation.get("value"), dict):
+        raise NativeExecutionRejected("Signed transaction simulation returned a malformed result")
+    value = simulation["value"]
+    if "err" not in value:
+        raise NativeExecutionRejected("Signed transaction simulation response is missing the error field")
+    if value["err"] is not None:
+        raise NativeExecutionRejected("Signed transaction simulation failed: " + str(value["err"])[:200])
+    if time.time() >= approval["expires_at"]:
+        raise NativeExecutionRejected("Native transaction approval expired during signed simulation")
+    try:
+        final_height = chain._rpc("getBlockHeight", [{"commitment": "confirmed"}])
+    except Exception as error:
+        raise NativeExecutionRejected("Could not recheck block height before broadcast: " + str(error)[:160])
+    if isinstance(final_height, bool) or not isinstance(final_height, int):
+        raise NativeExecutionRejected("RPC returned an invalid final block height")
+    if final_height > approval["last_valid_block_height"]:
+        raise NativeExecutionRejected("Approved transaction blockhash expired during signed simulation")
+    if time.time() >= approval["expires_at"]:
+        raise NativeExecutionRejected("Native transaction approval expired before broadcast")
+
+    expected_signature = chain._b58encode(signature)
+    try:
+        signature_result = chain._rpc("sendTransaction", [
+            signed_transaction,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "preflightCommitment": "confirmed",
+                "maxRetries": 0,
+            },
+        ])
+    except Exception as error:
+        raise NativeExecutionRejected(
+            "Broadcast outcome is unknown; check signature " + expected_signature
+            + " before requesting another order. RPC error: " + str(error)[:160]
+        )
+
+    if not isinstance(signature_result, str) or not signature_result:
+        raise NativeExecutionRejected(
+            "RPC returned no signature; check externally signed signature " + expected_signature
+        )
+    if signature_result != expected_signature:
+        raise NativeExecutionRejected("RPC returned a signature that does not match the externally signed transaction")
+    return {
+        "submitted": True,
+        "confirmed": False,
+        "status": "SUBMITTED_NOT_CONFIRMED",
+        "signature": signature_result,
+        "protocol": approval["protocol"],
+        "message_sha256": approval["message_sha256"],
+        "units_consumed": value.get("unitsConsumed"),
+        "approval_consumed": True,
+        "server_signed": False,
+        "private_key_custody": False,
+    }
+
+
+def get_native_swap_receipt(signature, output_account, output_mint,
+                            minimum_output, *, owner=None,
+                            output_is_native=False,
+                            commitment="confirmed"):
+    """Fetch a landed transaction and account its actual token output.
+
+    Confirmation is checked independently before getTransaction. The receipt
+    decoder distinguishes an exact destination-account delta from a fallback
+    to the chain-enforced minimum when RPC metadata cannot be attributed.
+    """
+    if commitment not in ("confirmed", "finalized"):
+        raise NativeExecutionRejected("Receipt commitment must be confirmed or finalized")
+    status = get_native_transaction_status(signature)
+    if status.get("status") == "FAILED":
+        raise NativeExecutionRejected("Cannot account a failed transaction")
+    if status.get("status") not in ("CONFIRMED", "FINALIZED"):
+        raise NativeExecutionRejected("Transaction is not yet confirmed")
+    if commitment == "finalized" and status.get("status") != "FINALIZED":
+        raise NativeExecutionRejected("Transaction is confirmed but not finalized")
+
+    try:
+        details = chain._rpc("getTransaction", [
+            signature,
+            {
+                "encoding": "jsonParsed",
+                "commitment": commitment,
+                "maxSupportedTransactionVersion": 0,
+            },
+        ])
+    except Exception as error:
+        raise NativeExecutionRejected(
+            "Could not retrieve confirmed transaction details: " + str(error)[:160]
+        )
+    if details is None:
+        raise NativeExecutionRejected(
+            "Confirmed transaction details are unavailable from this RPC"
+        )
+    try:
+        from swap_receipt import receipt_from_transaction
+        receipt = receipt_from_transaction(
+            signature,
+            details,
+            output_account,
+            output_mint,
+            minimum_output,
+            confirmed=True,
+            owner=owner,
+            output_is_native=output_is_native,
+        )
+    except (TypeError, ValueError) as error:
+        raise NativeExecutionRejected("Swap receipt could not be verified: " + str(error)[:200])
+    return {
+        "signature": signature,
+        "status": "CONFIRMED",
+        "output_mint": output_mint,
+        "output_account": output_account,
+        "received_amount": receipt.received,
+        "received_amount_exact": receipt.exact,
+        "minimum_output_amount": minimum_output,
+        "network_fee_lamports": receipt.network_fee_lamports,
+        "slot": receipt.slot,
+        "accounting": "EXACT_ONCHAIN_TOKEN_DELTA" if receipt.exact else "CHAIN_GUARANTEED_MINIMUM_ESTIMATE",
+        "source": "getTransaction.jsonParsed",
+    }

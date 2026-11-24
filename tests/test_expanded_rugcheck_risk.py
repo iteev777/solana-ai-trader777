@@ -17,6 +17,7 @@ def safe_report(**overrides):
         ],
         "rugged": False,
         "token": {"mutable": True},
+        "totalHolders": 250,
         "totalLPProviders": 25,
         "totalMarketLiquidity": 25000,
         "graphInsidersDetected": 0,
@@ -60,12 +61,18 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         self.assertIn("Extreme top-ten holder concentration", result["reasons"])
 
     def test_creator_share_derived_from_raw_balance_and_supply(self):
-        result = analyze_rugcheck_report(safe_report(
-            creator="creator111",
-            creatorBalance=15,
-            tokenSupply="100",
-        ))
+        # Isolate this assertion from deployment-specific threshold overrides.
+        with patch.dict("os.environ", {
+            "TROJAN_RUGCHECK_MAX_CREATOR_PCT": "20",
+            "TROJAN_RUGCHECK_WARN_CREATOR_PCT": "10",
+        }):
+            result = analyze_rugcheck_report(safe_report(
+                creator="creator111",
+                creatorBalance=15,
+                tokenSupply="100",
+            ))
         self.assertEqual(result["signals"]["creator_pct"], 15.0)
+        self.assertEqual(result["status"], "PASS")
         self.assertGreaterEqual(result["medium_risks"], 1)
 
     def test_creator_share_above_critical_threshold_rejected(self):
@@ -111,6 +118,58 @@ class ExpandedRugCheckRiskTests(unittest.TestCase):
         result = analyze_rugcheck_report(report)
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertFalse(result["safe"])
+
+    def test_reference_raw_risk_score_ceiling_is_applied(self):
+        result = analyze_rugcheck_report(safe_report(score=10_001, score_normalised=5))
+        self.assertEqual(result["status"], "REJECT")
+        self.assertEqual(result["raw_score"], 10_001)
+        self.assertIn("RugCheck raw risk score too high", result["reasons"])
+
+    def test_raw_risk_score_at_reference_ceiling_is_not_rejected_by_strict_comparison(self):
+        result = analyze_rugcheck_report(safe_report(score=10_000, score_normalised=5))
+        self.assertEqual(result["status"], "PASS")
+
+    def test_raw_score_can_supply_risk_data_when_normalized_score_is_absent(self):
+        result = analyze_rugcheck_report(safe_report(score=5, score_normalised=None))
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["score"], None)
+        self.assertEqual(result["raw_score"], 5)
+
+    def test_fractional_or_negative_raw_score_fails_unknown(self):
+        for score in (-1, 1.5):
+            result = analyze_rugcheck_report(safe_report(score=score, score_normalised=5))
+            self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_negative_or_overflowing_normalized_score_fails_unknown(self):
+        for score in (-1, 101):
+            result = analyze_rugcheck_report(safe_report(score_normalised=score))
+            self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_boolean_numeric_fields_are_not_treated_as_valid_risk_values(self):
+        result = analyze_rugcheck_report(safe_report(
+            score_normalised=True,
+            totalHolders=True,
+            graphInsidersDetected=True,
+        ))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_malformed_holder_entry_fails_unknown_instead_of_being_ignored(self):
+        result = analyze_rugcheck_report(safe_report(topHolders=[
+            {"address": "holder-a", "pct": 10.0},
+            {"address": "holder-b", "pct": "NaN"},
+            {"address": "holder-c", "pct": 6.0},
+        ]))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_malformed_insider_count_fails_unknown(self):
+        result = analyze_rugcheck_report(safe_report(graphInsidersDetected=1.5))
+        self.assertEqual(result["status"], "UNKNOWN")
+
+    def test_default_warning_thresholds_have_a_real_medium_range(self):
+        result = analyze_rugcheck_report(safe_report(topHolders=[
+            {"pct": 25.0}, {"pct": 5.0}, {"pct": 4.0}
+        ], creatorBalance=7, tokenSupply=100))
+        self.assertGreaterEqual(result["medium_risks"], 2)
 
     def test_thresholds_can_be_tuned_without_code_changes(self):
         with patch.dict("os.environ", {"TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT": "5"}):

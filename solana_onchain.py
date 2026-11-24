@@ -332,6 +332,8 @@ def _decode_pool(protocol, raw):
         return {
             "base_mint": _key(raw, 131), "quote_mint": _key(raw, 163),
             "vault_base": _key(raw, 35), "vault_quote": _key(raw, 67),
+            "pool_mint": _key(raw, 99), "fee_account": _key(raw, 195),
+            "is_initialized": bool(raw[1]),
             "trade_fee_numerator": trade_fee_numerator,
             "trade_fee_denominator": trade_fee_denominator,
             "owner_fee_numerator": owner_fee_numerator,
@@ -522,8 +524,9 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         pool_address, PUMPSWAP_GLOBAL_CONFIG, PUMPSWAP_FEE_CONFIG,
         first["vault_base"], first["vault_quote"], first["base_mint"], first["quote_mint"],
     ]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("PumpSwap snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("PumpSwap confirmed snapshot is missing a required account")
     pool_acc, global_acc, fee_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -563,15 +566,33 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
         raise ValueError("PumpSwap fee config is not owned by the Pump Fees program")
     fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
-    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("PumpSwap Token-2022 mints are refused until transfer-fee and hook behavior is verified")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM or vault_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("PumpSwap vaults must use the legacy SPL Token program")
-
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("PumpSwap mint uses an unsupported token program")
+    base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_base_acc.get("data", b""))
+        if token_program_base == TOKEN_2022_PROGRAM else None
+    )
+    quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc.get("data", b""))
+        if token_program_quote == TOKEN_2022_PROGRAM else None
+    )
+    if (vault_base_acc.get("owner") != token_program_base
+            or vault_quote_acc.get("owner") != token_program_quote):
+        raise ValueError("PumpSwap vault token program does not match its mint")
+    reserve_base = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], pool_address,
+        "PumpSwap base vault",
+    )
+    raw_quote_reserve = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], pool_address,
+        "PumpSwap quote vault",
+    )
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    reserve_base = _token_amount(vault_base_acc, decoded["base_mint"])
-    raw_quote_reserve = _token_amount(vault_quote_acc, decoded["quote_mint"])
     reserve_quote = raw_quote_reserve + decoded["virtual_quote_reserves"]
     if reserve_base <= 0 or reserve_quote <= 0:
         raise ValueError("PumpSwap effective pool reserves are empty or invalid")
@@ -593,8 +614,20 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
     if total_fee_bps >= 10_000:
         raise ValueError("PumpSwap fee configuration is not tradable")
 
+    input_transfer_config = (
+        quote_token2022 if is_buy else base_token2022
+    )
+    output_transfer_config = (
+        base_token2022 if is_buy else quote_token2022
+    )
+    received_by_pool = token2022.conservative_net_amount(
+        (input_transfer_config or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire PumpSwap input")
+
     if is_buy:
-        net_input, _ = _pumpswap_spendable_quote(amount_in, fee_rates)
+        net_input, _ = _pumpswap_spendable_quote(received_by_pool, fee_rates)
         # The deployed buy path uses one raw unit less than the mathematical
         # maximum affordable amount. Recompute each separately rounded fee
         # after that adjustment so the quote never overstates token output.
@@ -603,37 +636,48 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         total_fee = sum(fee_amounts)
         if net_input <= 0:
             raise ValueError("PumpSwap quote input is consumed by fees")
-        output_amount = (reserve_base * net_input) // (reserve_quote + net_input)
+        gross_output_amount = (reserve_base * net_input) // (reserve_quote + net_input)
+        output_amount = token2022.conservative_net_amount(
+            (output_transfer_config or {}).get("transfer_fee_config"), gross_output_amount
+        )
         impact_basis_input = net_input
         spot_price = reserve_base / reserve_quote
         output_mint = decoded["base_mint"]
         unspent_input = amount_in - net_input - total_fee
     else:
         gross_quote_out = min(
-            (reserve_quote * amount_in) // (reserve_base + amount_in),
+            (reserve_quote * received_by_pool) // (reserve_base + received_by_pool),
             raw_quote_reserve,
         )
         fee_amounts = [_fee_amount_ceil(gross_quote_out, rate) for rate in fee_rates]
         total_fee = sum(fee_amounts)
-        output_amount = gross_quote_out - total_fee
-        impact_basis_input = amount_in
+        output_token_transfer_gross = gross_quote_out - total_fee
+        gross_output_amount = gross_quote_out
+        output_amount = token2022.conservative_net_amount(
+            (output_transfer_config or {}).get("transfer_fee_config"), output_token_transfer_gross
+        )
+        impact_basis_input = received_by_pool
         impact_output_amount = gross_quote_out
         spot_price = reserve_quote / reserve_base
         output_mint = decoded["quote_mint"]
-        unspent_input = 0
+        unspent_input = amount_in - received_by_pool
 
     if is_buy:
         impact_output_amount = output_amount
 
     output_reserve = reserve_base if is_buy else raw_quote_reserve
-    gross_output_amount = output_amount if is_buy else gross_quote_out
     if output_amount <= 0 or output_amount >= output_reserve:
         raise ValueError("PumpSwap quote rounds to zero or exceeds available pool reserves")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     execution_price = impact_output_amount / impact_basis_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("PumpSwap confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("PumpSwap account snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("PumpSwap price impact is invalid")
@@ -644,6 +688,14 @@ def quote_pumpswap_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint, "output_mint": output_mint, "input_amount": amount_in,
         "output_amount_gross": gross_output_amount, "out_amount": output_amount,
         "minimum_out_amount": minimum_out, "unspent_input_amount": unspent_input,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
+        "token_program_input": token_program_quote if is_buy else token_program_base,
+        "token_program_output": token_program_base if is_buy else token_program_quote,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < (gross_output_amount if is_buy else output_token_transfer_gross),
+        "token2022_output_gross_amount": gross_output_amount if is_buy else output_token_transfer_gross,
         "fee_policy": "CONSERVATIVE_MAX_CONFIGURED_ONCHAIN_SCHEDULE",
         "fee_mint": decoded["quote_mint"],
         "fee_bps": fees, "fee_rates_bps": fee_rates, "total_fee_bps": total_fee_bps,
@@ -670,10 +722,15 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium CPMM pool address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
-    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
-        raise ValueError("Input amount must be a positive integer")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
+    if (isinstance(max_snapshot_age, bool)
+            or not isinstance(max_snapshot_age, (int, float))
+            or not math.isfinite(float(max_snapshot_age))
+            or max_snapshot_age <= 0):
+        raise ValueError("Maximum snapshot age must be positive and finite")
 
     discovered = _account(pool_address)
     if discovered.get("owner") != PROGRAMS["raydium_cpmm"]:
@@ -684,14 +741,20 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         first["base_mint"], first["quote_mint"]
     ]
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Raydium CPMM snapshot must include a positive confirmed slot")
     pool_acc, config_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
     if any(item is None for item in accounts):
         raise ValueError("Raydium CPMM snapshot is missing one or more accounts")
     if pool_acc["owner"] != PROGRAMS["raydium_cpmm"]:
         raise ValueError("Raydium CPMM pool owner changed during snapshot")
     decoded = _decode_pool("raydium_cpmm", pool_acc["data"])
-    if decoded["amm_config"] != first["amm_config"] or decoded["vault_base"] != first["vault_base"] or decoded["vault_quote"] != first["vault_quote"]:
-        raise ValueError("Raydium CPMM pool accounts changed during snapshot")
+    for field in (
+        "amm_config", "vault_base", "vault_quote", "base_mint", "quote_mint",
+        "token_program_base", "token_program_quote",
+    ):
+        if decoded.get(field) != first.get(field):
+            raise ValueError("Raydium CPMM pool relationships changed during snapshot")
     if config_acc["owner"] != PROGRAMS["raydium_cpmm"]:
         raise ValueError("AmmConfig is not owned by the Raydium CPMM program")
     config = _decode_raydium_amm_config(config_acc["data"])
@@ -700,14 +763,38 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
     now = time.time()
     if decoded["open_time"] > int(now):
         raise ValueError("Raydium CPMM pool is not open for swaps yet")
-    if mint_base_acc["owner"] != TOKEN_PROGRAM or mint_quote_acc["owner"] != TOKEN_PROGRAM:
-        raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
-    if decoded["token_program_base"] != TOKEN_PROGRAM or decoded["token_program_quote"] != TOKEN_PROGRAM:
-        raise ValueError("Pool token program does not match the supported SPL Token program")
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("Raydium CPMM mint uses an unsupported token program")
+    if (decoded["token_program_base"] != token_program_base
+            or decoded["token_program_quote"] != token_program_quote):
+        if TOKEN_2022_PROGRAM in (token_program_base, token_program_quote):
+            raise ValueError("Token-2022 mint owner does not match the token program recorded in the Raydium CPMM pool")
+        raise ValueError("Pool token program does not match its mint account owner")
+    base_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_base_acc["data"])
+        if token_program_base == TOKEN_2022_PROGRAM else None
+    )
+    quote_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_quote_acc["data"])
+        if token_program_quote == TOKEN_2022_PROGRAM else None
+    )
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    base_vault = _token_amount(vault_base_acc, decoded["base_mint"])
-    quote_vault = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    pool_authority, _ = _find_program_address(
+        [b"vault_and_lp_mint_auth_seed"], PROGRAMS["raydium_cpmm"]
+    )
+    base_vault = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], pool_authority,
+        "Raydium CPMM base vault",
+    )
+    quote_vault = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], pool_authority,
+        "Raydium CPMM quote vault",
+    )
     base_deduct = decoded["protocol_fees_base"] + decoded["fund_fees_base"] + decoded["creator_fees_base"]
     quote_deduct = decoded["protocol_fees_quote"] + decoded["fund_fees_quote"] + decoded["creator_fees_quote"]
     if base_vault <= base_deduct or quote_vault <= quote_deduct:
@@ -735,29 +822,51 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
             or (fee_on == 2 and not input_is_token0)
         )
     )
-    trade_fee = (amount_in * config["trade_fee_rate"] + 999_999) // 1_000_000
+    input_fee_config = (
+        base_token2022 if input_mint == decoded["base_mint"] else quote_token2022
+    )
+    output_fee_config = (
+        quote_token2022 if input_mint == decoded["base_mint"] else base_token2022
+    )
+    received_by_pool = token2022.conservative_net_amount(
+        (input_fee_config or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
+    trade_fee = (received_by_pool * config["trade_fee_rate"] + 999_999) // 1_000_000
     creator_fee_input = (
-        (amount_in * creator_rate + 999_999) // 1_000_000
+        (received_by_pool * creator_rate + 999_999) // 1_000_000
         if creator_on_input else 0
     )
-    net_input = amount_in - trade_fee - creator_fee_input
+    net_input = received_by_pool - trade_fee - creator_fee_input
     if net_input <= 0:
-        raise ValueError("Input is fully consumed by Raydium CPMM fees")
+        raise ValueError("Input is fully consumed by Raydium CPMM and Token-2022 fees")
     raw_output = (reserve_out * net_input) // (reserve_in + net_input)
     creator_fee_output = (
         (raw_output * creator_rate + 999_999) // 1_000_000
         if creator_rate and not creator_on_input else 0
     )
-    output_amount = raw_output - creator_fee_output
+    gross_output_after_creator = raw_output - creator_fee_output
+    output_amount = token2022.conservative_net_amount(
+        (output_fee_config or {}).get("transfer_fee_config"),
+        gross_output_after_creator,
+    )
     if output_amount <= 0 or output_amount >= reserve_out:
         raise ValueError("Raydium CPMM quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    if minimum_out <= 0:
+        raise ValueError("Raydium CPMM minimum output rounds to zero")
     impact = 1.0 - ((reserve_out - raw_output) / (reserve_in + net_input)) / (reserve_out / reserve_in)
     if not math.isfinite(impact) or impact < 0:
         raise ValueError("Raydium CPMM price impact is invalid")
-    age = time.time() - now
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Raydium CPMM confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Raydium CPMM snapshot is stale")
+        raise ValueError("Raydium CPMM confirmed snapshot is stale")
 
     return {
         "provider": "raydium_cpmm_direct",
@@ -768,12 +877,19 @@ def quote_raydium_cpmm_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
         "trade_fee_rate": config["trade_fee_rate"],
         "creator_fee_rate": creator_rate,
         "creator_fee_on_input": creator_on_input,
         "trade_fee_amount": trade_fee,
         "creator_fee_input_amount": creator_fee_input,
         "creator_fee_output_amount": creator_fee_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": output_amount < gross_output_after_creator,
+        "token2022_output_gross_amount": gross_output_after_creator,
         "out_amount": output_amount,
         "minimum_out_amount": minimum_out,
         "price_impact_percent": round(impact * 100, 6),
@@ -791,8 +907,8 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         raise ValueError("Raydium AMM v4 pool address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
         raise ValueError("Input mint is required")
-    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or amount_in <= 0:
-        raise ValueError("Input amount must be a positive integer")
+    if isinstance(amount_in, bool) or not isinstance(amount_in, int) or not 0 < amount_in <= 2**64 - 1:
+        raise ValueError("Input amount must be a positive u64 integer")
     if isinstance(slippage_bps, bool) or not isinstance(slippage_bps, int) or not 0 <= slippage_bps <= 300:
         raise ValueError("Slippage must be an integer between 0 and 300 bps")
     if isinstance(max_snapshot_age, bool) or not isinstance(max_snapshot_age, (int, float)) or not math.isfinite(max_snapshot_age) or max_snapshot_age <= 0:
@@ -804,8 +920,9 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     first = _decode_pool("raydium_amm_v4", discovered["data"])
     keys = [pool_address, first["vault_base"], first["vault_quote"],
             first["base_mint"], first["quote_mint"]]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Raydium AMM v4 snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Raydium AMM v4 snapshot is missing a required account")
     pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -815,10 +932,27 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     for field in ("vault_base", "vault_quote", "base_mint", "quote_mint"):
         if decoded.get(field) != first.get(field):
             raise ValueError("Raydium AMM v4 pool relationships changed during snapshot")
-    if decoded["pool_open_time"] > int(time.time()) and decoded["status"] == "active":
+    if decoded["status"] != "active":
+        raise ValueError("Raydium AMM v4 pool is paused or disabled")
+    if decoded["pool_open_time"] > int(time.time()):
         raise ValueError("Raydium AMM v4 pool is not open for swaps yet")
     if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
         raise ValueError("Token-2022 or unsupported token program requires a dedicated transfer-fee quote adapter")
+    for mint_account, label in ((mint_base_acc, "base"), (mint_quote_acc, "quote")):
+        mint_data = mint_account.get("data", b"")
+        if not isinstance(mint_data, (bytes, bytearray)) or len(mint_data) != 82 or mint_data[45] != 1:
+            raise ValueError("Raydium AMM v4 " + label + " mint must use an initialized 82-byte legacy layout")
+
+    authority, _ = _find_program_address([b"amm authority"], PROGRAMS["raydium_amm_v4"])
+    for vault, expected_mint, label in (
+        (vault_base_acc, decoded["base_mint"], "base"),
+        (vault_quote_acc, decoded["quote_mint"], "quote"),
+    ):
+        raw_vault = vault.get("data", b"")
+        if vault.get("owner") != TOKEN_PROGRAM or not isinstance(raw_vault, (bytes, bytearray)) or len(raw_vault) != 165:
+            raise ValueError("Raydium AMM v4 " + label + " vault must be an exact legacy SPL token account")
+        if raw_vault[108] != 1 or _key(raw_vault, 32) != authority:
+            raise ValueError("Raydium AMM v4 " + label + " vault authority/state is invalid")
 
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
@@ -838,7 +972,11 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     else:
         raise ValueError("Input mint does not belong to this Raydium AMM v4 pool")
 
-    fee = (amount_in * decoded["swap_fee_numerator"] + decoded["swap_fee_denominator"] - 1) // decoded["swap_fee_denominator"]
+    fee_denominator = decoded["swap_fee_denominator"]
+    fee = (
+        (amount_in * decoded["swap_fee_numerator"] + fee_denominator - 1) // fee_denominator
+        if fee_denominator > 0 else 0
+    )
     net_input = amount_in - fee
     if net_input <= 0:
         raise ValueError("Input is fully consumed by Raydium AMM v4 fees")
@@ -846,12 +984,19 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
     if output_amount <= 0 or output_amount >= reserve_out:
         raise ValueError("Raydium AMM v4 quote rounds to zero or drains the pool")
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
+    if minimum_out <= 0:
+        raise ValueError("Raydium AMM v4 minimum output rounds to zero")
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Raydium AMM v4 confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Raydium AMM v4 snapshot is stale")
+        raise ValueError("Raydium AMM v4 confirmed snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Raydium AMM v4 price impact is invalid")
 
@@ -864,6 +1009,7 @@ def quote_raydium_amm_v4_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
         "trade_fee_numerator": decoded["swap_fee_numerator"],
         "trade_fee_denominator": decoded["swap_fee_denominator"],
         "trade_fee_amount": fee,
@@ -901,8 +1047,9 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         raise ValueError("FluxBeam direct quotes support only verified ConstantProduct pools")
     keys = [pool_address, first["vault_base"], first["vault_quote"],
             first["base_mint"], first["quote_mint"]]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("FluxBeam snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("FluxBeam snapshot is missing a required account")
     pool_acc, vault_base_acc, vault_quote_acc, mint_base_acc, mint_quote_acc = accounts
@@ -916,15 +1063,30 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
             raise ValueError("FluxBeam pool relationships or fee configuration changed during snapshot")
     if decoded["curve_type"] != 0:
         raise ValueError("FluxBeam pool curve is not ConstantProduct")
-    if mint_base_acc.get("owner") != TOKEN_PROGRAM or mint_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("FluxBeam Token-2022 mints are refused until transfer-fee behavior is verified")
-    if vault_base_acc.get("owner") != TOKEN_PROGRAM or vault_quote_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("FluxBeam vaults must use the legacy SPL Token program")
+    import token2022_inspector as token2022
+    token_program_base = mint_base_acc.get("owner")
+    token_program_quote = mint_quote_acc.get("owner")
+    supported_programs = (TOKEN_PROGRAM, TOKEN_2022_PROGRAM)
+    if token_program_base not in supported_programs or token_program_quote not in supported_programs:
+        raise ValueError("FluxBeam mint uses an unsupported token program")
+    if vault_base_acc.get("owner") != token_program_base or vault_quote_acc.get("owner") != token_program_quote:
+        raise ValueError("FluxBeam vault token program does not match its mint")
+    if token_program_base == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_base_acc.get("data", b""))
+    if token_program_quote == TOKEN_2022_PROGRAM:
+        token2022.validate_zero_fee_mint_data(mint_quote_acc.get("data", b""))
 
+    authority, _ = _find_program_address([_b58decode(pool_address)], PROGRAMS["fluxbeam_amm"])
     base_decimals = _mint_decimals(mint_base_acc)
     quote_decimals = _mint_decimals(mint_quote_acc)
-    reserve_base = _token_amount(vault_base_acc, decoded["base_mint"])
-    reserve_quote = _token_amount(vault_quote_acc, decoded["quote_mint"])
+    reserve_base = token2022.validate_token_account_for_program(
+        vault_base_acc, token_program_base, decoded["base_mint"], authority,
+        "FluxBeam base vault",
+    )
+    reserve_quote = token2022.validate_token_account_for_program(
+        vault_quote_acc, token_program_quote, decoded["quote_mint"], authority,
+        "FluxBeam quote vault",
+    )
     if reserve_base <= 0 or reserve_quote <= 0:
         raise ValueError("FluxBeam reserves are empty")
 
@@ -956,8 +1118,13 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("FluxBeam confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("FluxBeam snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("FluxBeam price impact is invalid")
@@ -971,6 +1138,7 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
         "trade_fee_numerator": decoded["trade_fee_numerator"],
         "trade_fee_denominator": decoded["trade_fee_denominator"],
         "owner_fee_numerator": decoded["owner_fee_numerator"],
@@ -978,6 +1146,11 @@ def quote_fluxbeam_pool(pool_address, input_mint, amount_in,
         "trade_fee_amount": trade_fee,
         "owner_fee_amount": owner_fee,
         "total_fee_amount": total_fee,
+        "token_program_base": token_program_base,
+        "token_program_quote": token_program_quote,
+        "token_program_input": token_program_base if input_mint == decoded["base_mint"] else token_program_quote,
+        "token_program_output": token_program_quote if input_mint == decoded["base_mint"] else token_program_base,
+        "token2022_zero_fee_supported": TOKEN_2022_PROGRAM in (token_program_base, token_program_quote),
         "out_amount": output_amount,
         "minimum_out_amount": minimum_out,
         "price_impact_percent": round(impact, 6),
@@ -1026,8 +1199,9 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
         raise ValueError("Moonit ConstantProductV1 direct quotes require the verified 9-decimal token format")
 
     keys = [pool_address, first["base_mint"], config_address]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Moonit snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Moonit snapshot is missing a required account")
     pool_acc, mint_acc, config_acc = accounts
@@ -1094,9 +1268,14 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
     spot_price = reserve_out / reserve_in
     execution_price = output_amount / net_for_impact
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Moonit confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
-        raise ValueError("Moonit snapshot is stale")
+        raise ValueError("Moonit confirmed snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Moonit price impact is invalid")
 
@@ -1109,6 +1288,9 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
+        "curve_amount": decoded["curve_amount"],
+        "total_supply": decoded["total_supply"],
         "fee_bps": fee_bps,
         "fee_amount": fee,
         "out_amount": output_amount,
@@ -1130,7 +1312,7 @@ def quote_moonit_pool(pool_address, input_mint, amount_in,
 
 def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
                               slippage_bps=100, max_snapshot_age=5.0):
-    """Read-only Pump bonding-curve quote for SOL-paired legacy SPL mints."""
+    """Read-only Pump bonding-curve quote for SOL-paired legacy and supported Token-2022 mints."""
     if not isinstance(pool_address, str) or not pool_address.strip():
         raise ValueError("Pump.fun bonding curve address is required")
     if not isinstance(input_mint, str) or not input_mint.strip():
@@ -1176,8 +1358,9 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         raise ValueError("Custom creator-fee curves require a separate fee model")
 
     keys = [pool_address, PUMP_GLOBAL_CONFIG, PUMP_FEE_CONFIG, token_mint]
-    snapshot_started = time.time()
     accounts, slot = _multiple_accounts_with_context(keys)
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot <= 0:
+        raise ValueError("Pump.fun snapshot must include a positive confirmed slot")
     if any(item is None for item in accounts):
         raise ValueError("Pump.fun confirmed snapshot is missing a required account")
     curve_acc, global_acc, fee_acc, mint_acc = accounts
@@ -1204,8 +1387,15 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
     if fee_acc.get("owner") != PUMP_FEES_PROGRAM:
         raise ValueError("Pump.fun FeeConfig is not owned by the Pump Fees program")
     fee_config = _decode_pumpswap_fee_config(fee_acc.get("data", b""))
-    if mint_acc.get("owner") != TOKEN_PROGRAM:
-        raise ValueError("Pump.fun Token-2022 mints are refused until transfer-fee and hook behavior is verified")
+    import token2022_inspector as token2022
+    token_program = mint_acc.get("owner")
+    if token_program not in (TOKEN_PROGRAM, TOKEN_2022_PROGRAM):
+        raise ValueError("Pump.fun mint uses an unsupported token program")
+    token2022_mint = (
+        token2022.validate_swap_compatible_mint_data(mint_acc.get("data", b""))
+        if token_program == TOKEN_2022_PROGRAM else None
+    )
+    transfer_fee_config = (token2022_mint or {}).get("transfer_fee_config")
 
     token_decimals = _mint_decimals(mint_acc)
     virtual_token = curve["virtual_token_reserves"]
@@ -1239,6 +1429,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
             _u64(global_raw, 105),
             _u64(global_raw, 154),
         ]
+    # The creator component is only charged when the curve names a creator.
+    # The on-chain fee tier is shared across curves, but a default creator has
+    # no creator vault to receive that component.
+    if curve.get("creator") == DEFAULT_PUBKEY:
+        fee_rates[2] = 0
     if any(rate > 10_000 for rate in fee_rates) or sum(fee_rates) >= 10_000:
         raise ValueError("Pump.fun fee schedule is invalid or consumes the full trade")
 
@@ -1247,19 +1442,24 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         total_fee = sum(fee_amounts)
         if net_quote <= 0:
             raise ValueError("Pump.fun quote input is consumed by fees")
-        output_amount = (virtual_token * net_quote) // (virtual_quote + net_quote)
-        if output_amount <= 0 or output_amount >= real_token:
+        gross_output = (virtual_token * net_quote) // (virtual_quote + net_quote)
+        if gross_output <= 0 or gross_output >= real_token:
             raise ValueError("Pump.fun buy would drain or complete the bonding curve; migration quoting is not enabled")
+        output_amount = token2022.conservative_net_amount(transfer_fee_config, gross_output)
+        if output_amount <= 0:
+            raise ValueError("Pump.fun Token-2022 output transfer fee consumes the entire token amount")
         impact_input = net_quote
         impact_output = output_amount
         spot_price = virtual_token / virtual_quote
         output_mint = token_mint
         unspent_input = amount_in - net_quote - total_fee
-        gross_output = output_amount
     else:
         if amount_in > supply:
             raise ValueError("Pump.fun sell input exceeds total token supply")
-        gross_quote = (virtual_quote * amount_in) // (virtual_token + amount_in)
+        received_by_curve = token2022.conservative_net_amount(transfer_fee_config, amount_in)
+        if received_by_curve <= 0:
+            raise ValueError("Pump.fun Token-2022 input transfer fee consumes the entire token amount")
+        gross_quote = (virtual_quote * received_by_curve) // (virtual_token + received_by_curve)
         if real_quote <= 0:
             raise ValueError("Pump.fun curve has no real SOL reserve for this sell")
         fee_amounts = [_fee_amount_ceil(gross_quote, rate) for rate in fee_rates]
@@ -1269,18 +1469,23 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
             raise ValueError("Pump.fun sell output is consumed by fees")
         if gross_quote > real_quote:
             raise ValueError("Pump.fun curve has insufficient real SOL reserves for gross sell settlement")
-        impact_input = amount_in
+        impact_input = received_by_curve
         impact_output = gross_quote
         spot_price = virtual_quote / virtual_token
         output_mint = SOL_MINT
-        unspent_input = 0
+        unspent_input = amount_in - received_by_curve
         gross_output = gross_quote
 
     minimum_out = output_amount * (10_000 - slippage_bps) // 10_000
     execution_price = impact_output / impact_input
     impact = max(0.0, (1.0 - execution_price / spot_price) * 100.0)
-    age = time.time() - snapshot_started
-    if age < 0 or age > max_snapshot_age:
+    block_time = _rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Pump.fun confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
+    if not math.isfinite(age) or age < 0 or age > max_snapshot_age:
         raise ValueError("Pump.fun curve snapshot is stale")
     if not math.isfinite(impact):
         raise ValueError("Pump.fun price impact is invalid")
@@ -1294,6 +1499,7 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         "input_mint": input_mint,
         "output_mint": output_mint,
         "input_amount": amount_in,
+        "slippage_bps": slippage_bps,
         "output_amount_gross": gross_output,
         "out_amount": output_amount,
         "minimum_out_amount": minimum_out,
@@ -1301,6 +1507,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         "fee_policy": fee_policy,
         "fee_mint": SOL_MINT,
         "fee_rates_bps": fee_rates,
+        "creator": curve.get("creator"),
+        "curve_complete": curve.get("complete"),
+        "is_cashback_coin": curve.get("is_cashback_coin", False),
+        "is_holder_reward": curve.get("is_holder_reward", False),
+        "creator_fee_bps": curve.get("creator_fee_bps", 0),
         "lp_fee_amount": fee_amounts[0],
         "protocol_fee_amount": fee_amounts[1],
         "creator_fee_amount": fee_amounts[2],
@@ -1312,6 +1523,11 @@ def quote_pumpfun_legacy_pool(pool_address, input_mint, output_mint, amount_in,
         "real_quote_reserves": real_quote,
         "is_mayhem_mode": curve.get("is_mayhem_mode", False),
         "token_decimals": token_decimals,
+        "token_program": token_program,
+        "token2022_input_transfer_fee": is_sell and unspent_input > 0,
+        "token2022_input_received_by_curve": amount_in - unspent_input if is_sell else None,
+        "token2022_output_transfer_fee": is_buy and output_amount < gross_output,
+        "token2022_output_gross_amount": gross_output if is_buy else None,
         "price_impact_percent": round(impact, 6),
         "status": "QUOTED_FROM_CONFIRMED_ONCHAIN_SNAPSHOT",
         "execution": "DISABLED",
@@ -1401,6 +1617,13 @@ def _mint_decimals(account):
     if account.get("owner") not in TOKEN_PROGRAMS:
         raise ValueError("pool mint is not owned by an SPL token program")
     return account["data"][44]
+
+
+def get_mint_decimals(mint_address):
+    """Resolve and validate a mint's decimals from its confirmed on-chain account."""
+    if not isinstance(mint_address, str) or not mint_address.strip():
+        raise ValueError("mint address is required")
+    return _mint_decimals(_account(mint_address.strip()))
 
 
 def _quote_usd(mint):

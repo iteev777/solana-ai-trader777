@@ -111,12 +111,10 @@ def scan_birdeye():
     found_tokens = []
 
     if time.time() < _quota_disabled_until:
-        print("BIRDEYE SKIPPED: COMPUTE UNIT QUOTA COOLDOWN ACTIVE", flush=True)
-        return found_tokens
+        raise RuntimeError("Birdeye compute-unit quota cooldown is active")
 
     if not API_KEY:
-        print("BIRDEYE SKIPPED: API KEY MISSING", flush=True)
-        return found_tokens
+        raise RuntimeError("BIRDEYE_API_KEY is not configured")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -179,26 +177,22 @@ def scan_birdeye():
             )
 
         if not isinstance(data, dict):
-            print("BIRDEYE INVALID RESPONSE", flush=True)
-            return found_tokens
+            raise ValueError("Birdeye returned a non-object response")
 
         if data.get("success") is False:
-            print(
-                "BIRDEYE API REPORTED FAILURE:",
-                data.get("message") or data.get("status"),
-                flush=True
-            )
-            return found_tokens
+            raise RuntimeError("Birdeye API reported failure: " + str(data.get("message") or data.get("status")))
 
         tokens = extract_items(data)
 
-        if not tokens:
-            print(
-                "BIRDEYE EMPTY OR UNKNOWN RESPONSE SHAPE:",
-                endpoint_used,
-                flush=True
+        data_container = data.get("data")
+        valid_shape = isinstance(data_container, list) or (
+            isinstance(data_container, dict) and any(
+                isinstance(data_container.get(key), list)
+                for key in ("items", "tokens", "token_list")
             )
-            return found_tokens
+        )
+        if not valid_shape:
+            raise ValueError("Birdeye returned an unknown token-list response shape")
 
         seen_in_scan = set()
 
@@ -240,14 +234,17 @@ def scan_birdeye():
             response_text,
             flush=True
         )
+        raise
 
     except (ValueError, TypeError, AttributeError) as error:
 
         print("BIRDEYE DATA ERROR:", repr(error), flush=True)
+        raise
 
     except Exception as error:
 
         print("BIRDEYE SCANNER ERROR:", repr(error), flush=True)
+        raise
 
     return found_tokens
 

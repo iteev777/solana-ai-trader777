@@ -1,8 +1,9 @@
 """Read-only exact-input quotes for classic Orca Whirlpool pools.
 
-The adapter uses static TickArray accounts and the pool's base fee. Adaptive-fee
-oracles, DynamicTickArray layouts and Token-2022 mints fail closed until their
-fee and transfer semantics are independently modelled.
+The adapter uses static TickArray accounts and the pool's base fee. It supports
+the audited Token-2022 transfer-fee extension subset with conservative input
+and output fee treatment. Adaptive-fee oracles, DynamicTickArray layouts and
+unsupported Token-2022 extensions remain fail-closed.
 """
 import math
 import time
@@ -156,7 +157,6 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         pool_address, vault_a, vault_b, first["mint_a"], first["mint_b"],
         oracle_address,
     ] + tick_addresses
-    snapshot_started = time.time()
     accounts, slot = chain._multiple_accounts_with_context(addresses)
     if len(accounts) != len(addresses):
         raise ValueError("Orca Whirlpool confirmed snapshot has an incomplete account list")
@@ -174,12 +174,30 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     vault_a_acc, vault_b_acc, mint_a_acc, mint_b_acc = accounts[1:5]
     if any(item is None for item in (vault_a_acc, vault_b_acc, mint_a_acc, mint_b_acc)):
         raise ValueError("Orca Whirlpool confirmed snapshot is missing a required mint or vault")
-    if mint_a_acc.get("owner") != chain.TOKEN_PROGRAM or mint_b_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Orca Whirlpool Token-2022 mints are refused until transfer fees and hooks are modelled")
-    if vault_a_acc.get("owner") != chain.TOKEN_PROGRAM or vault_b_acc.get("owner") != chain.TOKEN_PROGRAM:
-        raise ValueError("Orca Whirlpool vaults must use the legacy SPL Token program")
-    vault_balance_a = chain._token_amount(vault_a_acc, state["mint_a"])
-    vault_balance_b = chain._token_amount(vault_b_acc, state["mint_b"])
+    import token2022_inspector as token2022
+    token_program_a = mint_a_acc.get("owner")
+    token_program_b = mint_b_acc.get("owner")
+    supported_programs = (chain.TOKEN_PROGRAM, chain.TOKEN_2022_PROGRAM)
+    if token_program_a not in supported_programs or token_program_b not in supported_programs:
+        raise ValueError("Orca Whirlpool mint uses an unsupported token program")
+    if vault_a_acc.get("owner") != token_program_a or vault_b_acc.get("owner") != token_program_b:
+        raise ValueError("Orca Whirlpool vault token program does not match its mint")
+    mint_a_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_a_acc.get("data", b""))
+        if token_program_a == chain.TOKEN_2022_PROGRAM else None
+    )
+    mint_b_token2022 = (
+        token2022.validate_swap_compatible_mint_data(mint_b_acc.get("data", b""))
+        if token_program_b == chain.TOKEN_2022_PROGRAM else None
+    )
+    vault_balance_a = token2022.validate_token_account_for_program(
+        vault_a_acc, token_program_a, state["mint_a"], pool_address,
+        "Orca Whirlpool vault A",
+    )
+    vault_balance_b = token2022.validate_token_account_for_program(
+        vault_b_acc, token_program_b, state["mint_b"], pool_address,
+        "Orca Whirlpool vault B",
+    )
     # Protocol fees owed are held in the vaults but are not spendable swap
     # liquidity. Subtract them before applying the output-reserve guard.
     reserve_a = vault_balance_a - state["protocol_fee_owed_a"]
@@ -192,8 +210,10 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         if oracle_acc.get("owner") != chain.PROGRAMS[PROGRAM]:
             raise ValueError("Orca Whirlpool oracle owner is invalid")
         oracle_data = oracle_acc.get("data", b"")
-        if len(oracle_data) < 58:
-            raise ValueError("Orca Whirlpool oracle layout is unknown; adaptive fee state cannot be verified")
+        if (not isinstance(oracle_data, (bytes, bytearray))
+                or len(oracle_data) < 58
+                or oracle_data[:8] != chain._discriminator("Oracle")):
+            raise ValueError("Orca Whirlpool oracle discriminator/layout is invalid; adaptive fee state cannot be verified")
         adaptive_fee_control = int.from_bytes(oracle_data[54:58], "little")
         if adaptive_fee_control != 0:
             raise ValueError("Orca Whirlpool adaptive-fee pools are not supported")
@@ -218,28 +238,57 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
     else:
         coverage_tick = min(mathx.MAX_TICK, last_start + span - 1)
 
+    input_token2022 = mint_a_token2022 if zero_for_one else mint_b_token2022
+    output_token2022 = mint_b_token2022 if zero_for_one else mint_a_token2022
+    received_by_pool = token2022.conservative_net_amount(
+        (input_token2022 or {}).get("transfer_fee_config"), amount_in
+    )
+    if received_by_pool <= 0:
+        raise ValueError("Token-2022 input transfer fee consumes the entire input amount")
     quote = mathx.quote_exact_input(
         state["sqrt_price_x64"], state["liquidity"], state["tick_current"],
-        sorted(set(decoded_ticks)), zero_for_one, amount_in, state["fee_rate"],
+        sorted(set(decoded_ticks)), zero_for_one, received_by_pool, state["fee_rate"],
         coverage_tick,
     )
     output_reserve = reserve_b if zero_for_one else reserve_a
     if quote["out_amount"] > output_reserve:
         raise ValueError("Orca Whirlpool quote exceeds the output vault reserve")
-
-    spot_ratio = (
-        (state["sqrt_price_x64"] / mathx.Q64) ** 2
-        if zero_for_one else (mathx.Q64 / state["sqrt_price_x64"]) ** 2
+    gross_output = quote["out_amount"]
+    expected_output_amount = token2022.conservative_net_amount(
+        (output_token2022 or {}).get("transfer_fee_config"), gross_output
     )
-    average_ratio = quote["out_amount"] / amount_in
-    impact = max(0.0, (1.0 - average_ratio / spot_ratio) * 100.0)
+    if expected_output_amount <= 0:
+        raise ValueError("Token-2022 output transfer fee consumes the entire output amount")
+
+    sqrt_after_x64 = quote.get("sqrt_price_after_x64")
+    if (
+        isinstance(sqrt_after_x64, bool)
+        or not isinstance(sqrt_after_x64, int)
+        or not 0 < sqrt_after_x64 <= 2**128 - 1
+    ):
+        raise ValueError("Orca Whirlpool post-swap square-root price is invalid")
+    sqrt_before = state["sqrt_price_x64"] / mathx.Q64
+    sqrt_after = sqrt_after_x64 / mathx.Q64
+    price_before = sqrt_before * sqrt_before
+    price_after = sqrt_after * sqrt_after
+    if not math.isfinite(price_before) or not math.isfinite(price_after) or price_before <= 0:
+        raise ValueError("Orca Whirlpool price impact inputs are invalid")
+    # Match ScreenerBot: impact is the movement in the squared spot price,
+    # not an average execution-rate metric that also folds fees into impact.
+    impact = abs(price_before - price_after) / price_before * 100.0
     if not math.isfinite(impact):
         raise ValueError("Orca Whirlpool price impact is invalid")
-    age = time.time() - snapshot_started
+    impact = min(100.0, max(0.0, impact))
+    block_time = chain._rpc("getBlockTime", [slot])
+    if (isinstance(block_time, bool)
+            or not isinstance(block_time, (int, float))
+            or not math.isfinite(float(block_time))):
+        raise ValueError("Orca Whirlpool confirmed slot block time is unavailable")
+    age = time.time() - float(block_time)
     if age < 0 or age > max_snapshot_age:
         raise ValueError("Orca Whirlpool confirmed snapshot is stale")
 
-    minimum_out = quote["out_amount"] * (10_000 - slippage_bps) // 10_000
+    minimum_out = expected_output_amount * (10_000 - slippage_bps) // 10_000
     return {
         "provider": "orca_whirlpool_direct",
         "protocol": PROGRAM,
@@ -249,7 +298,15 @@ def quote_orca_whirlpool_pool(pool_address, input_mint, amount_in, slippage_bps=
         "input_mint": input_mint,
         "output_mint": expected_output,
         "input_amount": amount_in,
-        "out_amount": quote["out_amount"],
+        "slippage_bps": slippage_bps,
+        "out_amount": expected_output_amount,
+        "gross_out_amount": gross_output,
+        "token2022_input_transfer_fee": received_by_pool < amount_in,
+        "token2022_input_received_by_pool": received_by_pool,
+        "token2022_output_transfer_fee": expected_output_amount < gross_output,
+        "token2022_output_gross_amount": gross_output,
+        "token_program_input": token_program_a if zero_for_one else token_program_b,
+        "token_program_output": token_program_b if zero_for_one else token_program_a,
         "minimum_out_amount": minimum_out,
         "fee_mint": input_mint,
         "fee_amount": quote["fee_amount"],

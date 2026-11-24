@@ -7,6 +7,14 @@ import live_execution
 MODE = "live"
 
 LIVE_TRADING_ENABLED = False
+# Phase 5 is deliberately locked in code; mutating the feature flag cannot
+# activate the placeholder live-trading engine during ordinary development.
+LIVE_TRADING_HARD_LOCK = True
+
+
+def _live_trading_enabled():
+    return bool(LIVE_TRADING_ENABLED) and not LIVE_TRADING_HARD_LOCK
+
 
 MAX_TRADE_SIZE_USD = 5.00
 MAX_POSITIONS_PER_STRATEGY = 5
@@ -38,7 +46,13 @@ class LiveTrading:
         print("LIVE EXECUTION: LOCKED")
 
     def get_execution_status(self):
-        return live_execution.get_execution_status()
+        status = live_execution.get_execution_status()
+        status.update({
+            "live_trading_enabled": _live_trading_enabled(),
+            "live_trading_hard_lock": LIVE_TRADING_HARD_LOCK,
+            "live_trading_reason": "Phase 5 live trading is locked in code",
+        })
+        return status
 
     def get_jupiter_quote(self, input_mint, output_mint, amount, slippage_bps=None):
         """Read-only Jupiter v2 quote; never requests a transaction."""
@@ -80,7 +94,7 @@ class LiveTrading:
             ),
             "daily_loss": self.account["daily_loss"],
             "daily_realized_pnl": self.account["daily_realized_pnl"],
-            "execution_enabled": LIVE_TRADING_ENABLED
+            "execution_enabled": _live_trading_enabled()
         }
 
     def open_position(
@@ -90,7 +104,7 @@ class LiveTrading:
         strategy="main"
     ):
 
-        if not LIVE_TRADING_ENABLED:
+        if not _live_trading_enabled():
             return "LIVE TRADING LOCKED"
 
         return "LIVE EXECUTION NOT IMPLEMENTED"
@@ -102,7 +116,7 @@ class LiveTrading:
         reason
     ):
 
-        if not LIVE_TRADING_ENABLED:
+        if not _live_trading_enabled():
             return "LIVE TRADING LOCKED"
 
         return "LIVE EXECUTION NOT IMPLEMENTED"
@@ -113,7 +127,7 @@ class LiveTrading:
         current_price
     ):
 
-        if not LIVE_TRADING_ENABLED:
+        if not _live_trading_enabled():
             return "LIVE TRADING LOCKED"
 
         return "LIVE EXECUTION NOT IMPLEMENTED"

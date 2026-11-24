@@ -3,6 +3,10 @@
 # ==========================================
 
 import requests
+import json
+
+from api_client import get_json
+import database
 import math
 import time
 import threading
@@ -13,10 +17,11 @@ from collections import OrderedDict
 
 API_URL = "https://api.rugcheck.xyz/v1/tokens/"
 
-REQUEST_TIMEOUT = 20
-CACHE_SECONDS = 60
+REQUEST_TIMEOUT = 15
+CACHE_SECONDS = 1800
 MAX_CACHE_ENTRIES = 2000
-MAX_SAFE_SCORE = 40
+MAX_SAFE_SCORE = 40  # Normalized RugCheck risk score (0-100), retained for compatibility.
+MAX_SAFE_RAW_SCORE = 10_000  # ScreenerBot's default raw-score ceiling.
 
 _cache = OrderedDict()
 _cache_lock = threading.RLock()
@@ -28,16 +33,12 @@ _inflight = {}
 # ==========================================
 
 def get_number(value):
-
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
-
-        if not math.isfinite(number):
-            return None
-
-        return number
-
-    except (ValueError, TypeError):
+        return number if math.isfinite(number) else None
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -51,13 +52,16 @@ def get_authority_status(data, authority_name):
 
     value = data[authority_name]
 
-    if value is None or value is False or value == "":
+    if value is None or value is False:
         return "DISABLED"
 
-    if value is True:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "none", "null", "false", "0", "no", "off", "disabled", "revoked"}:
+            return "DISABLED"
         return "ACTIVE"
 
-    if isinstance(value, str):
+    if value is True:
         return "ACTIVE"
 
     return "UNKNOWN"
@@ -143,10 +147,23 @@ def _lp_lock_percentage(risks):
     return None
 
 
+def get_security_risk_band(normalized_score):
+    """Return the shared ScreenerBot-compatible band for a 0-100 risk score."""
+    score = get_number(normalized_score)
+    if score is None or not score.is_integer() or not 0 <= score <= 100:
+        return None
+    if score <= 30:
+        return "low"
+    if score <= 60:
+        return "medium"
+    return "high"
+
+
 def analyze_rugcheck_report(data):
     """Normalize RugCheck risk signals into one auditable, fail-closed decision."""
     empty = {
-        "status": "UNKNOWN", "safe": False, "score": None,
+        "status": "UNKNOWN", "safe": False, "score": None, "raw_score": None,
+        "risk_band": None,
         "risk_count": 0, "high_risks": 0, "medium_risks": 0,
         "low_risks": 0, "unknown_risks": 0,
         "mint_authority": "UNKNOWN", "freeze_authority": "UNKNOWN",
@@ -158,7 +175,36 @@ def analyze_rugcheck_report(data):
 
     reasons = []
     high_risks = medium_risks = low_risks = unknown_risks = 0
-    raw_score = get_number(data.get("score_normalised"))
+    normalized_raw = data.get("score_normalised")
+    normalized_score = get_number(normalized_raw)
+    normalized_invalid = normalized_raw is not None and (
+        normalized_score is None
+        or not normalized_score.is_integer()
+        or not 0.0 <= normalized_score <= 100.0
+    )
+    if normalized_invalid:
+        unknown_risks += 1
+        reasons.append("Normalized risk score is outside the valid integer 0-100 range")
+        normalized_score = None
+
+    raw_score_raw = data.get("score")
+    raw_score = get_number(raw_score_raw)
+    raw_score_invalid = raw_score_raw is not None and (
+        raw_score is None
+        or not raw_score.is_integer()
+        or raw_score < 0
+        or raw_score > 2_147_483_647
+    )
+    if raw_score_invalid:
+        unknown_risks += 1
+        reasons.append("Raw risk score is outside the valid non-negative i32 range")
+        raw_score = None
+    maximum_raw_score = _risk_threshold(
+        "TROJAN_RUGCHECK_MAX_RAW_SCORE", float(MAX_SAFE_RAW_SCORE), 0.0, 2_147_483_647.0
+    )
+    maximum_normalized_score = _risk_threshold(
+        "TROJAN_RUGCHECK_MAX_NORMALIZED_SCORE", float(MAX_SAFE_SCORE), 0.0, 100.0
+    )
     risks = data.get("risks")
     risks_valid = isinstance(risks, list)
     if not risks_valid:
@@ -220,7 +266,7 @@ def analyze_rugcheck_report(data):
     # Optional minimum unique-holder gate. A configured floor cannot pass on
     # missing, zero-placeholder, negative, or fractional provider data.
     minimum_holders = int(_risk_threshold(
-        "TROJAN_RUGCHECK_MIN_HOLDERS", 0.0, 0.0, 100000000.0
+        "TROJAN_RUGCHECK_MIN_HOLDERS", 150.0, 0.0, 100000000.0
     ))
     total_holders_raw = get_number(data.get("totalHolders"))
     total_holders_valid = (
@@ -228,7 +274,18 @@ def analyze_rugcheck_report(data):
         and total_holders_raw > 0
         and total_holders_raw.is_integer()
     )
-    if minimum_holders > 0:
+    total_holders_value_present = "totalHolders" in data
+    total_holders_malformed = (
+        total_holders_value_present and (
+            total_holders_raw is None
+            or total_holders_raw < 0
+            or not total_holders_raw.is_integer()
+        )
+    )
+    if total_holders_malformed:
+        unknown_risks += 1
+        reasons.append("Unique holder count is present but invalid")
+    elif minimum_holders > 0:
         if not total_holders_valid:
             unknown_risks += 1
             reasons.append("Unique holder count required but unavailable or invalid")
@@ -240,27 +297,39 @@ def analyze_rugcheck_report(data):
     holders_valid = isinstance(top_holders, list) and len(top_holders) > 0
     holder_percentages = []
     holder_records = []
+    invalid_holder_entries = 0
     creator_pct = None
     creator = data.get("creator")
     if holders_valid:
         for holder in top_holders:
             if not isinstance(holder, dict):
+                invalid_holder_entries += 1
                 continue
             pct = get_number(holder.get("pct"))
-            if pct is not None and 0 <= pct <= 100:
-                holder_percentages.append(pct)
-                holder_records.append({
-                    "pct": pct,
-                    "insider": holder.get("insider") is True,
-                    "insider_field_present": "insider" in holder,
-                })
-                owner = holder.get("owner")
-                address = holder.get("address")
-                if (isinstance(owner, str) and owner.lower() == "creator") or (
-                    isinstance(creator, str) and isinstance(address, str)
-                    and creator.lower() == address.lower()
-                ):
-                    creator_pct = pct
+            if pct is None or not 0 <= pct <= 100:
+                invalid_holder_entries += 1
+                continue
+            insider_value = holder.get("insider")
+            if "insider" in holder and not isinstance(insider_value, bool):
+                invalid_holder_entries += 1
+                continue
+            holder_percentages.append(pct)
+            holder_records.append({
+                "pct": pct,
+                "insider": insider_value is True,
+                "insider_field_present": isinstance(insider_value, bool),
+            })
+            owner = holder.get("owner")
+            address = holder.get("address")
+            if (isinstance(owner, str) and owner.lower() == "creator") or (
+                isinstance(creator, str) and isinstance(address, str)
+                and creator.lower() == address.lower()
+            ):
+                creator_pct = pct
+        if invalid_holder_entries:
+            holders_valid = False
+            unknown_risks += 1
+            reasons.append("One or more top-holder entries are malformed")
         if not holder_percentages:
             holders_valid = False
             reasons.append("Top holder percentages unavailable")
@@ -271,10 +340,10 @@ def analyze_rugcheck_report(data):
     top_holder_pct = max(holder_percentages) if holder_percentages else None
     top10_pct = min(100.0, sum(holder_percentages[:10])) if holder_percentages else None
     if top_holder_pct is not None:
-        if top_holder_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT", 50.0):
+        if top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_MAX_TOP_HOLDER_PCT", 30.0):
             high_risks += 1
             reasons.append("Extreme largest-holder concentration")
-        elif top_holder_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 30.0):
+        elif top_holder_pct > _risk_threshold("TROJAN_RUGCHECK_WARN_TOP_HOLDER_PCT", 20.0):
             medium_risks += 1
             reasons.append("Elevated largest-holder concentration")
     if top10_pct is not None:
@@ -296,17 +365,17 @@ def analyze_rugcheck_report(data):
         insider_total_pct = sum(item["pct"] for item in insiders_top10)
 
     if top_three_pct is not None:
-        maximum_top_three = _risk_threshold("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 85.0)
+        maximum_top_three = _risk_threshold("TROJAN_RUGCHECK_MAX_TOP3_HOLDERS_PCT", 50.0)
         if top_three_pct > maximum_top_three:
             high_risks += 1
             reasons.append("Top three holder concentration exceeds configured maximum")
 
     if top10_insider_count is not None:
         maximum_insiders = int(_risk_threshold(
-            "TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 10.0, 0.0, 10.0
+            "TROJAN_RUGCHECK_MAX_INSIDERS_TOP10", 2.0, 0.0, 10.0
         ))
         maximum_insider_pct = _risk_threshold(
-            "TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 100.0
+            "TROJAN_RUGCHECK_MAX_INSIDER_TOTAL_PCT", 20.0
         )
         if top10_insider_count > maximum_insiders:
             high_risks += 1
@@ -316,12 +385,21 @@ def analyze_rugcheck_report(data):
             reasons.append("Insider holder balance exceeds configured maximum")
 
     graph_insider_share_pct = None
-    insiders = get_number(data.get("graphInsidersDetected"))
+    insiders_raw = data.get("graphInsidersDetected")
+    insiders_number = get_number(insiders_raw)
+    insiders_valid = (
+        insiders_number is not None and insiders_number >= 0
+        and insiders_number.is_integer()
+    )
+    if insiders_raw is not None and not insiders_valid:
+        unknown_risks += 1
+        reasons.append("Graph insider count is present but invalid")
+    insiders = int(insiders_number) if insiders_valid else None
     total_holders = get_number(data.get("totalHolders"))
     if insiders is not None and total_holders is not None and total_holders > 0:
         graph_insider_share_pct = min(100.0, max(0.0, insiders / total_holders * 100.0))
         maximum_graph_share = _risk_threshold(
-            "TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 100.0
+            "TROJAN_RUGCHECK_MAX_GRAPH_INSIDER_SHARE_PCT", 5.0
         )
         if graph_insider_share_pct > maximum_graph_share:
             high_risks += 1
@@ -338,30 +416,40 @@ def analyze_rugcheck_report(data):
     is_pump_token = "pump" in token_type
     legacy_pump_lock = _risk_threshold("TROJAN_RUGCHECK_MIN_LP_LOCK_PCT", 0.0)
     pump_lock_required = _risk_threshold(
-        "TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT", legacy_pump_lock
+        "TROJAN_RUGCHECK_MIN_PUMPFUN_LP_LOCK_PCT", legacy_pump_lock if legacy_pump_lock > 0 else 50.0
     )
     regular_lock_required = _risk_threshold(
-        "TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT", 0.0
+        "TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT", 50.0
     )
     minimum_lp_lock = pump_lock_required if is_pump_token else regular_lock_required
     if minimum_lp_lock > 0:
         token_label = "Pump" if is_pump_token else "Regular"
-        if lp_lock_pct is None:
+        if lp_lock_pct is None and is_pump_token:
+            # ScreenerBot requires explicit LP-lock evidence for Pump.fun, but
+            # treats a missing regular-token lock field as not applicable.
             unknown_risks += 1
-            reasons.append(token_label + " token LP lock data required but unavailable")
-        elif lp_lock_pct < minimum_lp_lock:
+            reasons.append("Pump token LP lock data required but unavailable")
+        elif lp_lock_pct is not None and lp_lock_pct < minimum_lp_lock:
             high_risks += 1
             reasons.append(token_label + " token LP lock is below configured minimum")
 
     creator_balance = _first_present(data.get("creatorBalance"), token.get("creatorBalance"))
     token_supply = _first_present(data.get("tokenSupply"), token.get("supply"))
-    if creator_pct is None:
-        creator_pct = _safe_ratio(creator_balance, token_supply)
+    if creator_pct is None and (creator_balance is not None or token_supply is not None):
+        creator_balance_number = get_number(creator_balance)
+        token_supply_number = get_number(token_supply)
+        if (creator_balance_number is None or token_supply_number is None
+                or creator_balance_number < 0 or token_supply_number <= 0
+                or creator_balance_number > token_supply_number):
+            unknown_risks += 1
+            reasons.append("Creator balance or token supply is invalid")
+        else:
+            creator_pct = creator_balance_number / token_supply_number * 100.0
     if creator_pct is not None:
-        if creator_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_CREATOR_PCT", 20.0):
+        if creator_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_CREATOR_PCT", 10.0):
             high_risks += 1
             reasons.append("Creator holds a critical share of supply")
-        elif creator_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_CREATOR_PCT", 10.0):
+        elif creator_pct >= _risk_threshold("TROJAN_RUGCHECK_WARN_CREATOR_PCT", 5.0):
             medium_risks += 1
             reasons.append("Creator holds an elevated share of supply")
 
@@ -410,7 +498,7 @@ def analyze_rugcheck_report(data):
             if block_transfer_fee_tokens:
                 high_risks += 1
                 reasons.append("Token-2022 transfer-fee tokens are blocked by configuration")
-            elif transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 10.0):
+            elif transfer_fee_pct >= _risk_threshold("TROJAN_RUGCHECK_MAX_TRANSFER_FEE_PCT", 5.0):
                 high_risks += 1
                 reasons.append("Transfer fee exceeds the configured critical threshold")
             else:
@@ -437,7 +525,10 @@ def analyze_rugcheck_report(data):
     lp_providers_valid = (
         lp_providers is not None and lp_providers >= 0 and lp_providers.is_integer()
     )
-    if minimum_lp_providers > 0:
+    if lp_providers_raw is not None and not lp_providers_valid:
+        unknown_risks += 1
+        reasons.append("LP provider count is present but invalid")
+    if minimum_lp_providers > 0 and not (lp_providers_raw is not None and not lp_providers_valid):
         if not lp_providers_valid:
             unknown_risks += 1
             reasons.append("Minimum LP provider count required but unavailable or invalid")
@@ -452,23 +543,30 @@ def analyze_rugcheck_report(data):
         high_risks += 1
         reasons.append("RugCheck reports no market liquidity")
 
-    if raw_score is None:
-        reasons.append("Normalized risk score unavailable")
+    if raw_score is None and normalized_score is None:
+        reasons.append("RugCheck risk score unavailable")
     if not risks_valid:
         reasons.append("Risk information incomplete")
     if not holders_valid:
         reasons.append("Holder information incomplete")
 
     if (
-        raw_score is None or not risks_valid or not holders_valid
+        (raw_score is None and normalized_score is None)
+        or not risks_valid or not holders_valid
         or mint_authority == "UNKNOWN" or freeze_authority == "UNKNOWN"
         or unknown_risks > 0
     ):
         status = "UNKNOWN"
-    elif rugged or raw_score >= MAX_SAFE_SCORE or high_risks > 0:
+    elif rugged or (
+        raw_score is not None and raw_score > maximum_raw_score
+    ) or (
+        normalized_score is not None and normalized_score >= maximum_normalized_score
+    ) or high_risks > 0:
         status = "REJECT"
-        if raw_score >= MAX_SAFE_SCORE:
-            reasons.append("RugCheck risk score too high")
+        if raw_score is not None and raw_score > maximum_raw_score:
+            reasons.append("RugCheck raw risk score too high")
+        if normalized_score is not None and normalized_score >= maximum_normalized_score:
+            reasons.append("RugCheck normalized risk score too high")
         if high_risks > 0:
             reasons.append("High severity security risks detected")
     elif medium_risks >= _risk_threshold("TROJAN_RUGCHECK_MAX_MEDIUM_RISKS", 3.0, 1.0, 1000.0):
@@ -481,7 +579,9 @@ def analyze_rugcheck_report(data):
     return {
         "status": status,
         "safe": status == "PASS",
-        "score": raw_score,
+        "score": normalized_score,
+        "risk_band": get_security_risk_band(normalized_score),
+        "raw_score": raw_score,
         "risk_count": len(risks),
         "high_risks": high_risks,
         "medium_risks": medium_risks,
@@ -532,6 +632,87 @@ def _cache_ttl_seconds():
         return CACHE_SECONDS
 
 
+def _ensure_persistent_cache_table():
+    with database.connect() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS rugcheck_report_cache (
+                token_address TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                analysis_json TEXT NOT NULL,
+                fetched_at REAL NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_rugcheck_report_cache_fetched
+            ON rugcheck_report_cache(fetched_at)
+        """)
+
+
+def _load_persisted_report(token_address, now):
+    """Load a fresh report from SQLite when the process-local cache is cold."""
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            row = connection.execute(
+                "SELECT report_json, analysis_json, fetched_at "
+                "FROM rugcheck_report_cache WHERE token_address = ?",
+                (token_address,),
+            ).fetchone()
+            if row is None:
+                return None
+            if now - float(row["fetched_at"]) >= _cache_ttl_seconds():
+                connection.execute(
+                    "DELETE FROM rugcheck_report_cache WHERE token_address = ?",
+                    (token_address,),
+                )
+                return None
+            report = json.loads(row["report_json"])
+            analysis = json.loads(row["analysis_json"])
+            if not isinstance(report, dict) or not isinstance(analysis, dict):
+                raise ValueError("Persisted RugCheck cache entry has invalid shape")
+            return {
+                "token_address": token_address,
+                "report": report,
+                "analysis": analysis,
+            }
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE READ ERROR:", repr(error), flush=True)
+        return None
+
+
+def _persist_report(token_address, result):
+    """Persist only successfully parsed report/analysis pairs; cache failures never block."""
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            connection.execute("""
+                INSERT INTO rugcheck_report_cache (
+                    token_address, report_json, analysis_json, fetched_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(token_address) DO UPDATE SET
+                    report_json = excluded.report_json,
+                    analysis_json = excluded.analysis_json,
+                    fetched_at = excluded.fetched_at
+            """, (
+                token_address,
+                json.dumps(result["report"], separators=(",", ":"), default=str),
+                json.dumps(result["analysis"], separators=(",", ":"), default=str),
+                time.time(),
+            ))
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE WRITE ERROR:", repr(error), flush=True)
+
+
+def _get_cached_report(token_address, now):
+    cached = _cached_report(token_address, time.monotonic())
+    if cached is not None:
+        return cached
+    persisted = _load_persisted_report(token_address, now)
+    if persisted is not None:
+        _store_cached_report(token_address, persisted)
+    return persisted
+
+
 def _cached_report(token_address, now):
     with _cache_lock:
         cached = _cache.get(token_address)
@@ -560,7 +741,7 @@ def get_rugcheck_report(token_address):
         return None
 
     token_address = token_address.strip()
-    cached = _cached_report(token_address, time.monotonic())
+    cached = _get_cached_report(token_address, time.time())
     if cached is not None:
         return cached
 
@@ -578,22 +759,21 @@ def get_rugcheck_report(token_address):
         return _cached_report(token_address, time.monotonic())
 
     try:
-        cached = _cached_report(token_address, time.monotonic())
+        cached = _get_cached_report(token_address, time.time())
         if cached is not None:
             return cached
 
         url = API_URL + token_address + "/report"
         try:
-            response = requests.get(
+            # Share the same host-wide 60/minute limiter, 429 cooldown,
+            # retry policy and request telemetry as the discovery feeds.
+            data = get_json(
                 url,
                 headers={"Accept": "application/json"},
-                timeout=REQUEST_TIMEOUT
+                timeout=REQUEST_TIMEOUT,
+                cache_ttl=0,
+                max_retries=1,
             )
-            if response.status_code == 429:
-                print("RUGCHECK: Rate limit reached")
-                return None
-            response.raise_for_status()
-            data = response.json()
             if not isinstance(data, dict):
                 print("RUGCHECK ERROR: Invalid response")
                 return None
@@ -605,6 +785,7 @@ def get_rugcheck_report(token_address):
                 "analysis": analysis
             }
             _store_cached_report(token_address, result)
+            _persist_report(token_address, result)
 
             print("================================")
             print("TROJAN V2 RUGCHECK")
@@ -642,14 +823,23 @@ def get_rugcheck_report(token_address):
 # ==========================================
 
 def clear_rugcheck_cache(token_address=None):
-
     with _cache_lock:
-
         if token_address:
             _cache.pop(token_address, None)
-
         else:
             _cache.clear()
+    try:
+        _ensure_persistent_cache_table()
+        with database.connect() as connection:
+            if token_address:
+                connection.execute(
+                    "DELETE FROM rugcheck_report_cache WHERE token_address = ?",
+                    (token_address,),
+                )
+            else:
+                connection.execute("DELETE FROM rugcheck_report_cache")
+    except Exception as error:
+        print("RUGCHECK PERSISTENT CACHE CLEAR ERROR:", repr(error), flush=True)
 
 
 # ==========================================

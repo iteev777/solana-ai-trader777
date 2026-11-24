@@ -39,6 +39,8 @@ def entry_slippage_bps(metadata=None):
     intelligence = metadata.get("entry_intelligence")
     quote = intelligence.get("quote") if isinstance(intelligence, dict) else None
     impact = quote.get("price_impact_percent") if isinstance(quote, dict) else None
+    if isinstance(impact, bool):
+        return base
     try:
         impact = float(impact)
     except (TypeError, ValueError, OverflowError):
@@ -70,6 +72,8 @@ def sell_fill_price(market_price, metadata=None):
         bps = configured_slippage_bps()
     else:
         try:
+            if isinstance(stored, bool):
+                raise ValueError
             value = float(stored)
             if not math.isfinite(value):
                 raise ValueError

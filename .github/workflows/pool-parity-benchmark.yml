@@ -1,0 +1,59 @@
+name: Pool RPC parity benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pool-rpc-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+      SOLANA_RPC_TIMEOUT: "12"
+    steps:
+      - name: Checkout Trojan V2
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Trojan dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build persistent Rust RPC sidecar
+        run: cargo build --release --manifest-path benchmarks/rust_rpc/Cargo.toml --bin rpc_sidecar
+
+      - name: Prepare common pool workload and measure Trojan
+        run: python benchmarks/pool_rpc_parity.py
+
+      - name: Measure Trojan through the Rust sidecar
+        env:
+          TROJAN_RUST_RPC_BIN: benchmarks/rust_rpc/target/release/rpc_sidecar
+          SOLANA_RPC_MIN_INTERVAL: "0.0"
+        run: python benchmarks/rust_rpc/sidecar_smoke.py
+
+      - name: Measure ScreenerBot-compatible Rust RPC fetcher
+        run: cargo run --release --manifest-path benchmarks/rust_rpc/Cargo.toml -- benchmark_accounts.json > rust-rpc-stdout.json
+
+      - name: Publish benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pool-rpc-parity-${{ github.run_id }}
+          path: |
+            python-pool-benchmark.json
+            rust-rpc-benchmark.json
+            benchmark_accounts.json
+            rust-rpc-stdout.json
+            rust-sidecar-benchmark.json
+          if-no-files-found: warn

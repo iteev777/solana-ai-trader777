@@ -2,6 +2,11 @@
 
 A multi-source Solana token scanner with a dip-reversal entry model, multi-timeframe technical analysis, owner-verified on-chain pricing, and rapid paper-position management.
 
+
+
+### DEX order and wallet execution adapter
+
+See [DEX_EXECUTION.md](DEX_EXECUTION.md) for the non-custodial Jupiter Swap API V2 order flow, wallet-signing handoff, and execution safety gates. Execution is disabled by default.
 ## Current operating mode
 
 - **Paper trading only.** Real-money execution remains locked.
@@ -104,13 +109,13 @@ Copy-wallet tracking reads public wallet activity, stores unique signatures in S
 
 ## Jupiter route intelligence
 
-Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. Signing, transaction simulation and broadcast remain disabled in code.
+Trojan uses Jupiter Swap API v2 `/order` in quote-only mode (no taker address and no transaction request). Each quote records provider/router, route venues and hop count, split-route details, platform fee basis points, price impact, minimum output, quote latency and context slot. The dashboard/API integration can use this data for route-quality review; quote preparation does not authorize execution. Configure `JUPITER_API_KEY` for authenticated production rate limits and optionally override `TROJAN_JUPITER_ORDER_URL`. This quote-only paper pre-entry path does not request a transaction. Native protocol order preparation is documented in `docs/NATIVE_EXECUTION.md`; its broadcast path is code-hard-locked and cannot be enabled by an environment variable.
 
 ## Safety-gated DEX route engine
 
-The dashboard exposes `/api/dex-status` and `/api/dex-route`. The route engine fans out to the existing Jupiter, Solana Tracker Raptor and verified direct-pool quote adapters, then rejects candidates with stale/unknown freshness, unavailable or excessive price impact, excessive hop count, malformed minimum output, wrong output mint or a failed route-quality check. Eligible routes are ranked by minimum output in the same requested output mint's raw units. Network fees denominated in SOL are reported separately and are not incorrectly subtracted from another token's base units.
+The dashboard exposes `/api/dex-status` and `/api/dex-route`. When no pool address is supplied, the route engine automatically discovers up to 20 matching pools from both token sides of the multi-source pool registry, queues rate-limited background refreshes, and compares those verified direct-pool quotes with Jupiter and Solana Tracker Raptor in parallel. Explicit comma-separated `pool_address` values remain supported. Candidates with stale/unknown freshness, unavailable or excessive price impact, excessive hop count, malformed minimum output, wrong output mint or failed route-quality checks are rejected. Eligible routes are ranked by minimum output in the requested output mint's raw units; network costs are deducted only when an explicit estimate in that same output mint is supplied. Unpriced network costs are surfaced as a ranking caveat.
 
-Optional limits: `TROJAN_DEX_MAX_QUOTE_AGE_SECONDS=8`, `TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT=3`, and `TROJAN_DEX_MAX_HOPS=4`. Unknown quote freshness and unknown price impact fail closed. This is route selection only: transaction signing, broadcast and live trading remain disabled.
+Optional limits: `TROJAN_DEX_MAX_QUOTE_AGE_SECONDS=8`, `TROJAN_DEX_MAX_PRICE_IMPACT_PERCENT=3`, and `TROJAN_DEX_MAX_HOPS=4`. Unknown quote freshness and unknown price impact fail closed. This is route selection only; the server never signs. Native broadcast is a separate single-use, simulation-bound endpoint gated off by default and requiring explicit confirmation; see `docs/NATIVE_EXECUTION.md`.
 
 
 
@@ -129,7 +134,7 @@ The dashboard exposes `/api/readiness`, `/api/copy-trades`, `/api/filtering`, an
 
 ## Automated safety tests
 
-Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. GitHub Actions runs the same suite on feature-branch pushes and pull requests.
+Run `python -m unittest discover -s tests -v` to check the risk caps, malformed market-data rejection, and the DexScreener base-token price invariant. During the current ScreenerBot parity audit, GitHub Actions tests are manual-only; the complete suite is intentionally deferred until the whole bot review is finished. See [TEST_READINESS.md](docs/TEST_READINESS.md) for the final test gate and safety requirements. Live trading remains locked.
 
 
 ## Pre-entry routing, unsigned simulation and token security
@@ -210,7 +215,7 @@ Pool RPC transport failures (timeouts, provider outages and rate limits) are kep
 
 ## Multi-stage token discovery and candidate ranking
 
-Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata.
+Trojan V2 combines independent Solana discovery feeds (DexScreener profiles/boosts/community takeovers, GeckoTerminal new and trending pools, Birdeye listings/trending, PumpPortal new-token stream, RugCheck feeds, Jupiter token lists, CoinGecko Solana metadata and DeFiLlama protocol metadata). Results are deduplicated by mint while preserving source provenance and pool metadata. Mint validation checks base58 shape and decodes the address as a 32-byte Solana `Pubkey`, matching ScreenerBot's strict chain-adapter validation; SOL/WSOL, the System Program, USDC and USDT are excluded. Duplicate mints merge source provenance and metadata without overwriting good values. Candidates are ranked by independent provider corroboration, feed count and discovery time, capped at 500 per scan, and upserted into SQLite `discovery_candidates` with first/last-seen timestamps and observation counts. RugCheck discovery runs its `new_tokens`, `recent`, `trending` and `verified` endpoints as separate parallel feeds with independent health records. Configure them with `TROJAN_RUGCHECK_ENABLED` and the per-feed switches `TROJAN_RUGCHECK_NEW_ENABLED`, `TROJAN_RUGCHECK_RECENT_ENABLED`, `TROJAN_RUGCHECK_TRENDING_ENABLED` and `TROJAN_RUGCHECK_VERIFIED_ENABLED` (all default to true). Jupiter runs `recent`, `toporganicscore/1h`, `toptraded/1h` and `toptrending/1h` as four independent feeds (`TROJAN_JUPITER_ENABLED`, `TROJAN_JUPITER_RECENT_ENABLED`, `TROJAN_JUPITER_ORGANIC_ENABLED`, `TROJAN_JUPITER_TRADED_ENABLED`, `TROJAN_JUPITER_TRENDING_ENABLED`). CoinGecko and DeFiLlama are separately switchable with `TROJAN_COINGECKO_ENABLED` / `TROJAN_COINGECKO_MARKETS_ENABLED` and `TROJAN_DEFILLAMA_ENABLED` / `TROJAN_DEFILLAMA_PROTOCOLS_ENABLED`. Provider transport and invalid-payload errors propagate into per-feed health instead of being counted as empty successful scans.
 
 Before scheduling analysis, the discovery loop fills missing market-data snapshots in bounded batches and ranks candidates using liquidity, 5m/1h/6h/24h volume, buy/sell flow, source agreement, pool age, and multi-window momentum. Candidate tiers (strong/watch/weak/reject) are exposed through `/api/discovery` and the dashboard. Incomplete data remains visible as unknown and is not silently converted into a rejection. Only explicit invalid market facts (for example zero liquidity or a non-positive quoted price) are hard-rejected by this ranking stage. Scores are prioritisation signals, not buy signals, and do not unlock live trading.
 
@@ -238,6 +243,25 @@ Optional Railway variables (unset defaults preserve the current strategy behavio
 
 Thresholds should be calibrated from paper-trading evidence before being tightened. A filter pass is not a buy signal; strategy, RugCheck, on-chain security, route quality and risk checks remain separate gates.
 
+
+## Pump.fun trade-window observation
+
+The optional candidate observer mirrors the reference bot's short live-trade observation stage. For supported Pump.fun/PumpPortal candidates it records buy/sell events during a bounded window and evaluates trade count, distinct buyers, buy volume, buy/sell ratio, largest-buyer concentration and price movement. A failed observation returns an auditable WAIT result and is retried inside the candidate's normal discovery window. Observation metrics are attached to the candidate result and exposed in the authenticated dashboard at `/api/observation`.
+
+This feed is deliberately **off by default** because PumpPortal token-trade subscriptions are metered. To opt in, configure `PUMPPORTAL_API_KEY` and explicitly set `TROJAN_PUMPPORTAL_OBSERVATION_ENABLED=true`. PumpPortal requires a linked wallet with at least 0.02 SOL for trade subscriptions and currently meters delivered trade events at 0.01 SOL per 10,000 events. Start with a small observation window and review provider usage before increasing concurrent candidates. The bot uses the existing single PumpPortal WebSocket; it does not open one connection per token.
+
+Optional limits (bounded in code):
+- `TROJAN_OBSERVATION_DURATION_SECONDS` (default 20; 5–180)
+- `TROJAN_OBSERVATION_MAX_CONCURRENT` (default 24; 1–200)
+- `TROJAN_OBSERVATION_MIN_TRADES` (default 5)
+- `TROJAN_OBSERVATION_MIN_UNIQUE_BUYERS` (default 3)
+- `TROJAN_OBSERVATION_MIN_BUY_VOLUME_SOL` (default 0.5)
+- `TROJAN_OBSERVATION_MIN_BUY_SELL_RATIO` (default 1.25)
+- `TROJAN_OBSERVATION_MAX_SINGLE_BUYER_PCT` (default 60)
+- `TROJAN_OBSERVATION_MIN_PRICE_CHANGE_PCT` (default -2)
+- `TROJAN_OBSERVATION_MIN_SCORE` (default 55)
+
+The observation stage is not a trade executor. It does not sign, submit or broadcast transactions. Non-PumpPortal sources continue through the existing multi-window market filters, technical indicators, route-quality checks and risk gates; the observer does not invent buyer-level data for unsupported venues.
 
 ## Named strategy conditions
 
@@ -324,7 +348,7 @@ Missing essential RugCheck inputs still produce UNKNOWN and cannot pass the exis
 
 ## Dynamic copy-wallet watchlist
 
-The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite schema v7 and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass wallet-specific risk limits and the conservative swap-event classifier.
+The dashboard System page can add and remove public Solana wallet addresses without editing Railway variables. The list is persisted in SQLite schema v7 and merged with the legacy `TROJAN_COPY_WALLETS` environment list, with a hard cap of 20 active addresses. Dashboard-managed addresses are base58/32-byte validated; environment-managed addresses are displayed as read-only and must be changed in environment configuration. The WebSocket monitor compares the effective list while running and reconnects its subscriptions when the list changes. Copy monitoring remains read-only; paper-copy signals still pass wallet-specific risk limits and the conservative swap-event classifier. The monitor also polls `getSignaturesForAddress` at `TROJAN_COPY_POLL_INTERVAL_SECONDS` (default 30 seconds, allowed 5–300) to recover events missed during WebSocket gaps. It pages up to five batches per wallet per poll and persists a per-wallet signature cursor in SQLite; interrupted catch-up ranges are replayed oldest-first and deduplicated before the cursor advances. `TROJAN_COPY_POLL_SIGNATURE_LIMIT` sets the page size (default 100, maximum 1,000). Catch-up memory is capped at 5,000 signatures and at 20 polls; if a backlog remains oversized, the monitor explicitly skips to the newest known signature and reports `catchup_skips`/`skipped_signatures` rather than growing memory without bound. The first run deliberately establishes a bounded recent baseline rather than copying the wallet's lifetime history. Stale recovered events may be recorded for observation but cannot be mirrored into paper trades. This is bounded, resumable catch-up, not an unlimited historical import.
 
 ## Extended metadata and market bounds
 
@@ -346,7 +370,7 @@ The current adapter deliberately uses the highest total fee found across the on-
 
 ## RugCheck request resilience
 
-RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used cache, and measures cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 60 seconds, accepted range 0–3,600; set 0 to disable caching). Failed, rate-limited and invalid responses are never cached, and stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
+RugCheck report retrieval coalesces simultaneous requests for the same mint into one upstream request, uses a bounded 2,000-entry least-recently-used memory cache plus a persistent SQLite report cache, and measures in-process cache age with a monotonic clock. Cache lifetime is configurable with `TROJAN_RUGCHECK_CACHE_SECONDS` (default 1,800 seconds, accepted range 0–3,600; set 0 to disable caching). Report lookups and all four discovery feeds share the API client's host-wide 60-requests-per-minute budget, 429 cooldown and retry handling. Failed, rate-limited and invalid responses are never cached, and expired/stale PASS reports are not used as a fallback when the provider is unavailable. This reduces duplicate provider load without weakening the fail-closed security decision.
 
 
 ## Paper position input safety
@@ -446,3 +470,25 @@ The read-only Dynamic Bonding Curve adapter decodes the VirtualPool and PoolConf
 ## Meteora DLMM direct quote adapter
 
 The read-only DLMM adapter decodes the LbPair, confirmed Clock timestamp, reserve vaults and up to three consecutive directional BinArrays. It walks each bin using the on-chain Q64.64 bin price and market-making reserves, updates the volatility reference/accumulator between bins, applies the base plus variable fee with the pool's InputOnly or OnlyY collection mode, and subtracts accrued protocol fees from the spendable output reserve. Quotes fail closed if the active array is unavailable, the amount exceeds loaded-array coverage, the pair is disabled, fee parameters are invalid or the mint uses Token-2022. Limit-order liquidity and Token-2022 transfer extensions are not included in this direct quote adapter. No instruction is built or signed.
+
+## Native Raydium CPMM transaction preparation
+
+Trojan now has an unsigned Raydium CPMM SwapBaseInput builder. It re-quotes
+from confirmed pool state, checks the pool/config/vault/mint/user-account and
+observation relationships, compiles a legacy transaction for external wallet
+signing, and requires a successful unsigned RPC simulation before returning
+the transaction through the authenticated dashboard API. Legacy SPL Token
+only; Token-2022 and automatic ATA creation remain refused. The server never
+signs; any broadcast requires the separate default-off native execution gate
+and explicit confirmation. See `docs/RAYDIUM_CPMM_BUILDER.md` and
+`docs/NATIVE_EXECUTION.md`.
+
+## Native PumpSwap V2 transaction preparation
+
+Trojan can also prepare native PumpSwap V2 exact-quote-in buys and exact-base-in
+sells using the current official 17-account IDL. It re-quotes from confirmed
+state, verifies canonical pool/config PDAs, token accounts and the live
+buyback-recipient ATA, then simulates an unsigned transaction before returning
+it. This path currently refuses Token-2022, mayhem, cashback and holder-reward
+pools; it requires existing user token accounts and a pre-existing buyback ATA.
+Native signing is never performed by the server. An externally signed transaction can only be broadcast through the separate single-use, simulation-bound gate; `TROJAN_NATIVE_EXECUTE_ENABLED` defaults to false and explicit confirmation is required. See `docs/PUMPSWAP_V2_BUILDER.md` and `docs/NATIVE_EXECUTION.md`.

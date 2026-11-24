@@ -11,6 +11,13 @@ def _indicator_max_age():
         return 180.0
     return value if math.isfinite(value) and 30.0 <= value <= 3600.0 else 180.0
 
+def _evaluation_timeout_ms():
+    try:
+        value = float(os.getenv("TROJAN_STRATEGY_EVALUATION_TIMEOUT_MS", "50"))
+    except (TypeError, ValueError, OverflowError):
+        return 50
+    return int(value) if math.isfinite(value) and 1.0 <= value <= 1000.0 else 50
+
 
 PRESETS = {
     "momentum_confirmation": {
@@ -48,6 +55,13 @@ def get_strategy_catalog():
         "presets": PRESETS,
         "timeframes": ["1m", "5m", "15m", "1h", "4h", "12h", "1d"],
         "logic": ["all", "any", "not"],
+        "evaluation_policy": {
+            "timeout_ms": _evaluation_timeout_ms(),
+            "max_concurrent_evaluations": strategy_rules.MAX_CONCURRENT_EVALUATIONS,
+            "maximum_rule_depth": 4,
+            "maximum_group_children": 30,
+            "missing_data": "unknown_fail_closed",
+        },
         "paper_validation_recommended": True,
         "indicator_freshness": {
             "enabled": True,

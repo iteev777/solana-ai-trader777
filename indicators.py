@@ -33,6 +33,7 @@ MIN_FETCH_INTERVAL = _minimum_fetch_interval()
 TIMEFRAME = "minute"
 AGGREGATE = 1
 CANDLE_LIMIT = 1000
+MAX_HISTORY_CANDLES = 43200
 
 
 def _cache_get(key, now=None):
@@ -282,9 +283,17 @@ def aggregate_candles(candles, interval_seconds):
     ]
 
 
+# Match ScreenerBot's seven public chart/analysis timeframes. All views
+# are derived from the same validated 1m source series; coarse frames remain
+# explicitly not-ready when the available history is too short.
 TIMEFRAMES = {
-    "1m": 60, "3m": 180, "5m": 300, "15m": 900,
-    "30m": 1800, "1h": 3600, "4h": 14400
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "12h": 43200,
+    "1d": 86400,
 }
 
 
@@ -294,7 +303,18 @@ def calculate_multi_timeframe_indicators(candles):
     Higher timeframes remain explicitly not-ready until enough complete
     aggregate candles exist; no synthetic history or forward filling is used.
     """
-    normalized, quality = normalize_ohlcv_rows(candles)
+    normalized, history_quality = normalize_ohlcv_rows(candles)
+    # The retained history can contain old gaps or stale edges. Live readiness
+    # is judged from the newest API-sized window; older history still feeds
+    # complete higher-timeframe indicator series. Preserve validation counters
+    # from the original input: re-validating only normalized rows would erase
+    # evidence of malformed and duplicate source candles.
+    _, quality = normalize_ohlcv_rows(normalized[-CANDLE_LIMIT:])
+    quality["input_count"] = history_quality["input_count"]
+    quality["invalid_count"] = history_quality["invalid_count"]
+    quality["duplicate_count"] = history_quality["duplicate_count"]
+    if history_quality["invalid_count"] and not quality.get("reason"):
+        quality["reason"] = "Invalid OHLCV rows were discarded"
     arrays = [
         [row["timestamp"], row["open"], row["high"], row["low"], row["close"], row["volume"]]
         for row in normalized
@@ -303,7 +323,7 @@ def calculate_multi_timeframe_indicators(candles):
     ready_trends = []
     for name, seconds in TIMEFRAMES.items():
         aggregated = arrays if name == "1m" else aggregate_candles(arrays, seconds)
-        result = calculate_indicators(aggregated)
+        result = calculate_indicators(aggregated[-CANDLE_LIMIT:])
         result["timeframe"] = name
         if result.get("ready") and not quality["ready"]:
             result["ready"] = False
@@ -368,13 +388,16 @@ def fetch_pool_indicators(pool_address, force=False):
         attributes = data.get("attributes", {}) if isinstance(data, dict) else {}
         raw = attributes.get("ohlcv_list", [])
         normalized, _quality = normalize_ohlcv_rows(raw)
-        indicators = calculate_multi_timeframe_indicators(normalized)
-        indicators["pool_address"] = key
-        _cache_put(key, indicators)
+        history = normalized
         if normalized:
             try:
                 import database
                 database.save_market_candles(key, "1m", normalized)
+                persisted = database.get_market_candles(
+                    key, "1m", limit=MAX_HISTORY_CANDLES
+                )
+                if persisted:
+                    history, _history_quality = normalize_ohlcv_rows(persisted)
                 now = time.monotonic()
                 if now - _last_prune >= 3600:
                     try:
@@ -386,6 +409,9 @@ def fetch_pool_indicators(pool_address, force=False):
                     _last_prune = now
             except Exception as error:
                 print("[TROJAN V2] OHLCV STORAGE WARNING:", type(error).__name__, flush=True)
+        indicators = calculate_multi_timeframe_indicators(history)
+        indicators["pool_address"] = key
+        _cache_put(key, indicators)
         return indicators
     except Exception as error:
         return {"ready": False, "pool_address": key, "reason": str(error)[:220]}

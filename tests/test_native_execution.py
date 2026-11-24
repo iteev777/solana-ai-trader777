@@ -1,0 +1,392 @@
+import base64
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import native_execution as native
+import dex_capabilities as capabilities
+import raydium_cpmm_builder as builder
+import solana_onchain as chain
+
+
+def key(byte):
+    return chain._b58encode(bytes([byte]) * 32)
+
+
+class NativeExecutionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_db = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_db.cleanup)
+        self.db_patch = patch.object(
+            native.database, "DATABASE",
+            os.path.join(self.temp_db.name, "native-approvals.sqlite3"),
+        )
+        self.db_patch.start()
+        self.addCleanup(self.db_patch.stop)
+        native._ensure_approval_table()
+        with native.database.connect() as connection:
+            connection.execute("DELETE FROM native_transaction_approvals")
+        self.wallet = key(1)
+        self.program = key(2)
+        self.account = key(3)
+        self.blockhash = key(4)
+        self.signature = bytes([7]) * 64
+        unsigned, _ = builder._compile_legacy_message(
+            self.wallet,
+            self.blockhash,
+            self.program,
+            [{"pubkey": self.account, "is_writable": True}],
+            b"test-instruction",
+        )
+        self.unsigned = base64.b64encode(unsigned).decode("ascii")
+        signed = bytearray(unsigned)
+        signed[1:65] = self.signature
+        self.signed = base64.b64encode(bytes(signed)).decode("ascii")
+        self.expected_signature = chain._b58encode(self.signature)
+
+    def test_cannot_register_approval_without_unsigned_simulation_pass(self):
+        with self.assertRaisesRegex(ValueError, "successful unsigned RPC simulation"):
+            native.register_native_approval(
+                self.unsigned, "raydium_cpmm", 200,
+                {"status": "REJECT", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+
+    def test_meteora_damm_v2_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "meteora_damm_v2", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("meteora_damm_v2", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_every_registered_native_builder_has_an_approval_protocol(self):
+        supported = set(native.get_native_execution_status()["supported_protocols"])
+        for protocol in capabilities.NATIVE_BUILDERS:
+            with self.subTest(protocol=protocol):
+                self.assertIn(protocol, supported)
+                approval = native.register_native_approval(
+                    self.unsigned, protocol, 200,
+                    {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+                )
+                self.assertTrue(approval["request_id"])
+
+    def test_pumpswap_v2_approval_matches_registered_builder_protocol(self):
+        approval = native.register_native_approval(
+            self.unsigned, "pumpswap_v2", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        self.assertIn("pumpswap_v2", native.get_native_execution_status()["supported_protocols"])
+
+    def test_pumpfun_legacy_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "pumpfun_legacy", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("pumpfun_legacy", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_moonit_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "moonit_amm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("moonit_amm", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_fluxbeam_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "fluxbeam_amm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("fluxbeam_amm", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_raydium_amm_v4_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_amm_v4", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("raydium_clmm", status["supported_protocols"])
+        self.assertIn("meteora_dbc", status["supported_protocols"])
+        self.assertIn("raydium_amm_v4", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_meteora_dbc_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "meteora_dbc", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("meteora_dbc", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_orca_whirlpool_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "orca_whirlpool", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("orca_whirlpool", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_meteora_dlmm_approval_is_registered_but_stays_gated(self):
+        approval = native.register_native_approval(
+            self.unsigned, "meteora_dlmm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        self.assertTrue(approval["request_id"])
+        status = native.get_native_execution_status()
+        self.assertIn("meteora_dlmm", status["supported_protocols"])
+        self.assertFalse(status["server_signing"])
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            self.assertFalse(native.get_native_execution_status()["broadcast_available"])
+
+    def test_broadcast_requires_environment_gate(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            with self.assertRaises(native.NativeExecutionLocked):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+
+    def test_broadcast_requires_explicit_confirmation(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        with patch.object(native, "_enabled", return_value=True):
+            with self.assertRaises(native.NativeExecutionLocked):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=False
+                )
+
+    def test_successful_external_signature_is_simulated_then_broadcast_once(self):
+        approval = native.register_native_approval(
+            self.unsigned, "pumpswap", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        def rpc(method, params):
+            if method == "getBlockHeight":
+                return 150
+            if method == "simulateTransaction":
+                self.assertTrue(params[1]["sigVerify"])
+                return {"value": {"err": None, "unitsConsumed": 90000}}
+            if method == "sendTransaction":
+                self.assertFalse(params[1]["skipPreflight"])
+                return self.expected_signature
+            raise AssertionError(method)
+
+        with patch.object(native, "_enabled", return_value=True), \
+             patch.object(chain, "_rpc", side_effect=rpc) as mocked:
+            result = native.execute_native_signed_transaction(
+                self.signed, approval["request_id"], confirmed=True
+            )
+        self.assertTrue(result["submitted"])
+        self.assertFalse(result["confirmed"])
+        self.assertEqual(result["status"], "SUBMITTED_NOT_CONFIRMED")
+        self.assertEqual(result["protocol"], "pumpswap")
+        self.assertEqual(mocked.call_count, 4)
+
+    def test_approval_is_single_use(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        def rpc(method, params):
+            if method == "getBlockHeight":
+                return 150
+            if method == "simulateTransaction":
+                return {"value": {"err": None}}
+            if method == "sendTransaction":
+                return self.expected_signature
+        with patch.object(native, "_enabled", return_value=True), \
+             patch.object(chain, "_rpc", side_effect=rpc):
+            native.execute_native_signed_transaction(
+                self.signed, approval["request_id"], confirmed=True
+            )
+            with self.assertRaisesRegex(ValueError, "missing, expired or already consumed"):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+
+    def test_wrong_message_does_not_consume_persistent_approval(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        changed = bytearray(base64.b64decode(self.signed))
+        changed[-1] ^= 1
+        with self.assertRaisesRegex(ValueError, "differs from the simulated approval"):
+            native.consume_native_approval(
+                base64.b64encode(changed).decode("ascii"), approval["request_id"]
+            )
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["protocol"], "raydium_cpmm")
+        with self.assertRaisesRegex(ValueError, "missing, expired or already consumed"):
+            native.consume_native_approval(self.signed, approval["request_id"])
+
+    def test_persistent_approval_survives_process_local_state_reset(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200,
+            {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+        )
+        # The approval lives in SQLite, not an in-memory dictionary.
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["message_sha256"], approval["message_sha256"])
+
+    def test_rejects_message_modified_after_simulation(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        changed = bytearray(base64.b64decode(self.signed))
+        changed[-1] ^= 1
+        with patch.object(native, "_enabled", return_value=True):
+            with self.assertRaisesRegex(ValueError, "differs from the simulated approval"):
+                native.execute_native_signed_transaction(
+                    base64.b64encode(changed).decode("ascii"),
+                    approval["request_id"],
+                    confirmed=True,
+                )
+
+    def test_rejects_expired_blockhash(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 100, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        with patch.object(native, "_enabled", return_value=True), \
+             patch.object(chain, "_rpc", return_value=101):
+            with self.assertRaisesRegex(ValueError, "blockhash has expired"):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+
+    def test_signed_simulation_failure_never_broadcasts(self):
+        approval = native.register_native_approval(
+            self.unsigned, "pumpswap", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        with patch.object(native, "_enabled", return_value=True), \
+             patch.object(chain, "_rpc", side_effect=[
+                 150, {"value": {"err": {"InstructionError": [0, "Custom"]}}}
+             ]) as rpc:
+            with self.assertRaisesRegex(ValueError, "simulation failed"):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+        self.assertEqual(rpc.call_count, 2)
+
+    def test_rejects_zero_signature(self):
+        approval = native.register_native_approval(
+            self.unsigned, "raydium_cpmm", 200, {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"}
+        )
+        with patch.object(native, "_enabled", return_value=True):
+            with self.assertRaisesRegex(ValueError, "signature is missing"):
+                native.execute_native_signed_transaction(
+                    self.unsigned, approval["request_id"], confirmed=True
+                )
+
+    def test_signature_status_reports_confirmed_and_failed_states(self):
+        with patch.object(chain, "_rpc", return_value={"value": [{
+            "err": None, "confirmationStatus": "confirmed",
+            "slot": 123, "confirmations": 2
+        }]}):
+            result = native.get_native_transaction_status(self.expected_signature)
+        self.assertEqual(result["status"], "CONFIRMED")
+        self.assertTrue(result["confirmed"])
+        self.assertFalse(result["finalized"])
+
+        with patch.object(chain, "_rpc", return_value={"value": [{
+            "err": {"InstructionError": [0, "Custom"]},
+            "confirmationStatus": "confirmed", "slot": 124,
+            "confirmations": None
+        }]}):
+            failed = native.get_native_transaction_status(self.expected_signature)
+        self.assertEqual(failed["status"], "FAILED")
+        self.assertFalse(failed["confirmed"])
+
+    def test_signature_status_rejects_invalid_signature(self):
+        with self.assertRaisesRegex(ValueError, "64 bytes"):
+            native.get_native_transaction_status("1")
+
+    def test_environment_variable_cannot_remove_code_level_broadcast_lock(self):
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "true"}):
+            status = native.get_native_execution_status()
+            self.assertTrue(status["code_hard_lock"])
+            self.assertTrue(status["unlock_requires_reviewed_code_release"])
+            self.assertFalse(status["enabled"])
+            self.assertFalse(status["broadcast_available"])
+            with self.assertRaises(native.NativeExecutionLocked):
+                native.execute_native_signed_transaction(
+                    self.signed, "nonexistent-request", confirmed=True
+                )
+
+    def test_devnet_protocol_is_disabled_unless_explicitly_enabled(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "false"}):
+            with self.assertRaisesRegex(ValueError, "Devnet test protocol is disabled"):
+                native.register_native_approval(
+                    self.unsigned, "devnet_system_transfer", 200,
+                    {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+                )
+
+    def test_devnet_approval_uses_shared_single_use_signature_verification(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "true"}):
+            approval = native.register_native_approval(
+                self.unsigned, "devnet_system_transfer", 200,
+                {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+        consumed = native.consume_native_approval(self.signed, approval["request_id"])
+        self.assertEqual(consumed["protocol"], "devnet_system_transfer")
+        self.assertEqual(consumed["signature"], self.signature)
+        self.assertEqual(consumed["message_sha256"], approval["message_sha256"])
+        with self.assertRaisesRegex(ValueError, "missing, expired or already consumed"):
+            native.consume_native_approval(self.signed, approval["request_id"])
+
+    def test_devnet_test_protocol_cannot_enter_native_live_execution_path(self):
+        with patch.dict(os.environ, {"TROJAN_DEVNET_E2E_ENABLED": "true"}):
+            approval = native.register_native_approval(
+                self.unsigned, "devnet_system_transfer", 200,
+                {"status": "PASS", "signature_verification": "DISABLED_UNSIGNED_SIMULATION"},
+            )
+        with patch.object(native, "_enabled", return_value=True):
+            with self.assertRaisesRegex(ValueError, "cannot enter the native live execution path"):
+                native.execute_native_signed_transaction(
+                    self.signed, approval["request_id"], confirmed=True
+                )
+        self.assertTrue(native.NATIVE_BROADCAST_HARD_LOCK)
+
+    def test_status_reports_live_execution_locked_by_default(self):
+        with patch.dict(os.environ, {"TROJAN_NATIVE_EXECUTE_ENABLED": "false"}):
+            status = native.get_native_execution_status()
+        self.assertFalse(status["enabled"])
+        self.assertFalse(status["broadcast_available"])
+        self.assertFalse(status["server_signing"])
+        self.assertEqual(status["approval_ttl_seconds"], 120)
+
+
+if __name__ == "__main__":
+    unittest.main()

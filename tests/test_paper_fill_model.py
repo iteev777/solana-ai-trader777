@@ -104,6 +104,13 @@ class PaperFillIntegrationTests(unittest.TestCase):
         }
         with (
             patch.object(paper_trading, "refresh_account"),
+            patch.object(paper_trading, "balance", 100.0),
+            patch.object(paper_trading, "_dca_in_flight", set()),
+            patch.object(paper_trading, "get_dca_policy", return_value={
+                "enabled": True, "steps": [{"drop_pct": 5, "add_usd": 2.5}],
+                "measure_from": "average", "cooldown_minutes": 0,
+                "min_hold_minutes": 0, "price_max_age_seconds": 30,
+            }),
             patch.object(paper_trading, "get_dca_steps", return_value=[{"drop_pct": 5, "add_usd": 2.5}]),
             patch.object(paper_trading.exit_policy, "get_exit_policy", return_value={"stop_loss_pct": 9}),
             patch.object(paper_trading, "get_exit_steps", return_value=[]),
@@ -111,9 +118,9 @@ class PaperFillIntegrationTests(unittest.TestCase):
             patch.object(paper_trading.database, "update_position_metadata"),
             patch.dict(os.environ, {"TROJAN_PAPER_SLIPPAGE_BPS": "25"}),
         ):
-            result = paper_trading.update_position("MintDca", 95.0)
+            result = paper_trading.update_position("MintDca", 94.0, price_timestamp=__import__("time").time())
         self.assertEqual(result["slippage_bps"], 25)
-        self.assertAlmostEqual(add.call_args.args[2], 95.2375)
+        self.assertAlmostEqual(add.call_args.args[2], 94.235)
 
     def test_partial_exit_books_worse_sell_price(self):
         paper_trading.positions = {
@@ -125,7 +132,11 @@ class PaperFillIntegrationTests(unittest.TestCase):
         }
         with (
             patch.object(paper_trading, "refresh_account"),
-            patch.object(paper_trading, "get_dca_steps", return_value=[]),
+            patch.object(paper_trading, "get_dca_policy", return_value={
+                "enabled": False, "steps": [], "measure_from": "average",
+                "cooldown_minutes": 60, "min_hold_minutes": 0,
+                "price_max_age_seconds": 30,
+            }),
             patch.object(paper_trading.exit_policy, "get_exit_policy", return_value={"stop_loss_pct": 9}),
             patch.object(paper_trading, "get_exit_steps", return_value=[{"profit_pct": 5, "sell_fraction": 0.5}]),
             patch.object(paper_trading.database, "update_position_metadata"),

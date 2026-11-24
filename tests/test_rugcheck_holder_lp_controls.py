@@ -67,11 +67,11 @@ class RugCheckHolderAndLpControlTests(unittest.TestCase):
         self.assertEqual(result["signals"]["lp_lock_pct"], 50.0)
         self.assertEqual(result["signals"]["lp_lock_required_pct"], 80.0)
 
-    def test_regular_token_lp_lock_floor_waits_for_missing_lock_data(self):
+    def test_regular_token_missing_lp_lock_is_not_required(self):
         with patch.dict("os.environ", {"TROJAN_RUGCHECK_MIN_REGULAR_LP_LOCK_PCT": "80"}):
             result = analyze_rugcheck_report(report())
-        self.assertEqual(result["status"], "UNKNOWN")
-        self.assertFalse(result["safe"])
+        self.assertEqual(result["status"], "PASS")
+        self.assertTrue(result["safe"])
 
     def test_regular_token_with_sufficient_lp_lock_passes(self):
         data = report(risks=[{

@@ -12,6 +12,7 @@ import time
 from urllib.parse import urlencode
 
 import requests
+from quote_errors import classify_quote_error
 
 RAPTOR_BASE_URL = os.getenv(
     "TROJAN_RAPTOR_BASE_URL", "https://raptor.solanatracker.io"
@@ -149,10 +150,15 @@ def _raptor(input_mint, output_mint, amount, slippage_bps):
 
 
 def _failed(provider, error):
+    failure = classify_quote_error(provider, error)
     return {
         "provider": provider,
-        "status": "UNAVAILABLE",
-        "reason": (str(error) or type(error).__name__)[:220],
+        "status": failure["kind"],
+        "reason": failure["detail"],
+        "error": failure,
+        "retryable": failure["retryable"],
+        "retry_after_seconds": failure["retry_after_seconds"],
+        "http_status": failure["http_status"],
         "out_amount": None,
         "minimum_out_amount": None,
     }

@@ -25,8 +25,8 @@ def _setting(name, default, minimum=0.0, maximum=None):
     return value
 
 
-def _trailing_bands():
-    """Return ordered peak-profit thresholds with progressively tighter trails."""
+def _trailing_bands(base_activation):
+    """Return ordered peak-profit bands, each armed above the base threshold."""
     raw = os.getenv("TROJAN_TRAILING_BANDS_JSON", "").strip()
     if not raw:
         return []
@@ -37,20 +37,18 @@ def _trailing_bands():
     if not isinstance(rows, list) or len(rows) > 10:
         raise ValueError("TROJAN_TRAILING_BANDS_JSON must be a list of at most 10 bands")
     result = []
-    previous_activation = -1.0
-    previous_distance = 95.0
+    previous_activation = base_activation
     for row in rows:
         if not isinstance(row, dict):
             raise ValueError("Trailing band must be an object")
         activation = _setting_value(row.get("activation_pct"), "trailing activation", 0.0, 10000.0)
         distance = _setting_value(row.get("distance_pct"), "trailing distance", 0.1, 95.0)
         if activation <= previous_activation:
-            raise ValueError("Trailing band activations must be strictly increasing")
-        if distance > previous_distance:
-            raise ValueError("Trailing distance must stay equal or tighten at higher profit bands")
+            raise ValueError("Trailing band activations must increase above the base activation")
+        if distance >= activation:
+            raise ValueError("Trailing band distance must be below its activation threshold")
         result.append({"activation_pct": activation, "distance_pct": distance})
         previous_activation = activation
-        previous_distance = distance
     return result
 
 
@@ -65,20 +63,47 @@ def _setting_value(value, label, minimum, maximum):
 
 
 def get_exit_policy():
-    """Read bounded exit settings; defaults preserve Trojan's existing behavior."""
+    """Read bounded exit settings and reject internally impossible rule policies."""
+    trailing_activation = _setting(
+        "TROJAN_TRAILING_ACTIVATION_PCT", 4.0, 0.0, 10000.0
+    )
+    trailing_distance = _setting(
+        "TROJAN_TRAILING_DISTANCE_PCT", 3.5, 0.1, 95.0
+    )
+    if trailing_distance >= trailing_activation:
+        raise ValueError("Trailing distance must be below its activation threshold")
+
+    break_even_activation = _setting(
+        "TROJAN_BREAK_EVEN_ACTIVATION_PCT", 0.0, 0.0, 10000.0
+    )
+    break_even_offset = _setting(
+        "TROJAN_BREAK_EVEN_OFFSET_PCT", 0.0, 0.0, 50.0
+    )
+    if break_even_activation > 0 and break_even_offset >= break_even_activation:
+        raise ValueError("Break-even offset must be below its activation threshold")
+
+    stagnation_seconds = int(
+        _setting("TROJAN_STAGNATION_SECONDS", 0, 0, 31_536_000)
+    )
+    stagnation_band = _setting(
+        "TROJAN_STAGNATION_BAND_PCT", 1.5, 0.0, 100.0
+    )
+    if stagnation_seconds > 0 and stagnation_band <= 0:
+        raise ValueError("Stagnation band must be positive when stagnation exit is enabled")
+
     return {
         "stop_loss_pct": _setting("TROJAN_STOP_LOSS_PCT", 9.0, 0.1, 95.0),
         "take_profit_pct": _setting("TROJAN_TAKE_PROFIT_PCT", 10.0, 0.1, 10000.0),
-        "trailing_activation_pct": _setting("TROJAN_TRAILING_ACTIVATION_PCT", 4.0, 0.0, 10000.0),
-        "trailing_distance_pct": _setting("TROJAN_TRAILING_DISTANCE_PCT", 3.5, 0.1, 95.0),
-        "trailing_bands": _trailing_bands(),
+        "trailing_activation_pct": trailing_activation,
+        "trailing_distance_pct": trailing_distance,
+        "trailing_bands": _trailing_bands(trailing_activation),
         "time_loss_seconds": int(_setting("TROJAN_TIME_LOSS_EXIT_SECONDS", 0, 0, 31_536_000)),
         "time_loss_threshold_pct": _setting("TROJAN_TIME_LOSS_THRESHOLD_PCT", -10.0, -95.0, 0.0),
         "max_hold_seconds": int(_setting("TROJAN_MAX_HOLD_SECONDS", 900, 0, 31_536_000)),
-        "stagnation_seconds": int(_setting("TROJAN_STAGNATION_SECONDS", 0, 0, 31_536_000)),
-        "stagnation_band_pct": _setting("TROJAN_STAGNATION_BAND_PCT", 1.5, 0.0, 100.0),
-        "break_even_activation_pct": _setting("TROJAN_BREAK_EVEN_ACTIVATION_PCT", 0.0, 0.0, 10000.0),
-        "break_even_offset_pct": _setting("TROJAN_BREAK_EVEN_OFFSET_PCT", 0.0, 0.0, 50.0),
+        "stagnation_seconds": stagnation_seconds,
+        "stagnation_band_pct": stagnation_band,
+        "break_even_activation_pct": break_even_activation,
+        "break_even_offset_pct": break_even_offset,
     }
 
 

@@ -1,5 +1,5 @@
 # ==========================================
-# TROJAN V2 - BIRDEYE MEME LISTING SCANNER
+# TROJAN V2 - BIRDEYE MEME LISTING SCANNER (LEGACY MODULE PATH)
 # RECENT LISTINGS + TRENDING FALLBACK
 # ==========================================
 
@@ -91,15 +91,10 @@ def scan_pumpfun():
     found_tokens = []
 
     if time.time() < _quota_disabled_until:
-        print("BIRDEYE MEME LISTING SKIPPED: COMPUTE UNIT QUOTA COOLDOWN ACTIVE", flush=True)
-        return found_tokens
+        raise RuntimeError("Birdeye meme-listing quota cooldown is active")
 
     if not API_KEY:
-        print(
-            "BIRDEYE MEME LISTING SKIPPED: API KEY MISSING",
-            flush=True
-        )
-        return found_tokens
+        raise RuntimeError("BIRDEYE_API_KEY is not configured for meme listings")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -158,26 +153,22 @@ def scan_pumpfun():
             )
 
         if not isinstance(data, dict):
-            print("BIRDEYE MEME LISTING INVALID RESPONSE", flush=True)
-            return found_tokens
+            raise ValueError("Birdeye meme-listing returned a non-object response")
 
         if data.get("success") is False:
-            print(
-                "BIRDEYE MEME LISTING API FAILURE:",
-                data.get("message") or data.get("status"),
-                flush=True
-            )
-            return found_tokens
+            raise RuntimeError("Birdeye meme-listing API reported failure: " + str(data.get("message") or data.get("status")))
 
         tokens = extract_items(data)
 
-        if not tokens:
-            print(
-                "BIRDEYE MEME LISTING EMPTY OR UNKNOWN RESPONSE:",
-                endpoint_used,
-                flush=True
+        data_container = data.get("data")
+        valid_shape = isinstance(data_container, list) or (
+            isinstance(data_container, dict) and any(
+                isinstance(data_container.get(key), list)
+                for key in ("items", "tokens", "token_list")
             )
-            return found_tokens
+        )
+        if not valid_shape:
+            raise ValueError("Birdeye meme-listing returned an unknown response shape")
 
         seen_in_scan = set()
 
@@ -221,6 +212,7 @@ def scan_pumpfun():
             response_text,
             flush=True
         )
+        raise
 
     except (ValueError, TypeError, AttributeError) as error:
 
@@ -229,6 +221,7 @@ def scan_pumpfun():
             repr(error),
             flush=True
         )
+        raise
 
     except Exception as error:
 
@@ -237,8 +230,14 @@ def scan_pumpfun():
             repr(error),
             flush=True
         )
+        raise
 
     return found_tokens
+
+
+def scan_birdeye_meme_listing():
+    """Canonical name for the Birdeye-backed meme-platform listing feed."""
+    return scan_pumpfun()
 
 
 # ==========================================

@@ -68,6 +68,20 @@ class PumpFunLegacyDirectQuoteTests(unittest.TestCase):
             {"owner": chain.TOKEN_PROGRAM, "data": bytes(mint)},
         ]
 
+    def _token2022_mint(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        raw = bytearray(166)
+        raw[44] = 6
+        raw[45] = 1
+        raw[165] = MINT_ACCOUNT_TYPE
+        config = bytearray(108)
+        config[80:88] = (10_000).to_bytes(8, "little")
+        config[88:90] = (100).to_bytes(2, "little")
+        config[98:106] = (10_000).to_bytes(8, "little")
+        config[106:108] = (100).to_bytes(2, "little")
+        raw.extend((1).to_bytes(2, "little") + (108).to_bytes(2, "little") + config)
+        return {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+
     def quote(self, input_mint=None, output_mint=None, amount=10_000, **kwargs):
         with (
             patch.object(chain, "_account", return_value={
@@ -179,16 +193,43 @@ class PumpFunLegacyDirectQuoteTests(unittest.TestCase):
                         self.pool, chain.SOL_MINT, self.token_mint, 1000
                     )
 
-    def test_rejects_token_2022_until_mint_extensions_are_supported(self):
+    def test_token2022_transfer_fee_is_applied_to_buy_output_and_sell_input(self):
         accounts = list(self.accounts)
-        accounts[3] = dict(accounts[3], owner=chain.TOKEN_2022_PROGRAM)
+        accounts[3] = self._token2022_mint()
         with (
             patch.object(chain, "_account", return_value={
                 "owner": chain.PROGRAMS["pumpfun_legacy"], "data": self.curve_data
             }),
             patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 654)),
         ):
-            with self.assertRaisesRegex(ValueError, "Token-2022"):
+            buy = chain.quote_pumpfun_legacy_pool(
+                self.pool, chain.SOL_MINT, self.token_mint, 10_000
+            )
+            sell = chain.quote_pumpfun_legacy_pool(
+                self.pool, self.token_mint, chain.SOL_MINT, 10_000
+            )
+        self.assertTrue(buy["token2022_output_transfer_fee"])
+        self.assertLess(buy["out_amount"], buy["output_amount_gross"])
+        self.assertTrue(sell["token2022_input_transfer_fee"])
+        self.assertEqual(sell["token2022_input_received_by_curve"], 9_900)
+        self.assertEqual(buy["token_program"], chain.TOKEN_2022_PROGRAM)
+
+    def test_token2022_transfer_hook_mint_is_rejected(self):
+        from token2022_inspector import MINT_ACCOUNT_TYPE
+        raw = bytearray(166)
+        raw[44] = 6
+        raw[45] = 1
+        raw[165] = MINT_ACCOUNT_TYPE
+        raw.extend((14).to_bytes(2, "little") + (64).to_bytes(2, "little") + bytes(64))
+        accounts = list(self.accounts)
+        accounts[3] = {"owner": chain.TOKEN_2022_PROGRAM, "data": bytes(raw)}
+        with (
+            patch.object(chain, "_account", return_value={
+                "owner": chain.PROGRAMS["pumpfun_legacy"], "data": self.curve_data
+            }),
+            patch.object(chain, "_multiple_accounts_with_context", return_value=(accounts, 654)),
+        ):
+            with self.assertRaisesRegex(ValueError, "unsupported by native swap builders"):
                 chain.quote_pumpfun_legacy_pool(
                     self.pool, chain.SOL_MINT, self.token_mint, 1000
                 )

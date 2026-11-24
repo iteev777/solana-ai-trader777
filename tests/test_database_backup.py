@@ -47,6 +47,44 @@ class DatabaseBackupTests(unittest.TestCase):
         finally:
             snapshot.close()
 
+    def test_restore_replaces_database_only_in_maintenance_mode_and_creates_emergency_backup(self):
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE account_state SET balance = ? WHERE mode = 'paper'",
+                (77.5,)
+            )
+        backup = database.backup_database(self.backup_dir)["backup"]
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE account_state SET balance = ? WHERE mode = 'paper'",
+                (12.0,)
+            )
+
+        with patch.dict(os.environ, {"TROJAN_RESTORE_MAINTENANCE_MODE": "true"}):
+            result = database.restore_database(backup, self.backup_dir)
+
+        self.assertTrue(result["restored"])
+        self.assertEqual(result["integrity"], "ok")
+        self.assertTrue(result["requires_application_restart"])
+        self.assertNotEqual(result["backup"], result["emergency_backup"])
+        with database.connect() as connection:
+            balance = connection.execute(
+                "SELECT balance FROM account_state WHERE mode = 'paper'"
+            ).fetchone()[0]
+        self.assertEqual(balance, 77.5)
+        self.assertTrue(os.path.isfile(os.path.join(self.backup_dir, result["emergency_backup"])))
+
+    def test_restore_requires_offline_maintenance_mode(self):
+        backup = database.backup_database(self.backup_dir)["backup"]
+        with patch.dict(os.environ, {"TROJAN_RESTORE_MAINTENANCE_MODE": "false"}):
+            with self.assertRaises(RuntimeError):
+                database.restore_database(backup, self.backup_dir)
+
+    def test_restore_rejects_path_traversal(self):
+        with patch.dict(os.environ, {"TROJAN_RESTORE_MAINTENANCE_MODE": "true"}):
+            with self.assertRaises(ValueError):
+                database.restore_database("../outside.sqlite3", self.backup_dir)
+
     def test_retention_keeps_only_requested_number_of_verified_backups(self):
         for balance in (91.0, 92.0, 93.0):
             with database.connect() as connection:
@@ -75,6 +113,27 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertFalse(health["persistent_storage_configured"])
         self.assertEqual(health["backup_count"], 1)
         self.assertGreater(health["database_size_bytes"], 0)
+
+    def test_initialize_refuses_future_schema_without_modifying_database(self):
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                ("999",),
+            )
+            connection.execute(
+                "CREATE TABLE future_only (value TEXT NOT NULL)"
+            )
+        with self.assertRaisesRegex(RuntimeError, "newer than this Trojan build"):
+            database.initialize_database()
+        with database.connect() as connection:
+            version = connection.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()["value"]
+            future_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='future_only'"
+            ).fetchone()
+        self.assertEqual(version, "999")
+        self.assertIsNotNone(future_table)
 
 
 if __name__ == "__main__":

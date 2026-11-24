@@ -43,6 +43,20 @@ def _env_int(name, default, minimum=0, maximum=None):
     return int(value)
 
 
+
+def _env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    # Invalid configuration must not silently disable a safety filter.
+    return bool(default)
+
+
 def _result(status, stage, reason, metrics=None):
     return {
         "status": status,
@@ -59,47 +73,64 @@ def _clean_metadata_text(value):
 
 
 def _metadata_stage(token, mint):
-    symbol = token.get("symbol") or _get(token, "baseToken", "symbol")
-    name_raw = token.get("name") if "name" in token else _get(token, "baseToken", "name")
+    symbol = _clean_metadata_text(token.get("symbol")) or _clean_metadata_text(
+        _get(token, "baseToken", "symbol")
+    )
+    name_raw = token.get("name")
     name = _clean_metadata_text(name_raw)
-    symbol = _clean_metadata_text(symbol)
+    if not name:
+        name_raw = _get(token, "baseToken", "name")
+        name = _clean_metadata_text(name_raw)
 
     if not isinstance(mint, str) or not mint.strip():
         return _result("REJECT", "metadata", "MINT_MISSING")
+    candidate_mint = token.get("address") or _get(token, "baseToken", "address")
+    if candidate_mint and candidate_mint != mint:
+        return _result("REJECT", "metadata", "TOKEN_MINT_MISMATCH", {
+            "requested_mint": mint, "candidate_mint": candidate_mint
+        })
     if not symbol:
+        if _env_bool("TROJAN_FILTER_REJECT_EMPTY_SYMBOLS", True):
+            return _result("REJECT", "metadata", "EMPTY_SYMBOL")
         return _result("WAIT", "metadata", "SYMBOL_UNKNOWN")
-    if symbol.isascii() and symbol.isdigit():
+    if (
+        _env_bool("TROJAN_FILTER_REJECT_NUMERIC_SYMBOLS", True)
+        and symbol.isascii() and symbol.isdigit()
+    ):
         return _result("REJECT", "metadata", "NUMERIC_SYMBOL")
-    reject_single = os.getenv("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", "true").lower() == "true"
+    reject_single = _env_bool("TROJAN_FILTER_REJECT_SINGLE_CHAR_SYMBOL", False)
     if reject_single and len(symbol) == 1 and not (symbol.isascii() and symbol.isalpha()):
         return _result("REJECT", "metadata", "SUSPICIOUS_SINGLE_CHARACTER_SYMBOL")
-    if not name and os.getenv("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", "false").lower() == "true":
+    if not name and _env_bool("TROJAN_FILTER_REQUIRE_NAME_AND_SYMBOL", False):
         return _result("WAIT", "metadata", "NAME_UNKNOWN" if name_raw is None else "NAME_INVALID")
 
     info = token.get("info") if isinstance(token.get("info"), dict) else {}
     token_meta = token.get("tokenMeta") if isinstance(token.get("tokenMeta"), dict) else {}
-    logo = (
-        token.get("logoURI") or token.get("logo_uri") or token.get("logo_url")
-        or token.get("imageUrl") or info.get("imageUrl") or token_meta.get("image")
+    logo_candidates = (
+        token.get("logoURI"), token.get("logo_uri"), token.get("logo_url"),
+        token.get("imageUrl"), info.get("imageUrl"), token_meta.get("image"),
     )
-    require_logo = os.getenv("TROJAN_FILTER_REQUIRE_LOGO_URL", "false").lower() == "true"
-    if require_logo and not (isinstance(logo, str) and logo.strip().startswith(("https://", "http://"))):
+    logo = next((
+        value.strip() for value in logo_candidates
+        if isinstance(value, str) and value.strip().startswith(("https://", "http://"))
+    ), None)
+    require_logo = _env_bool("TROJAN_FILTER_REQUIRE_LOGO_URL", False)
+    if require_logo and logo is None:
         return _result("WAIT", "metadata", "LOGO_URL_MISSING")
 
-    websites = token.get("websites")
-    if not isinstance(websites, list):
-        websites = info.get("websites") if isinstance(info.get("websites"), list) else []
+    website_candidates = []
+    for container in (token, info):
+        websites = container.get("websites") if isinstance(container, dict) else None
+        if isinstance(websites, list):
+            website_candidates.extend(
+                item.get("url") for item in websites if isinstance(item, dict)
+            )
+        website_candidates.extend((container.get("website"), container.get("website_url")))
     has_website = any(
-        isinstance(item, dict) and isinstance(item.get("url"), str)
-        and item["url"].strip().startswith(("https://", "http://"))
-        for item in websites
+        isinstance(value, str) and value.strip().startswith(("https://", "http://"))
+        for value in website_candidates
     )
-    direct_website = token.get("website") or token.get("website_url")
-    has_website = has_website or (
-        isinstance(direct_website, str)
-        and direct_website.strip().startswith(("https://", "http://"))
-    )
-    if os.getenv("TROJAN_FILTER_REQUIRE_WEBSITE_URL", "false").lower() == "true" and not has_website:
+    if _env_bool("TROJAN_FILTER_REQUIRE_WEBSITE_URL", False) and not has_website:
         return _result("WAIT", "metadata", "WEBSITE_URL_MISSING")
 
     return _result("PASS", "metadata", "METADATA_VALID", {
@@ -108,6 +139,98 @@ def _metadata_stage(token, mint):
         "logo_available": isinstance(logo, str) and logo.strip().startswith(("https://", "http://")),
         "website_available": has_website,
     })
+
+
+
+def _authority_is_active(value):
+    """Return whether an authority field represents an active authority.
+
+    Providers may encode a revoked/absent authority as JSON null, a boolean,
+    or a textual sentinel. Treat common false-like strings consistently with
+    the boolean representation; a non-empty public-key string remains active.
+    """
+    if value is None or value is False:
+        return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized not in {
+            "", "none", "null", "false", "0", "no", "off", "disabled", "revoked"
+        }
+    return value is True
+
+
+def _optional_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _onchain_stage(token):
+    """Apply the cached Solana metadata/authority checks before market filters."""
+    if not _env_bool("TROJAN_FILTER_ONCHAIN_ENABLED", True):
+        return _result("PASS", "onchain", "ONCHAIN_FILTERS_DISABLED")
+
+    if token.get("known_scam_authority") is True:
+        return _result("REJECT", "onchain", "KNOWN_SCAM_AUTHORITY")
+
+    mint_authority = _first_value(token.get("mintAuthority"), token.get("mint_authority"))
+    freeze_authority = _first_value(token.get("freezeAuthority"), token.get("freeze_authority"))
+    update_authority = _first_value(token.get("updateAuthority"), token.get("update_authority"))
+    creator = _first_value(token.get("creator"), token.get("creatorAddress"), token.get("creator_address"))
+    mutable = _optional_bool(_first_value(
+        token.get("mutable"), token.get("isMutable"), token.get("is_mutable")
+    ))
+
+    reject_immutable_freeze = _env_bool(
+        "TROJAN_FILTER_REJECT_IMMUTABLE_WITH_FREEZE", True
+    )
+    if (
+        reject_immutable_freeze
+        and mutable is False
+        and _authority_is_active(freeze_authority)
+    ):
+        return _result("REJECT", "onchain", "IMMUTABLE_WITH_ACTIVE_FREEZE_AUTHORITY")
+
+    if _env_bool("TROJAN_FILTER_COMBINED_RISK_ENABLED", True):
+        symbol = _clean_metadata_text(
+            token.get("symbol") or _get(token, "baseToken", "symbol")
+        )
+        name = _clean_metadata_text(
+            token.get("name") if "name" in token else _get(token, "baseToken", "name")
+        )
+        score = 0
+        if symbol and symbol.isascii() and symbol.isdigit():
+            score += 30
+        if not symbol:
+            score += 25
+        if _authority_is_active(freeze_authority):
+            score += 10
+        if name and symbol and name.casefold() == symbol.casefold():
+            score += 15
+        if mutable is False and score > 0:
+            score += 10
+        maximum = _env_int(
+            "TROJAN_FILTER_MAX_COMBINED_RISK_SCORE", 60, 0, 100
+        )
+        if score >= maximum:
+            return _result("REJECT", "onchain", "COMBINED_ONCHAIN_RISK_SCORE_HIGH", {
+                "risk_score": min(100, score),
+                "maximum": maximum,
+            })
+
+    return _result("PASS", "onchain", "ONCHAIN_METADATA_WITHIN_BOUNDS", {
+        "mint_authority_present": _authority_is_active(mint_authority),
+        "freeze_authority_present": _authority_is_active(freeze_authority),
+        "update_authority_present": _authority_is_active(update_authority),
+        "creator_available": isinstance(creator, str) and bool(creator.strip()),
+    })
+
 
 
 def _market_stage(token, strategy):
@@ -316,7 +439,7 @@ def _momentum_stage(token):
         if minimum > maximum:
             minimum, maximum = -100.0, 10000.0
         require_name = "TROJAN_FILTER_REQUIRE_" + label + "_CHANGE"
-        required = os.getenv(require_name, "false").lower() == "true"
+        required = _env_bool(require_name, False)
         if change is None:
             if required:
                 reason = "M5_MOMENTUM_UNKNOWN" if key == "m5" else "MOMENTUM_" + label + "_UNKNOWN"
@@ -344,7 +467,7 @@ def _age_stage(token):
     if created is None:
         created = _number(token.get("created_at_ms"))
     if created is None:
-        if os.getenv("TROJAN_FILTER_REQUIRE_POOL_AGE", "false").lower() == "true":
+        if _env_bool("TROJAN_FILTER_REQUIRE_POOL_AGE", False):
             return _result("WAIT", "age", "POOL_AGE_UNKNOWN")
         return _result("PASS", "age", "POOL_AGE_NOT_REQUIRED")
     # Providers normally expose milliseconds; tolerate Unix seconds explicitly.
@@ -448,6 +571,10 @@ def _quality_stage(token):
     tier = quality.get("tier") if isinstance(quality, dict) else None
     if score is None:
         return _result("WAIT", "quality", "CANDIDATE_QUALITY_UNKNOWN")
+    if not 0.0 <= score <= 100.0:
+        return _result("REJECT", "quality", "INVALID_CANDIDATE_QUALITY_SCORE", {
+            "quality_score": score
+        })
     if score < minimum:
         return _result("REJECT", "quality", "CANDIDATE_QUALITY_BELOW_MINIMUM", {
             "quality_score": score, "minimum": minimum, "tier": tier
@@ -463,20 +590,35 @@ def evaluate_token(token, mint, strategy="main"):
     Missing optional market signals are WAIT only when their corresponding
     requirement is enabled. This avoids treating absent provider data as zero.
     """
-    token = token if isinstance(token, dict) else {}
+    if not isinstance(token, dict):
+        return {
+            "status": "REJECT",
+            "reason": "INVALID_TOKEN_DATA",
+            "stage": "metadata",
+            "decisions": [_result("REJECT", "metadata", "INVALID_TOKEN_DATA")],
+            "evaluated_at": time.time(),
+        }
+    # Keep stage execution lazy: the first WAIT/REJECT must prevent all later
+    # stages from running, matching the ordered reference profile.
     stages = (
-        _metadata_stage(token, mint),
-        _market_stage(token, strategy),
-        _age_stage(token),
-        _valuation_stage(token),
-        _pool_metrics_stage(token),
-        _activity_stage(token),
-        _momentum_stage(token),
-        _provenance_stage(token),
-        _quality_stage(token),
+        # ScreenerBot's canonical profile performs age validation in its metadata
+        # stage, before on-chain and market-data gates. Keep that ordering so a
+        # newly-created pool is classified consistently even when market data is
+        # temporarily unavailable.
+        lambda: _metadata_stage(token, mint),
+        lambda: _age_stage(token),
+        lambda: _onchain_stage(token),
+        lambda: _market_stage(token, strategy),
+        lambda: _valuation_stage(token),
+        lambda: _pool_metrics_stage(token),
+        lambda: _activity_stage(token),
+        lambda: _momentum_stage(token),
+        lambda: _provenance_stage(token),
+        lambda: _quality_stage(token),
     )
     decisions = []
-    for item in stages:
+    for evaluate_stage in stages:
+        item = evaluate_stage()
         decisions.append(item)
         if item["status"] != "PASS":
             return {
@@ -490,6 +632,6 @@ def evaluate_token(token, mint, strategy="main"):
         "status": "PASS",
         "reason": "ALL_FILTER_STAGES_PASSED",
         "stage": "complete",
-        "decisions": list(stages),
+        "decisions": decisions,
         "evaluated_at": time.time(),
     }

@@ -20,6 +20,7 @@ import json
 import os
 import time
 import math
+import threading
 import strategy_conditions
 
 ALLOWED_FIELDS = {
@@ -35,6 +36,18 @@ ALLOWED_FIELDS = {
     "consecutive_red_candles", "volume_spike", "position_holding_minutes"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
+
+
+def _evaluation_concurrency_limit():
+    try:
+        value = int(os.getenv("TROJAN_STRATEGY_MAX_CONCURRENT_EVALUATIONS", "10"))
+    except (TypeError, ValueError, OverflowError):
+        value = 10
+    return max(1, min(value, 100))
+
+
+MAX_CONCURRENT_EVALUATIONS = _evaluation_concurrency_limit()
+_EVALUATION_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
 
 
 def _number(value):
@@ -117,63 +130,103 @@ def _context(token, score):
     }
 
 
-def _evaluate(node, context, path="root"):
+def _unknown_result(reasons):
+    markers = (
+        "unavailable", "not ready", "stale", "missing", "insufficient",
+        "future", "cooldown", "not resolved",
+    )
+    return any(
+        marker in str(reason).lower()
+        for reason in (reasons or [])
+        for marker in markers
+    )
+
+
+def _evaluate(node, context, path="root", deadline=None):
+    """Evaluate a validated rule tree with bounded, three-valued semantics."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return "timeout", [path + ": strategy evaluation timeout"]
     if not isinstance(node, dict):
-        return False, [path + ": invalid rule node"]
+        return "unknown", [path + ": invalid rule node"]
     groups = [key for key in ("all", "any", "not") if key in node]
     if groups:
         if len(groups) != 1:
-            return False, [path + ": exactly one group operator is required"]
+            return "unknown", [path + ": exactly one group operator is required"]
         key = groups[0]
         children = node[key]
         if not isinstance(children, list) or not children:
-            return False, [path + ": rule group must contain conditions"]
-        results = [_evaluate(child, context, path + "." + key + "[" + str(i) + "]") for i, child in enumerate(children)]
+            return "unknown", [path + ": rule group must contain conditions"]
+        if key == "not" and len(children) != 1:
+            return "unknown", [path + ": not requires exactly one condition"]
+        reasons = []
+        unknown_seen = False
+        for index, child in enumerate(children):
+            state, messages = _evaluate(
+                child, context, path + "." + key + "[" + str(index) + "]", deadline
+            )
+            if state == "timeout":
+                return state, messages
+            if key == "not":
+                if state == "unknown":
+                    return "unknown", messages
+                return ("false" if state == "true" else "true"), ([] if state == "true" else messages)
+            if state == "unknown":
+                unknown_seen = True
+                reasons.extend(messages)
+            elif key == "all" and state == "false":
+                reasons.extend(messages)
+                return "false", reasons
+            elif key == "any" and state == "true":
+                return "true", []
+            elif state == "false":
+                reasons.extend(messages)
+        if unknown_seen:
+            return "unknown", reasons
         if key == "all":
-            passed = all(item[0] for item in results)
-        elif key == "any":
-            passed = any(item[0] for item in results)
-        else:
-            if len(results) != 1:
-                return False, [path + ": not requires exactly one condition"]
-            passed = not results[0][0]
-        reasons = [reason for ok, messages in results if not ok for reason in messages]
-        return passed, ([] if passed else reasons or [path + ": group failed"])
+            return "true", []
+        return "false", reasons or [path + ": no alternative passed"]
+
     if "condition" in node:
         try:
-            return strategy_conditions.evaluate_condition(node, context)
+            passed, reasons = strategy_conditions.evaluate_condition(node, context)
         except (TypeError, ValueError) as error:
-            return False, [path + ": " + str(error)[:180]]
+            return "unknown", [path + ": " + str(error)[:180]]
+        if passed:
+            return "true", []
+        return ("unknown" if _unknown_result(reasons) else "false"), reasons
+
     field = node.get("field")
     op = node.get("op")
     if field not in ALLOWED_FIELDS or op not in ALLOWED_OPERATORS:
-        return False, [path + ": unsupported field or operator"]
+        return "unknown", [path + ": unsupported field or operator"]
     actual = context.get(field)
     if actual is None:
-        return False, [field + ": data unavailable"]
+        return "unknown", [field + ": data unavailable"]
     expected = node.get("value")
     if op == "between":
         if not isinstance(expected, list) or len(expected) != 2:
-            return False, [field + ": between expects [min, max]"]
+            return "unknown", [field + ": between expects [min, max]"]
         low, high = _number(expected[0]), _number(expected[1])
         if low is None or high is None or low > high:
-            return False, [field + ": invalid range"]
+            return "unknown", [field + ": invalid range"]
         passed = low <= actual <= high
         description = str(low) + "–" + str(high)
     else:
         target = _number(expected)
         if target is None:
-            return False, [field + ": invalid numeric threshold"]
+            return "unknown", [field + ": invalid numeric threshold"]
         passed = {
             "gt": actual > target, "gte": actual >= target,
             "lt": actual < target, "lte": actual <= target,
             "eq": actual == target
         }[op]
         description = op + " " + str(target)
-    return passed, ([] if passed else [field + " failed (" + str(actual) + " " + description + ")"])
+    return ("true", []) if passed else ("false", [field + " failed (" + str(actual) + " " + description + ")"])
 
 
-def _validate_node(node, path="root"):
+def _validate_node(node, path="root", depth=1):
+    if depth > 4:
+        raise ValueError(path + ": rule tree exceeds maximum depth of 4")
     if not isinstance(node, dict):
         raise ValueError(path + ": rule must be an object")
     groups = [key for key in ("all", "any", "not") if key in node]
@@ -187,7 +240,7 @@ def _validate_node(node, path="root"):
         if key == "not" and len(children) != 1:
             raise ValueError(path + ": not requires one rule")
         for index, child in enumerate(children):
-            _validate_node(child, path + "." + key + "[" + str(index) + "]")
+            _validate_node(child, path + "." + key + "[" + str(index) + "]", depth + 1)
         return
     if "condition" in node:
         if path.count("[") > 30:
@@ -256,7 +309,23 @@ def evaluate_strategy_rules(token, score, strategy):
     rule = config["rules"].get(strategy)
     if rule is None:
         return True, "No custom rules for " + strategy
-    passed, reasons = _evaluate(rule, _context(token, score))
+    try:
+        timeout_ms = float(os.getenv("TROJAN_STRATEGY_EVALUATION_TIMEOUT_MS", "50"))
+    except (TypeError, ValueError, OverflowError):
+        timeout_ms = 50.0
+    if not math.isfinite(timeout_ms) or not 1.0 <= timeout_ms <= 1000.0:
+        timeout_ms = 50.0
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    # Bound concurrent evaluations as well as the work inside each rule tree.
+    # Waiting for capacity consumes the same deadline; saturation fails closed.
+    remaining = max(0.0, deadline - time.monotonic())
+    if not _EVALUATION_SEMAPHORE.acquire(timeout=remaining):
+        return False, "Custom strategy evaluation timeout: concurrency capacity unavailable"
+    try:
+        state, reasons = _evaluate(rule, _context(token, score), deadline=deadline)
+    finally:
+        _EVALUATION_SEMAPHORE.release()
+    passed = state == "true"
     return passed, "Custom rules passed" if passed else "; ".join(reasons)
 
 
