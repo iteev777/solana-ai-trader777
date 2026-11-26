@@ -20,6 +20,25 @@ class RouteComparisonTests(unittest.TestCase):
         self.assertEqual(result["minimum_out_amount"], 990)
         self.assertEqual(result["price_impact_percent"], 0.2)
 
+    def test_raptor_current_quote_preserves_percentage_and_counts_route_plan(self):
+        response = Mock()
+        response.json.return_value = {
+            "inputMint": "in", "outputMint": "out", "amountIn": "500",
+            "amountOut": "1000", "minAmountOut": "990", "priceImpact": 0.2,
+            "routePlan": [{"dex": "Raydium"}, {"dex": "Orca"}],
+        }
+        with patch.object(route_comparison.requests, "get", return_value=response):
+            result = route_comparison._raptor("in", "out", 500, 100)
+            self.assertEqual(result["price_impact_percent"], 0.2)
+            self.assertEqual(result["route"]["hops"], 2)
+            response.json.return_value["outputMint"] = "other"
+            with self.assertRaisesRegex(ValueError, "output mint"):
+                route_comparison._raptor("in", "out", 500, 100)
+
+    def test_fractional_router_outputs_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "integer"):
+            route_comparison._output_amount({"outAmount": 12.9})
+
     def test_comparison_never_fabricates_direct_pool_quote(self):
         jupiter = {
             "provider": "jupiter", "out_amount": 1000,

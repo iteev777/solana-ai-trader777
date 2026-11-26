@@ -111,7 +111,7 @@ def evaluate_exit(position, current_price, now=None, policy=None):
     change = price / entry - 1.0
     stop = float(cfg["stop_loss_pct"]) / 100.0
     take = float(cfg["take_profit_pct"]) / 100.0
-    if change <= -stop:
+    if change <= -stop or math.isclose(change, -stop, rel_tol=0.0, abs_tol=1e-15):
         return "STOP LOSS"
 
     metadata = position.get("metadata")
@@ -141,7 +141,7 @@ def evaluate_exit(position, current_price, now=None, policy=None):
         if price <= entry * (1.0 + be_offset):
             return "BREAK-EVEN PROTECTION"
 
-    if change >= take:
+    if change >= take or math.isclose(change, take, rel_tol=0.0, abs_tol=1e-15):
         return "TAKE PROFIT"
 
     opened = _opened_timestamp(position.get("opened_at"))

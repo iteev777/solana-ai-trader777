@@ -121,6 +121,36 @@ class MultiPoolDexEngineTests(unittest.TestCase):
                 network_fee_output_amounts={"jupiter": -1}
             )
 
+    @patch("route_comparison.compare_quotes")
+    @patch("solana_onchain.quote_direct_pool")
+    def test_invalid_slippage_stops_all_quote_calls(self, direct, aggregate):
+        for slippage in (301, -1, 1.5, True):
+            with self.subTest(slippage=slippage), self.assertRaises(ValueError):
+                dex_engine.build_routes(
+                    self.input_mint, self.output_mint, 100,
+                    pool_addresses=["pool-a"], slippage_bps=slippage,
+                )
+        direct.assert_not_called()
+        aggregate.assert_not_called()
+
+    def test_snapshot_ages_while_other_routes_are_pending(self):
+        item = self.direct_quote("pool-a", 1500, age=4)
+        now = time.time()
+        item["quoted_at"] = now - 5
+        item["route"] = {"hops": 1}
+        with self.assertRaisesRegex(ValueError, "QUOTE_STALE"):
+            dex_engine._normalize_candidate(
+                "direct:pool-a", item, self.input_mint, self.output_mint, now,
+            )
+
+    @patch("route_comparison.compare_quotes")
+    def test_invalid_provider_latency_does_not_break_comparison(self, aggregate):
+        aggregate.return_value = self.aggregator_quotes()
+        aggregate.return_value["quotes"]["jupiter"]["latency_ms"] = "unknown"
+        result = dex_engine.build_routes(self.input_mint, self.output_mint, 100)
+        self.assertEqual(result["best_provider"], "jupiter")
+        self.assertIsNone(result["selected_route"]["latency_ms"])
+
     def test_status_keeps_live_execution_locked(self):
         with patch("solana_onchain.get_onchain_status", return_value={
             "supported_protocols": ["raydium_cpmm"]

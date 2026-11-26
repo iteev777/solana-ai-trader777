@@ -1,8 +1,9 @@
 import hmac
 import os
+import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, Response, jsonify, request
 from werkzeug.serving import make_server
@@ -23,7 +24,7 @@ def _authorized():
         return False
     auth = request.authorization
     supplied = auth.password if auth and auth.password else ""
-    return bool(supplied) and hmac.compare_digest(supplied, expected)
+    return bool(supplied) and hmac.compare_digest(supplied.encode(), expected.encode())
 
 
 @app.before_request
@@ -725,8 +726,22 @@ def api_performance():
         closed = int(row.get("closed_trades") or 0)
         wins = int(row.get("wins") or 0)
         row["win_rate"] = round((wins / closed) * 100, 2) if closed else 0.0
+    today = datetime.now(timezone.utc).date()
+    first_day = today - timedelta(days=29)
+    daily_rows = _rows("""
+        SELECT substr(timestamp, 1, 10) AS day, COUNT(*) AS closed_trades,
+               SUM(CASE WHEN profit_loss > 0 THEN 1 ELSE 0 END) AS wins,
+               COALESCE(SUM(profit_loss), 0) AS realized_pnl
+        FROM trades
+        WHERE mode='paper' AND action='SELL' AND timestamp >= ? AND timestamp < ?
+        GROUP BY day
+        ORDER BY day DESC
+    """, (first_day.isoformat(), (today + timedelta(days=1)).isoformat()))
     return jsonify({
         "strategies": rows,
+        "daily": daily_rows,
+        "daily_from": first_day.isoformat(),
+        "daily_through": today.isoformat(),
         "mode": "paper",
         "live_execution": "locked"
     })
@@ -734,12 +749,20 @@ def api_performance():
 
 @app.get("/api/database")
 def api_database_health():
-    return jsonify(database.get_database_health())
+    try:
+        health = database.get_database_health()
+    except (OSError, sqlite3.Error):
+        return jsonify({"error": "Database health check failed", "integrity": "unknown"}), 503
+    return jsonify(health), 200 if health["integrity"] == "ok" else 503
 
 
 @app.post("/api/database/backup")
 def api_database_backup():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if payload is None and not request.is_json and request.headers.get("X-Trojan-Action") == "1":
+        payload = {}
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Expected JSON object"}), 400
     keep = payload.get("keep", 7)
     try:
         return jsonify(database.backup_database(keep=keep))
@@ -824,6 +847,7 @@ main{max-width:1440px;padding-top:16px}
 <section class="panel section"><h2>SYSTEM HEALTH</h2><div class="health" id="health"></div><p class="sub" id="updated">Waiting for data…</p></section></div>
 </section><section class="app-view" id="view-positions"><section class="panel section" id="positions-panel"><h2>OPEN POSITIONS</h2><div style="overflow:auto"><table><thead><tr><th>Token</th><th>Strategy</th><th>Entry</th><th>Price</th><th>ROI</th><th>Size</th><th>DCA</th><th>Partial</th></tr></thead><tbody id="positions-copy"></tbody></table></div></section></section><section class="app-view" id="view-trades"><section class="panel section" id="trades-panel"><h2>RECENT TRADES</h2><div style="overflow:auto"><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Price</th><th>Amount</th><th>P/L</th><th>Strategy</th></tr></thead><tbody id="trades"></tbody></table></div></section>
 </section><section class="app-view" id="view-analytics"><section class="panel section" id="analytics-panel"><h2>STRATEGY PERFORMANCE</h2><div class="health" id="performance"><div class="muted">Waiting for closed-trade data…</div></div></section>
+<section class="panel section"><h2>DAILY PAPER P/L · LAST 30 DAYS (UTC)</h2><div style="overflow:auto"><table><thead><tr><th>Date</th><th>Realized P/L</th><th>Closed trades</th><th>Wins</th></tr></thead><tbody id="daily-performance"></tbody></table></div></section>
 <section class="panel section"><h2>FILTERING ANALYTICS</h2><div class="health" id="filter-summary"></div><div style="overflow:auto;margin-top:12px"><table><thead><tr><th>Time</th><th>Stage</th><th>Decision</th><th>Reason</th><th>Score</th><th>Token</th></tr></thead><tbody id="filter-events"></tbody></table></div></section>
 </section><section class="app-view" id="view-system"><section class="panel section"><h2>STRATEGY RULE EDITOR</h2><p class="muted">JSON rule trees are saved to the bot database. Fields: liquidity_usd, volume_m5, volume_h24, price_change_m5, price_change_h1, price_change_h24, buy_ratio, score, source_count, txns_m5_total, pair_age_minutes, rsi_14, ema_9, ema_21, ema_cross_bullish, breakout_20, breakdown_20, volume_spike_ratio, timeframe_ready_count, bullish_timeframes, bearish_timeframes, macd_histogram, macd_bullish, bollinger_percent_b, atr_percent, stochastic_k, above_vwap, candle_body_pct, candle_range_pct, consecutive_green_candles, consecutive_red_candles, volume_spike, position_holding_minutes. Operators: gt, gte, lt, lte, eq, between. Groups: all, any, not. Named conditions: {\"condition\":\"Rsi\",\"params\":{\"comparison\":\"BELOW\",\"threshold\":30}}. The strategy catalog lists 24 named market, technical, and position conditions; missing inputs fail closed.</p><div class="split"><div><b>MAIN rules</b><textarea id="rules-main" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('main')">Save MAIN</button></div><div><b>SNIPER rules</b><textarea id="rules-sniper" rows="9" style="width:100%;margin-top:8px;background:#0b1423;color:#edf3ff;border:1px solid #24324a;border-radius:8px;padding:10px;font:12px monospace"></textarea><button class="refresh" onclick="saveRules('sniper')">Save SNIPER</button></div></div><div class="muted" id="rules-status" style="margin-top:10px">Loading strategy configuration…</div></section>
 <section class="panel section" id="system-panel"><h2>SYSTEM READINESS</h2><div class="health" id="readiness"></div><div class="muted" id="onchain-status" style="margin-top:10px"></div><div class="muted" id="indicator-status" style="margin-top:6px"></div></section>
@@ -915,6 +939,7 @@ async function loadAnalytics(){
   const values=await Promise.all([get('/api/filtering'),get('/api/performance')]),f=values[0],p=values[1];
   const decisions=f.summary.decisions||{};
   document.getElementById('performance').innerHTML=p.strategies.length?p.strategies.map(function(x){return '<div><b>'+esc(x.strategy.toUpperCase())+'</b><span class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</span><div class="muted">Closed: '+esc(x.closed_trades)+' · Wins: '+esc(x.wins)+' · Losses: '+esc(x.losses)+' · Win rate: '+fmt(x.win_rate,1)+'%</div></div>';}).join(''):'<div class="muted">No closed paper trades yet. Strategy stats appear after the first SELL.</div>';
+  document.getElementById('daily-performance').innerHTML=p.daily.length?p.daily.map(x=>'<tr><td>'+esc(x.day)+'</td><td class="'+(x.realized_pnl>=0?'good':'bad')+'">'+usd(x.realized_pnl)+'</td><td>'+esc(x.closed_trades)+'</td><td>'+esc(x.wins)+'</td></tr>').join(''):'<tr><td colspan="4" class="muted">No paper exits in this period</td></tr>';
   document.getElementById('filter-summary').innerHTML=[['Recorded',f.summary.total_recorded],['Passed',decisions.PASS||0],['Rejected',decisions.REJECT||0],['Waiting',decisions.WAIT||0],['Errors',decisions.ERROR||0]].map(function(x){return '<div><b>'+esc(x[0])+'</b><span class="muted">'+esc(x[1])+'</span></div>';}).join('');
   document.getElementById('filter-events').innerHTML=f.recent.length?f.recent.map(function(x){return '<tr><td>'+time(x.timestamp)+'</td><td>'+esc(x.stage)+'</td><td class="'+(x.decision==='PASS'?'good':x.decision==='REJECT'?'bad':'muted')+'">'+esc(x.decision)+'</td><td>'+esc((x.reason||'').slice(0,180))+'</td><td>'+fmt(x.score,1)+'</td><td class="token">'+esc(short(x.token_address))+'</td></tr>';}).join(''):'<tr><td colspan="6" class="muted">No filter decisions recorded yet</td></tr>';
  }catch(err){document.getElementById('performance').textContent='Analytics unavailable: '+err.message;}
@@ -1055,3 +1080,17 @@ def start_dashboard():
         flush=True
     )
     return True
+
+
+def stop_dashboard():
+    """Stop the dashboard listener and release its port."""
+    global _server, _server_thread
+    with _server_lock:
+        if _server is None:
+            return
+        if _server_thread and _server_thread.is_alive():
+            _server.shutdown()
+            _server_thread.join()
+        _server.server_close()
+        _server = None
+        _server_thread = None

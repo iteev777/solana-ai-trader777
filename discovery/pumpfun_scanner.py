@@ -42,7 +42,7 @@ def valid_token(token):
 def extract_items(data):
 
     if not isinstance(data, dict):
-        return []
+        return None
 
     result = data.get("data")
 
@@ -50,7 +50,7 @@ def extract_items(data):
         return result
 
     if not isinstance(result, dict):
-        return []
+        return None
 
     for key in ("items", "tokens", "token_list"):
         items = result.get(key)
@@ -58,7 +58,7 @@ def extract_items(data):
         if isinstance(items, list):
             return items
 
-    return []
+    return None
 
 
 def normalize_token(token):
@@ -90,16 +90,10 @@ def scan_pumpfun():
 
     found_tokens = []
 
-    if time.time() < _quota_disabled_until:
-        print("BIRDEYE MEME LISTING SKIPPED: COMPUTE UNIT QUOTA COOLDOWN ACTIVE", flush=True)
-        return found_tokens
-
     if not API_KEY:
-        print(
-            "BIRDEYE MEME LISTING SKIPPED: API KEY MISSING",
-            flush=True
-        )
-        return found_tokens
+        raise RuntimeError("Birdeye meme listing: BIRDEYE_API_KEY is missing")
+    if time.monotonic() < _quota_disabled_until:
+        raise RuntimeError("Birdeye meme listing: quota cooldown active")
 
     headers = {
         "X-API-KEY": API_KEY,
@@ -157,27 +151,12 @@ def scan_pumpfun():
                 max_retries=MAX_RETRIES
             )
 
-        if not isinstance(data, dict):
-            print("BIRDEYE MEME LISTING INVALID RESPONSE", flush=True)
-            return found_tokens
-
-        if data.get("success") is False:
-            print(
-                "BIRDEYE MEME LISTING API FAILURE:",
-                data.get("message") or data.get("status"),
-                flush=True
-            )
-            return found_tokens
+        if isinstance(data, dict) and data.get("success") is False:
+            raise RuntimeError("Birdeye meme listing: provider reported failure")
 
         tokens = extract_items(data)
-
-        if not tokens:
-            print(
-                "BIRDEYE MEME LISTING EMPTY OR UNKNOWN RESPONSE:",
-                endpoint_used,
-                flush=True
-            )
-            return found_tokens
+        if tokens is None:
+            raise ValueError(f"Birdeye meme listing {endpoint_used}: invalid response shape")
 
         seen_in_scan = set()
 
@@ -204,39 +183,12 @@ def scan_pumpfun():
             flush=True
         )
 
-    except requests.RequestException as error:
-
-        response = getattr(error, "response", None)
-        status_code = getattr(response, "status_code", None)
-        response_text = getattr(response, "text", "")[:300]
-
-        if "compute units usage limit exceeded" in response_text.lower():
-            _quota_disabled_until = time.time() + QUOTA_COOLDOWN_SECONDS
-            print("BIRDEYE QUOTA EXHAUSTED; PAUSING THIS SOURCE FOR 1 HOUR", flush=True)
-
-        print(
-            "BIRDEYE MEME LISTING REQUEST ERROR:",
-            status_code,
-            repr(error),
-            response_text,
-            flush=True
-        )
-
-    except (ValueError, TypeError, AttributeError) as error:
-
-        print(
-            "BIRDEYE MEME LISTING DATA ERROR:",
-            repr(error),
-            flush=True
-        )
-
-    except Exception as error:
-
-        print(
-            "BIRDEYE MEME LISTING ERROR:",
-            repr(error),
-            flush=True
-        )
+    except requests.HTTPError as error:
+        response_text = getattr(error.response, "text", None) or ""
+        if "compute units usage limit exceeded" in response_text[:300].lower():
+            _quota_disabled_until = time.monotonic() + QUOTA_COOLDOWN_SECONDS
+            raise RuntimeError("Birdeye meme listing: quota exhausted; paused for 1 hour") from None
+        raise
 
     return found_tokens
 

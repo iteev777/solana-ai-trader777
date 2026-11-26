@@ -167,13 +167,14 @@ def _indicator_freshness(name, context, indicators):
     return True, None
 
 
-def evaluate_condition(node, context):
+def evaluate_condition_state(node, context):
+    """Return True, False, or None when evidence is unavailable."""
     validate_condition(node)
     name, params = node["condition"], node["params"]
     indicators = context.get("indicators") if isinstance(context.get("indicators"), dict) else {}
     fresh, freshness_reason = _indicator_freshness(name, context, indicators)
     if not fresh:
-        return False, [name + ": " + freshness_reason]
+        return None, [name + ": " + freshness_reason]
     token = context.get("token") if isinstance(context.get("token"), dict) else {}
     liquidity = _metric(context, "liquidity_usd", "liquidity.usd")
     current_price = _metric(context, "price_usd", "priceUsd")
@@ -190,7 +191,7 @@ def evaluate_condition(node, context):
         detail = "Bollinger %B"
     elif name == "BuyPressure":
         value = _metric(context, "buy_ratio")
-        result = value is not None and value >= _num(params.get("threshold", 0.6))
+        result = _compare(value, "ABOVE", _num(params.get("threshold", 0.6)))
         detail = "buy ratio"
     elif name == "CandleSize":
         field = "candle_body_pct" if params.get("metric", "body") == "body" else "candle_range_pct"
@@ -200,7 +201,7 @@ def evaluate_condition(node, context):
     elif name == "ConsecutiveCandles":
         field = "consecutive_green_candles" if params.get("direction", "GREEN") == "GREEN" else "consecutive_red_candles"
         value = _metric(context, field, "indicators." + field)
-        result = value is not None and value >= _num(params.get("minimum", 2))
+        result = _compare(value, "AT_LEAST", _num(params.get("minimum", 2)))
         detail = field
     elif name in ("DrawdownFromPeak", "PullbackFromHigh"):
         value = _metric(context, "drawdown_from_peak_pct", "pullback_from_high_pct", "indicators.pullback_from_high_pct")
@@ -210,7 +211,7 @@ def evaluate_condition(node, context):
                 value = max(0.0, (peak - current_price) / peak * 100.0)
         low = _num(params.get("minimum_pct", 5))
         high = _num(params.get("maximum_pct", 30))
-        result = value is not None and low <= value <= high
+        result = None if value is None else low <= value <= high
         detail = "drawdown/pullback percent"
     elif name == "LiquidityChangeSinceEntry":
         value = _metric(context, "liquidity_change_since_entry_pct")
@@ -293,11 +294,11 @@ def evaluate_condition(node, context):
             return buys + sells if buys is not None and sells is not None else None
         short_count, long_count = total(short), total(long)
         minimum = _num(params.get("min_transactions", 30))
-        if short_count is not None and long_count is not None and short_count >= minimum and long_count > 0:
-            ratio = (short_count / short_seconds) / (long_count / long_seconds)
-            result = _compare(ratio, params.get("comparison", "ABOVE"), _num(params.get("ratio", 2)))
-        else:
-            result = None
+        if short_count is not None and long_count is not None and 0 <= short_count <= long_count:
+            result = False
+            if short_count >= minimum:
+                ratio = (short_count / short_seconds) / (long_count / long_seconds)
+                result = _compare(ratio, params.get("comparison", "ABOVE"), _num(params.get("ratio", 2)))
         detail = "transaction velocity " + windows
     elif name == "VolatilityRange":
         value = _metric(context, "atr_percent", "indicators.atr_percent")
@@ -305,7 +306,7 @@ def evaluate_condition(node, context):
         detail = "ATR percent"
     elif name == "VolumeSpike":
         value = _metric(context, "volume_spike_ratio", "indicators.volume_spike_ratio")
-        result = value is not None and value >= _num(params.get("multiplier", 2))
+        result = _compare(value, "AT_LEAST", _num(params.get("multiplier", 2)))
         detail = "volume spike ratio"
     elif name == "Vwap":
         value = indicators.get("above_vwap")
@@ -313,8 +314,13 @@ def evaluate_condition(node, context):
         detail = "VWAP position"
 
     if result is None:
-        return False, [name + ": required data unavailable"]
+        return None, [name + ": required data unavailable"]
     return bool(result), ([] if result else [name + ": " + detail + " condition not met"])
+
+
+def evaluate_condition(node, context):
+    result, reasons = evaluate_condition_state(node, context)
+    return result is True, reasons
 
 
 def get_condition_catalog():

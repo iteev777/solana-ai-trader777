@@ -35,6 +35,8 @@ ALLOWED_FIELDS = {
     "consecutive_red_candles", "volume_spike", "position_holding_minutes"
 }
 ALLOWED_OPERATORS = {"gt", "gte", "lt", "lte", "eq", "between"}
+MAX_RULE_DEPTH = 30
+MAX_RULE_NODES = 1000
 
 
 def _number(value):
@@ -119,51 +121,54 @@ def _context(token, score):
 
 def _evaluate(node, context, path="root"):
     if not isinstance(node, dict):
-        return False, [path + ": invalid rule node"]
+        return None, [path + ": invalid rule node"]
     groups = [key for key in ("all", "any", "not") if key in node]
     if groups:
         if len(groups) != 1:
-            return False, [path + ": exactly one group operator is required"]
+            return None, [path + ": exactly one group operator is required"]
         key = groups[0]
         children = node[key]
         if not isinstance(children, list) or not children:
-            return False, [path + ": rule group must contain conditions"]
+            return None, [path + ": rule group must contain conditions"]
         results = [_evaluate(child, context, path + "." + key + "[" + str(i) + "]") for i, child in enumerate(children)]
+        states = [state for state, _ in results]
         if key == "all":
-            passed = all(item[0] for item in results)
+            passed = False if False in states else (None if None in states else True)
         elif key == "any":
-            passed = any(item[0] for item in results)
+            passed = True if True in states else (None if None in states else False)
         else:
-            if len(results) != 1:
-                return False, [path + ": not requires exactly one condition"]
-            passed = not results[0][0]
-        reasons = [reason for ok, messages in results if not ok for reason in messages]
+            if len(states) != 1:
+                return None, [path + ": not requires exactly one condition"]
+            passed = None if states[0] is None else not states[0]
+        reasons = [
+            reason for state, messages in results if state is passed for reason in messages
+        ]
         return passed, ([] if passed else reasons or [path + ": group failed"])
     if "condition" in node:
         try:
-            return strategy_conditions.evaluate_condition(node, context)
+            return strategy_conditions.evaluate_condition_state(node, context)
         except (TypeError, ValueError) as error:
-            return False, [path + ": " + str(error)[:180]]
+            return None, [path + ": " + str(error)[:180]]
     field = node.get("field")
     op = node.get("op")
     if field not in ALLOWED_FIELDS or op not in ALLOWED_OPERATORS:
-        return False, [path + ": unsupported field or operator"]
+        return None, [path + ": unsupported field or operator"]
     actual = context.get(field)
     if actual is None:
-        return False, [field + ": data unavailable"]
+        return None, [field + ": data unavailable"]
     expected = node.get("value")
     if op == "between":
         if not isinstance(expected, list) or len(expected) != 2:
-            return False, [field + ": between expects [min, max]"]
+            return None, [field + ": between expects [min, max]"]
         low, high = _number(expected[0]), _number(expected[1])
         if low is None or high is None or low > high:
-            return False, [field + ": invalid range"]
+            return None, [field + ": invalid range"]
         passed = low <= actual <= high
         description = str(low) + "–" + str(high)
     else:
         target = _number(expected)
         if target is None:
-            return False, [field + ": invalid numeric threshold"]
+            return None, [field + ": invalid numeric threshold"]
         passed = {
             "gt": actual > target, "gte": actual >= target,
             "lt": actual < target, "lte": actual <= target,
@@ -173,7 +178,12 @@ def _evaluate(node, context, path="root"):
     return passed, ([] if passed else [field + " failed (" + str(actual) + " " + description + ")"])
 
 
-def _validate_node(node, path="root"):
+def _validate_node(node, path, remaining, depth=0):
+    if depth > MAX_RULE_DEPTH:
+        raise ValueError(path + ": rule nesting is too deep")
+    remaining[0] -= 1
+    if remaining[0] < 0:
+        raise ValueError(path + ": strategy exceeds the maximum rule count")
     if not isinstance(node, dict):
         raise ValueError(path + ": rule must be an object")
     groups = [key for key in ("all", "any", "not") if key in node]
@@ -187,11 +197,9 @@ def _validate_node(node, path="root"):
         if key == "not" and len(children) != 1:
             raise ValueError(path + ": not requires one rule")
         for index, child in enumerate(children):
-            _validate_node(child, path + "." + key + "[" + str(index) + "]")
+            _validate_node(child, path + "." + key + "[" + str(index) + "]", remaining, depth + 1)
         return
     if "condition" in node:
-        if path.count("[") > 30:
-            raise ValueError(path + ": rule nesting is too deep")
         try:
             strategy_conditions.validate_condition(node)
         except (TypeError, ValueError) as error:
@@ -219,7 +227,7 @@ def validate_rules_config(config):
     if unknown:
         raise ValueError("Unknown strategy names: " + ", ".join(sorted(unknown)))
     for name, rule in config.items():
-        _validate_node(rule, name)
+        _validate_node(rule, name, [MAX_RULE_NODES])
     return config
 
 
@@ -243,7 +251,7 @@ def get_config():
             pass
         validate_rules_config(config)
         return {"enabled": bool(config), "valid": True, "rules": config, "error": None}
-    except (ValueError, TypeError) as error:
+    except (ValueError, TypeError, RecursionError) as error:
         return {"enabled": True, "valid": False, "rules": {}, "error": str(error)[:300]}
 
 
@@ -257,7 +265,7 @@ def evaluate_strategy_rules(token, score, strategy):
     if rule is None:
         return True, "No custom rules for " + strategy
     passed, reasons = _evaluate(rule, _context(token, score))
-    return passed, "Custom rules passed" if passed else "; ".join(reasons)
+    return passed is True, "Custom rules passed" if passed else "; ".join(reasons)
 
 
 def get_strategy_rules_status():

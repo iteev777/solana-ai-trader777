@@ -126,7 +126,7 @@ def _fetch_wallet_transaction(signature, wallet):
     )
 
 
-def _monitor_loop():
+def _monitor_loop(on_paper_signal=None):
     while True:
         ws = None
         try:
@@ -183,7 +183,12 @@ def _monitor_loop():
                 ), None)
                 if not signature or not wallet or value.get("err"):
                     continue
-                event = _fetch_wallet_transaction(signature, wallet)
+                try:
+                    event = _fetch_wallet_transaction(signature, wallet)
+                except (requests.RequestException, RuntimeError, ValueError) as error:
+                    # An individual RPC failure does not invalidate the live subscriptions.
+                    _status["last_error"] = "copy transaction lookup: " + type(error).__name__
+                    continue
                 if not event:
                     continue
                 inserted = database.record_copy_trade_event(
@@ -201,12 +206,16 @@ def _monitor_loop():
                     continue
                 _status["events_seen"] += 1
                 _status["last_event"] = time.time()
-                if event["action"] in ("BUY", "SELL") and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true":
+                if (
+                    on_paper_signal is not None
+                    and event["action"] in ("BUY", "SELL")
+                    and os.getenv("TROJAN_COPY_PAPER_ENABLED", "false").lower() == "true"
+                ):
                     try:
-                        import main
-                        main.queue_copy_signal(event)
+                        if not on_paper_signal(event):
+                            _status["last_error"] = "paper copy queue did not accept signal"
                     except Exception as copy_error:
-                        _status["last_error"] = "paper copy queue: " + str(copy_error)[:150]
+                        _status["last_error"] = "paper copy queue: " + type(copy_error).__name__
                 send_alert(
                     "COPY WATCH " + event["action"]
                     + "\nWallet: " + wallet
@@ -220,8 +229,9 @@ def _monitor_loop():
                     + "\nSignature: " + signature
                 )
         except Exception as error:
-            _status.update({"running": False, "last_error": str(error)[:220]})
-            print("[TROJAN V2] COPY WATCH RECONNECT:", repr(error), flush=True)
+            error_type = type(error).__name__
+            _status.update({"running": False, "last_error": error_type})
+            print("[TROJAN V2] COPY WATCH RECONNECT:", error_type, flush=True)
             time.sleep(5)
         finally:
             if ws:
@@ -231,13 +241,13 @@ def _monitor_loop():
                     pass
 
 
-def start_copy_monitor():
+def start_copy_monitor(on_paper_signal=None):
     global _thread
     with _lock:
         if _thread and _thread.is_alive():
             return True
         _thread = threading.Thread(
-            target=_monitor_loop, name="trojan-copy-watch", daemon=True
+            target=_monitor_loop, args=(on_paper_signal,), name="trojan-copy-watch", daemon=True
         )
         _thread.start()
         return True

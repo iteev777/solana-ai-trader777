@@ -49,6 +49,21 @@ class AdaptiveLearningTests(unittest.TestCase):
         self.assertGreaterEqual(profile["size_multiplier"], 0.80)
         self.assertLessEqual(profile["size_multiplier"], 1.15)
 
+    def test_missing_and_nonfinite_pnl_do_not_count_as_evidence(self):
+        rows = [{"action": "SELL", "profit_loss": value} for value in
+                (None, float("nan"), float("inf"), float("-inf"), True, 0)]
+        profile = adaptive_learning._profile("main", rows)
+        self.assertEqual(profile["closed_trades"], 1)
+        self.assertEqual(profile["size_multiplier"], 1.0)
+
+    def test_mutating_report_cannot_change_cached_sizing(self):
+        rows = [{"action": "SELL", "profit_loss": 1}]
+        with patch.object(adaptive_learning.database, "get_recent_trades", return_value=rows), \
+             patch.object(adaptive_learning, "_cache", {"updated_at": 0.0, "report": None}):
+            report = adaptive_learning.get_learning_report(force=True)
+            report["strategies"][0]["size_multiplier"] = 5.0
+            self.assertEqual(adaptive_learning.get_size_multiplier("main"), 1.0)
+
 
 class PoolRefreshCoalescingTests(unittest.TestCase):
     def test_notifications_are_coalesced_per_pool(self):

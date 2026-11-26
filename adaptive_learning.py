@@ -3,12 +3,18 @@
 This module never reads live-mode trades and never modifies entry rules.
 It only adjusts future paper position sizing after a meaningful sample exists.
 """
+from copy import deepcopy
+import math
+import os
 import threading
 import time
 
 import database
 
-MIN_CLOSED_TRADES = max(10, int(__import__("os").getenv("TROJAN_ADAPTIVE_MIN_TRADES", "30")))
+try:
+    MIN_CLOSED_TRADES = max(10, int(os.getenv("TROJAN_ADAPTIVE_MIN_TRADES", "30")))
+except ValueError:
+    MIN_CLOSED_TRADES = 30
 CACHE_TTL = 30
 MIN_MULTIPLIER = 0.80
 MAX_MULTIPLIER = 1.15
@@ -24,11 +30,15 @@ def _profile(strategy, rows):
     ]
     values = []
     for row in reversed(closed):
+        raw_pnl = row.get("profit_loss")
+        if isinstance(raw_pnl, bool):
+            continue
         try:
-            value = float(row.get("profit_loss") or 0)
+            value = float(raw_pnl)
         except (TypeError, ValueError, OverflowError):
             continue
-        values.append(value)
+        if math.isfinite(value):
+            values.append(value)
 
     count = len(values)
     wins = [value for value in values if value > 0]
@@ -72,7 +82,7 @@ def get_learning_report(force=False):
     now = time.monotonic()
     with _lock:
         if not force and _cache["report"] is not None and now - _cache["updated_at"] < CACHE_TTL:
-            return dict(_cache["report"])
+            return deepcopy(_cache["report"])
     rows = database.get_recent_trades(mode="paper", limit=500)
     report = {
         "enabled": True,
@@ -88,8 +98,9 @@ def get_learning_report(force=False):
         "policy": "Closed paper-trade outcomes adjust only future paper position size within 0.80x–1.15x.",
     }
     with _lock:
-        _cache.update({"updated_at": now, "report": report})
-    return dict(report)
+        if now >= _cache["updated_at"]:
+            _cache.update({"updated_at": now, "report": report})
+    return deepcopy(report)
 
 
 def get_size_multiplier(strategy):

@@ -95,6 +95,16 @@ class JupiterRouteIntelligenceTests(unittest.TestCase):
         self.assertFalse(rpc.call_args.args[1][1]["sigVerify"])
         self.assertTrue(rpc.call_args.args[1][1]["replaceRecentBlockhash"])
 
+    @patch("solana_onchain._rpc", return_value={"value": {}})
+    @patch.object(live_execution, "_jupiter_get", return_value={"transaction": "A" * 120})
+    def test_missing_simulation_outcome_cannot_pass(self, _get_order, _rpc):
+        with self.assertRaisesRegex(ValueError, "valid simulation result"):
+            live_execution.simulate_unsigned_swap(
+                "11111111111111111111111111111111",
+                "SysvarRent111111111111111111111111111111111",
+                1000, taker="11111111111111111111111111111111",
+            )
+
     def test_plan_keeps_execution_locked(self):
         quote = {
             "provider": "jupiter", "quoted_at": time.time(),

@@ -49,6 +49,33 @@ class StrategyRulesTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("unavailable", reason)
 
+    def test_negation_preserves_missing_evidence_in_nested_group(self):
+        rule = {"not": [{"any": [
+            {"field": "score", "op": "gt", "value": 100},
+            {"field": "volume_m5", "op": "gt", "value": 100},
+        ]}]}
+        config = {"enabled": True, "valid": True, "rules": {"main": rule}}
+        token = dict(self.token, volume={})
+        with patch.object(strategy_rules, "get_config", return_value=config):
+            passed, reason = strategy_rules.evaluate_strategy_rules(token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("volume_m5: data unavailable", reason)
+
+    def test_negated_named_rule_requires_usable_indicator_evidence(self):
+        rule = {"not": [{"condition": "Rsi", "params": {"threshold": 30}}]}
+        config = {"enabled": True, "valid": True, "rules": {"main": rule}}
+        with patch.object(strategy_rules, "get_config", return_value=config):
+            passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")
+        self.assertFalse(passed)
+        self.assertIn("indicator series unavailable", reason)
+
+    def test_bounded_nesting_applies_to_numeric_rules(self):
+        rule = {"field": "score", "op": "gt", "value": 1}
+        for _ in range(strategy_rules.MAX_RULE_DEPTH + 1):
+            rule = {"not": [rule]}
+        with self.assertRaisesRegex(ValueError, "nesting is too deep"):
+            strategy_rules.validate_rules_config({"main": rule})
+
     def test_invalid_config_fails_closed(self):
         with patch.dict(os.environ, {"TROJAN_STRATEGY_RULES": "{broken"}, clear=False):
             passed, reason = strategy_rules.evaluate_strategy_rules(self.token, 80, "main")

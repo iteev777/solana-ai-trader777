@@ -2,7 +2,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from discovery.gecko_scanner import scan_new_pools, scan_trending_pools
+from discovery.gecko_scanner import scan_new_pools, scan_recent_updates, scan_trending_pools
 from discovery.pumpfun_scanner import scan_pumpfun
 from discovery.birdeye_scanner import scan_birdeye
 from discovery.dexscreener_scanner import scan_dexscreener
@@ -11,6 +11,7 @@ from discovery.screenerbot_sources import scan_rugcheck, scan_jupiter, scan_coin
 SCANNERS = [
     ("geckoterminal_new_pools", scan_new_pools),
     ("geckoterminal_trending_pools", scan_trending_pools),
+    ("geckoterminal_recent_updates", scan_recent_updates),
     ("birdeye_meme_listing", scan_pumpfun),
     ("birdeye", scan_birdeye),
     ("dexscreener", scan_dexscreener),
@@ -64,7 +65,9 @@ def collect_tokens():
                 name = futures[future]
                 try:
                     result = future.result()
-                    source_results[name] = result if isinstance(result, list) else []
+                    if not isinstance(result, list):
+                        raise ValueError("Discovery scanner returned an invalid result")
+                    source_results[name] = result
                     source_stats[name] = {"name": name, "count": len(source_results[name]), "ok": True, "error": None}
                 except Exception as error:
                     print("TOKEN SOURCE WORKER ERROR:", name, repr(error), flush=True)

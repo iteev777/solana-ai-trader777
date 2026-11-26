@@ -2,6 +2,8 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 import database
@@ -64,6 +66,54 @@ class DatabaseBackupTests(unittest.TestCase):
             database.backup_database(self.backup_dir, keep=0)
         with self.assertRaises(ValueError):
             database.backup_database(self.backup_dir, keep=True)
+
+    def test_concurrent_backup_retention_preserves_unrelated_files(self):
+        os.makedirs(self.backup_dir)
+        unrelated = Path(self.backup_dir, "external.sqlite3")
+        unrelated.write_bytes(b"unrelated")
+        with ThreadPoolExecutor(max_workers=4) as workers:
+            backups = list(workers.map(
+                lambda _: database.backup_database(self.backup_dir, keep=2),
+                range(4)
+            ))
+        self.assertEqual(len({item["backup"] for item in backups}), 4)
+        self.assertEqual(len(database.list_database_backups(self.backup_dir)), 2)
+        self.assertEqual(unrelated.read_bytes(), b"unrelated")
+
+    def test_restore_is_verified_and_preserves_the_active_database(self):
+        result = database.backup_database(self.backup_dir)
+        snapshot = Path(self.backup_dir, result["backup"])
+        destination = Path(self.temp.name, "recovered.db")
+        with database.connect() as connection:
+            connection.execute("UPDATE account_state SET balance = 20 WHERE mode = 'paper'")
+        database.restore_database_backup(snapshot, destination)
+        with patch.object(database, "DATABASE", str(destination)), database.connect() as recovered:
+            self.assertEqual(recovered.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(recovered.execute(
+                "SELECT balance FROM account_state WHERE mode = 'paper'"
+            ).fetchone()[0], 100)
+        self.assertEqual(database.get_account_state("paper")["balance"], 20)
+        with self.assertRaises(FileExistsError):
+            database.restore_database_backup(snapshot, destination)
+        with self.assertRaises(ValueError):
+            database.restore_database_backup(snapshot, database.DATABASE)
+
+    def test_restore_rejects_unrelated_schema_corruption_and_existing_sidecars(self):
+        foreign = Path(self.temp.name, "foreign.db")
+        connection = sqlite3.connect(foreign)
+        connection.execute("CREATE TABLE unrelated (id integer)")
+        connection.close()
+        destination = Path(self.temp.name, "recovered.db")
+        with self.assertRaisesRegex(sqlite3.DatabaseError, "missing core Trojan tables"):
+            database.restore_database_backup(foreign, destination)
+        self.assertFalse(destination.exists())
+        foreign.write_bytes(b"not a database")
+        with self.assertRaises(sqlite3.DatabaseError):
+            database.restore_database_backup(foreign, destination)
+        self.assertFalse(destination.exists())
+        Path(str(destination) + "-wal").touch()
+        with self.assertRaises(FileExistsError):
+            database.restore_database_backup(foreign, destination)
 
     def test_health_reports_storage_and_backup_state(self):
         database.backup_database(self.backup_dir)

@@ -30,7 +30,9 @@ def _sender():
                 if not payload.get("ok"):
                     raise RuntimeError("Telegram API returned not-ok")
         except Exception as error:
-            print("[TROJAN V2] TELEGRAM ALERT FAILED:", repr(error), flush=True)
+            response = error.response if isinstance(error, requests.HTTPError) else None
+            status = response.status_code if response is not None else None
+            print("[TROJAN V2] TELEGRAM ALERT FAILED:", type(error).__name__, status, flush=True)
         finally:
             _queue.task_done()
 

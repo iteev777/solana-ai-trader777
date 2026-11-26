@@ -27,7 +27,7 @@ def _is_solana_mint(value):
 def _items(payload):
     if isinstance(payload, list):
         return payload
-    if isinstance(payload, dict):
+    if isinstance(payload, dict) and payload.get("success") is not False:
         data = payload.get("data")
         if isinstance(data, list):
             return data
@@ -36,7 +36,7 @@ def _items(payload):
                 value = data.get(key)
                 if isinstance(value, list):
                     return value
-    return []
+    return None
 
 
 def _candidate(mint, source, item=None, name=None, symbol=None):
@@ -81,9 +81,14 @@ def scan_rugcheck():
         ("rugcheck_verified", "verified"),
     )
     found = {}
+    available = False
     for source, endpoint in feeds:
         payload = _safe_fetch(source, f"{RUGCHECK_BASE}/{endpoint}", ttl=45)
-        for item in _items(payload):
+        items = _items(payload)
+        if items is None:
+            continue
+        available = True
+        for item in items:
             if not isinstance(item, dict):
                 continue
             metadata = item.get("tokenMeta")
@@ -100,6 +105,8 @@ def scan_rugcheck():
                     found[mint] = token
                 elif source not in found[mint]["discovery_sources"]:
                     found[mint]["discovery_sources"].append(source)
+    if not available:
+        raise RuntimeError("RUGCHECK: all discovery feeds unavailable")
     print("RUGCHECK DISCOVERY TOKENS:", len(found), flush=True)
     return list(found.values())
 
@@ -113,9 +120,14 @@ def scan_jupiter():
         ("jupiter_trending", f"{JUPITER_BASE}/toptrending/1h?limit=100"),
     )
     found = {}
+    available = False
     for source, url in feeds:
         payload = _safe_fetch(source, url, ttl=30)
-        for item in _items(payload):
+        items = _items(payload)
+        if items is None:
+            continue
+        available = True
+        for item in items:
             if not isinstance(item, dict):
                 continue
             token = _candidate(
@@ -128,6 +140,8 @@ def scan_jupiter():
                     found[mint] = token
                 elif source not in found[mint]["discovery_sources"]:
                     found[mint]["discovery_sources"].append(source)
+    if not available:
+        raise RuntimeError("JUPITER: all discovery feeds unavailable")
     print("JUPITER DISCOVERY TOKENS:", len(found), flush=True)
     return list(found.values())
 
@@ -142,8 +156,11 @@ def scan_coingecko():
         "coingecko_solana", COINGECKO_URL,
         params={"include_platform": "true"}, headers=headers, ttl=3600
     )
+    items = _items(payload)
+    if items is None:
+        raise RuntimeError("CoinGecko: discovery feed unavailable or invalid")
     found = {}
-    for item in _items(payload):
+    for item in items:
         if not isinstance(item, dict):
             continue
         platforms = item.get("platforms")
@@ -163,8 +180,11 @@ def scan_coingecko():
 def scan_defillama():
     """DeFiLlama protocol registry filtered to Solana contract addresses."""
     payload = _safe_fetch("defillama_solana", DEFILLAMA_URL, ttl=3600)
+    items = _items(payload)
+    if items is None:
+        raise RuntimeError("DeFiLlama: discovery feed unavailable or invalid")
     found = {}
-    for item in _items(payload):
+    for item in items:
         if not isinstance(item, dict):
             continue
         chains = item.get("chains")

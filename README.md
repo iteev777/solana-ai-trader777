@@ -296,6 +296,14 @@ FluxBeam is also available as a read-only direct quote adapter for the verified 
 
 The dashboard's System page exposes SQLite integrity, WAL mode, storage backend, database/WAL size and verified backup count. **Create verified backup** uses SQLite's online backup API (safe with WAL and active readers/writers), runs `PRAGMA integrity_check` on the snapshot, and retains the newest seven snapshots by default. The authenticated endpoint is `POST /api/database/backup`; `TROJAN_BACKUP_DIR` can select a separate backup directory.
 
+To verify a snapshot and recover it to a separate offline file, run:
+
+```bash
+python -m database restore /path/to/backup.sqlite3 /path/to/recovery/trading_history.db
+```
+
+Create the recovery directory first. Inspect the restored file before using it. To start the paper bot against the recovered ledger, stop the existing bot and set `BOT_DATA_DIR` to the recovery directory before restarting. Keep the original database and its SQLite sidecars together.
+
 Railway durability still requires an attached persistent volume. The health panel reports `ephemeral_default` when neither `RAILWAY_VOLUME_MOUNT_PATH` nor `BOT_DATA_DIR` is configured. A backup stored on the same ephemeral filesystem is not disaster recovery; attach a Railway volume or configure an external backup destination before relying on long-term retention.
 
 ## Multi-window market filtering

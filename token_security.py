@@ -3,7 +3,6 @@
 Concentration is explicitly account-authority concentration, not beneficial-owner
 concentration: pool vaults and custody accounts can dominate the largest accounts.
 """
-import math
 import time
 
 TOKEN_PROGRAMS = {
@@ -12,12 +11,14 @@ TOKEN_PROGRAMS = {
 }
 
 
-def _number(value):
-    try:
-        result = float(value)
-        return result if math.isfinite(result) and result >= 0 else None
-    except (TypeError, ValueError, OverflowError):
-        return None
+def _raw_amount(value):
+    if isinstance(value, str):
+        if not value.isascii() or not value.isdecimal() or len(value) > 20:
+            return None
+        value = int(value)
+    if type(value) is int and 0 <= value <= 2**64 - 1:
+        return value
+    return None
 
 
 def get_token_security_report(mint, largest_limit=20):
@@ -47,16 +48,16 @@ def get_token_security_report(mint, largest_limit=20):
 
     mint_authority = parsed.get("mintAuthority")
     freeze_authority = parsed.get("freezeAuthority")
-    decimals = int(parsed.get("decimals", -1))
-    if not 0 <= decimals <= 18:
+    decimals = parsed.get("decimals")
+    if type(decimals) is not int or not 0 <= decimals <= 18:
         raise ValueError("Mint decimals are invalid")
 
     supply_result = chain._rpc(
         "getTokenSupply", [mint, {"commitment": "confirmed"}]
     )
     supply_info = (supply_result or {}).get("value") or {}
-    supply_raw = int(supply_info.get("amount", "0"))
-    if supply_raw <= 0:
+    supply_raw = _raw_amount(supply_info.get("amount"))
+    if not supply_raw:
         raise ValueError("Mint supply is unavailable or zero")
 
     largest_result = chain._rpc(
@@ -68,15 +69,24 @@ def get_token_security_report(mint, largest_limit=20):
         raise ValueError("Largest token account response is invalid")
     accounts = accounts[:max(1, min(int(largest_limit), 20))]
     amounts = []
+    seen_addresses = set()
     for item in accounts:
         if not isinstance(item, dict):
             continue
-        amount = _number(item.get("amount"))
+        amount = _raw_amount(item.get("amount"))
         address = item.get("address")
-        if amount is not None and isinstance(address, str):
-            amounts.append({"address": address, "amount": amount})
+        if amount is None or not isinstance(address, str) or not address:
+            continue
+        if address in seen_addresses:
+            raise ValueError("Duplicate address in largest token accounts")
+        seen_addresses.add(address)
+        amounts.append({"address": address, "amount": amount})
     if not amounts:
         raise ValueError("Largest token account data unavailable")
+
+    amounts.sort(key=lambda item: item["amount"], reverse=True)
+    if sum(item["amount"] for item in amounts) > supply_raw:
+        raise ValueError("Largest token account amounts exceed the observed mint supply")
 
     top10_raw = sum(item["amount"] for item in amounts[:10])
     top10_pct = min(100.0, top10_raw / supply_raw * 100.0)
@@ -107,7 +117,7 @@ def get_token_security_report(mint, largest_limit=20):
             )
             owner = info.get("owner")
             if isinstance(owner, str) and owner:
-                owner_amounts[owner] = owner_amounts.get(owner, 0.0) + item["amount"]
+                owner_amounts[owner] = owner_amounts.get(owner, 0) + item["amount"]
                 account_details[index]["authority"] = owner
         if owner_amounts:
             owner_concentration = min(
@@ -132,8 +142,8 @@ def get_token_security_report(mint, largest_limit=20):
         "token_program": token_program,
         "decimals": decimals,
         "supply": supply_raw / (10 ** decimals),
-        "mint_authority": "ACTIVE" if mint_authority else "DISABLED",
-        "freeze_authority": "ACTIVE" if freeze_authority else "DISABLED",
+        "mint_authority": "DISABLED" if mint_authority is None else "ACTIVE",
+        "freeze_authority": "DISABLED" if freeze_authority is None else "ACTIVE",
         "top10_token_account_pct": round(top10_pct, 4),
         "largest_token_accounts": len(amounts),
         "largest_token_account_details": account_details,

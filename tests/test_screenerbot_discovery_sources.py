@@ -44,6 +44,15 @@ class ScreenerBotDiscoverySourceTests(unittest.TestCase):
             {"jupiter_recent", "jupiter_organic", "jupiter_traded", "jupiter_trending"},
         )
 
+    def test_outages_are_distinct_from_successful_empty_feeds(self):
+        for scan in (sources.scan_rugcheck, sources.scan_jupiter, sources.scan_coingecko, sources.scan_defillama):
+            with self.subTest(scan=scan.__name__):
+                with patch.object(sources, "_safe_fetch", return_value={"success": False, "data": []}):
+                    with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                        scan()
+                with patch.object(sources, "_safe_fetch", return_value={"data": []}):
+                    self.assertEqual(scan(), [])
+
     def test_coingecko_uses_solana_platform_contract_only(self):
         payload = [
             {"id": "valid", "name": "Valid", "symbol": "VAL", "platforms": {"solana": VALID_MINT}},

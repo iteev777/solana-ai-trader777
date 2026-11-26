@@ -1,9 +1,8 @@
+import math
 import threading
 import os
-import time
-from datetime import datetime
 import database
-from position_policy import get_dca_steps, get_exit_steps
+from position_policy import completed_exit_steps, get_dca_steps, get_exit_steps
 import exit_policy
 import paper_fill_model
 
@@ -46,11 +45,12 @@ _lock = threading.RLock()
 
 def _positive_finite(value):
     """Return a finite positive float, or None for unsafe market input."""
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    import math
     return number if math.isfinite(number) and number > 0 else None
 
 
@@ -141,7 +141,7 @@ def open_position(
         position_size = float(TRADE_SIZE if trade_size is None else trade_size)
     except (TypeError, ValueError, OverflowError):
         return "Invalid trade size"
-    if not __import__("math").isfinite(position_size) or position_size <= 0:
+    if not math.isfinite(position_size) or position_size <= 0:
         return "Invalid trade size"
 
     # Adaptive sizing is paper-only and starts at 1.0x until enough closed
@@ -331,6 +331,10 @@ def update_position(token_address, current_price):
                 MODE, token_address, metadata
             )
 
+        exit_reason = exit_policy.evaluate_exit(position, current_price, policy=exit_config)
+        if exit_reason and exit_reason != "TAKE PROFIT":
+            return close_position(token_address, current_price, exit_reason)
+
         # Configurable DCA tiers. Every tier is one-shot, ordered, and
         # blocked at/beyond the hard stop. The default remains disabled.
         try:
@@ -347,10 +351,10 @@ def update_position(token_address, current_price):
                 result = database.add_position_investment_atomic(
                     MODE, token_address, dca_fill_price, step["add_usd"],
                     metadata={
-                        "dca_count": dca_count + 1,
                         "paper_dca_slippage_bps": dca_slippage_bps,
                         "paper_fill_model": "CONSERVATIVE_MARKET_SLIPPAGE",
-                    }
+                    },
+                    dca_tier=dca_count,
                 )
                 if isinstance(result, dict):
                     result["market_price"] = current_price
@@ -363,9 +367,7 @@ def update_position(token_address, current_price):
 
         # Configurable multi-step exit ladder. Each fraction applies to
         # the remaining position, so successive sells cannot over-close it.
-        completed = metadata.get("exit_ladder_completed", [])
-        if not isinstance(completed, list):
-            completed = []
+        completed = completed_exit_steps(metadata)
         for step_index, step in enumerate(exit_steps):
             if step_index in completed:
                 continue
@@ -379,16 +381,11 @@ def update_position(token_address, current_price):
                 result = database.partial_close_position_atomic(
                     MODE, token_address, exit_fill_price,
                     fraction=step["sell_fraction"],
-                    reason="EXIT LADDER TIER " + str(step_index + 1)
+                    reason="EXIT LADDER TIER " + str(step_index + 1),
+                    exit_tier=step_index,
+                    slippage_bps=exit_slippage_bps,
                 )
                 if isinstance(result, dict):
-                    completed.append(step_index)
-                    metadata["exit_ladder_completed"] = completed
-                    metadata["partial_take_profit_done"] = True
-                    metadata["partial_exit_count"] = int(metadata.get("partial_exit_count", 0) or 0) + 1
-                    metadata["paper_exit_slippage_bps"] = exit_slippage_bps
-                    metadata["paper_fill_model"] = "CONSERVATIVE_MARKET_SLIPPAGE"
-                    database.update_position_metadata(MODE, token_address, metadata)
                     result["market_price"] = current_price
                     result["effective_fill_price"] = exit_fill_price
                     result["slippage_bps"] = exit_slippage_bps
@@ -398,9 +395,6 @@ def update_position(token_address, current_price):
                     return result
                 break
 
-        exit_reason = exit_policy.evaluate_exit(
-            position, current_price, policy=exit_config
-        )
         if exit_reason:
             return close_position(token_address, current_price, exit_reason)
 

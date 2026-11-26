@@ -20,16 +20,15 @@ TIMEOUT = min(12.0, max(1.0, float(os.getenv("TROJAN_ROUTE_TIMEOUT", "7"))))
 MAX_SLIPPAGE_BPS = min(300, max(1, int(os.getenv("TROJAN_MAX_SLIPPAGE_BPS", "100"))))
 
 
-def _positive_int(value, name):
-    if isinstance(value, bool):
-        raise ValueError(name + " must be a positive integer")
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError(name + " must be a positive integer")
-    if number <= 0:
-        raise ValueError(name + " must be a positive integer")
-    return number
+def _raw_amount(value, name, allow_zero=False):
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(name + " must be an integer")
+    minimum = 0 if allow_zero else 1
+    if not (minimum <= value <= 2**64 - 1):
+        raise ValueError(name + " is outside the supported u64 range")
+    return value
 
 
 def _output_amount(payload):
@@ -38,7 +37,7 @@ def _output_amount(payload):
     for key in ("outAmount", "amountOut", "outputAmount", "out_amount"):
         value = payload.get(key)
         if value is not None:
-            return _positive_int(value, "output amount")
+            return _raw_amount(value, "output amount")
     nested = payload.get("quote")
     if isinstance(nested, dict):
         return _output_amount(nested)
@@ -50,11 +49,12 @@ def _minimum_output(payload, output_amount, slippage_bps):
                 "minOutAmount", "minimum_out_amount"):
         value = payload.get(key) if isinstance(payload, dict) else None
         if value is not None:
-            minimum = _positive_int(value, "minimum output")
+            minimum = _raw_amount(value, "minimum output")
             if minimum > output_amount:
                 raise ValueError("Minimum output exceeds quoted output")
             return minimum
-    return output_amount * (10000 - slippage_bps) // 10000
+    minimum = output_amount * (10000 - slippage_bps) // 10000
+    return _raw_amount(minimum, "minimum output")
 
 
 def _validate(input_mint, output_mint, amount, slippage_bps):
@@ -64,9 +64,12 @@ def _validate(input_mint, output_mint, amount, slippage_bps):
         raise ValueError("Output mint is required")
     if input_mint.strip() == output_mint.strip():
         raise ValueError("Input and output mints must differ")
-    amount = _positive_int(amount, "Input amount")
-    slip = int(slippage_bps if slippage_bps is not None else MAX_SLIPPAGE_BPS)
-    if slip < 0 or slip > MAX_SLIPPAGE_BPS:
+    amount = _raw_amount(amount, "Input amount")
+    slip = _raw_amount(
+        slippage_bps if slippage_bps is not None else MAX_SLIPPAGE_BPS,
+        "Slippage", allow_zero=True,
+    )
+    if slip > MAX_SLIPPAGE_BPS:
         raise ValueError("Slippage exceeds configured safety cap")
     return input_mint.strip(), output_mint.strip(), amount, slip
 
@@ -76,7 +79,7 @@ def _jupiter(input_mint, output_mint, amount, slippage_bps):
     quote = live_execution.get_jupiter_quote(
         input_mint, output_mint, amount, slippage_bps
     )
-    output = _positive_int(quote.get("out_amount"), "Jupiter output")
+    output = _raw_amount(quote.get("out_amount"), "Jupiter output")
     minimum = _minimum_output(
         {"minimum_out_amount": quote.get("minimum_out_amount")},
         output, slippage_bps
@@ -114,16 +117,27 @@ def _raptor(input_mint, output_mint, amount, slippage_bps):
     payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("Raptor returned an invalid quote")
+    if payload.get("inputMint", input_mint) != input_mint:
+        raise ValueError("Raptor quote input mint does not match request")
+    if payload.get("outputMint", output_mint) != output_mint:
+        raise ValueError("Raptor quote output mint does not match request")
+    if "amountIn" in payload and _raw_amount(payload["amountIn"], "Raptor input") != amount:
+        raise ValueError("Raptor quote input amount does not match request")
     output = _output_amount(payload)
     minimum = _minimum_output(payload, output, slippage_bps)
-    impact = payload.get("priceImpactPct", payload.get("priceImpact"))
+    # The current wire field is expressed in percentage points. Accept the
+    # older priceImpactPct ratio as well.
+    impact_in_percent = payload.get("priceImpact")
+    impact = impact_in_percent if impact_in_percent is not None else payload.get("priceImpactPct")
     if impact is not None:
+        if isinstance(impact, bool):
+            raise ValueError("Raptor price impact is invalid")
         impact = float(impact)
         if not math.isfinite(impact) or impact < 0:
             raise ValueError("Raptor price impact is invalid")
-        if impact <= 1:
+        if impact_in_percent is None and impact <= 1:
             impact *= 100
-    route_data = payload.get("dexes") or payload.get("route") or []
+    route_data = payload.get("routePlan") or payload.get("dexes") or payload.get("route") or []
     hop_count = payload.get("hopCount", payload.get("hops"))
     if hop_count is None:
         if isinstance(route_data, list) and route_data:

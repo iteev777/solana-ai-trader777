@@ -5,6 +5,7 @@ expire automatically; open-position watches remain until the position monitor
 removes them. All RPC reads remain read-only.
 """
 import json
+import math
 import os
 import threading
 import time
@@ -184,10 +185,17 @@ def store_pool_snapshot(key, snapshot):
     if not isinstance(key, (tuple, list)) or len(key) != 3 or not isinstance(snapshot, dict):
         return False
     observed = snapshot.get("observedAt")
-    if not isinstance(observed, (int, float)) or observed <= 0:
-        observed = time.time()
+    if type(observed) not in (float, int) or not math.isfinite(observed) or observed <= 0:
+        return False
+    if snapshot.get("onchainVerified") is not True:
+        return False
     normalized_key = tuple(key)
     with _lock:
+        if normalized_key not in _active_watch_keys_locked():
+            return False
+        previous = _snapshots.get(normalized_key)
+        if previous and observed < previous["observed_at"]:
+            return False
         _snapshots[normalized_key] = {"data": dict(snapshot), "observed_at": observed}
         _status["last_update"] = observed
         _status["last_error"] = None
@@ -241,8 +249,137 @@ def _refresh_many(keys, prune_unwatched=False):
             _batch_refreshing = False
 
 
-def _run():
+def _send_request(ws, request_id, method, params):
+    ws.send(json.dumps({
+        "jsonrpc": "2.0", "id": request_id, "method": method, "params": params
+    }))
+
+
+def _watch_connection(ws):
     global _batch_refreshing
+    from solana_onchain import get_pool_watch_accounts
+
+    account_cache = {}
+    discovery_retry_after = {}
+    # There is one upstream subscription per address, even when multiple pools
+    # share it. Requests remain pending until their response arrives so that a
+    # late subscription acknowledgement can still be explicitly released.
+    subscriptions = {}
+    account_subscriptions = {}
+    pending = {}
+    pending_accounts = set()
+    subscription_retry_after = {}
+    request_id = 1
+    next_batch_poll = 0.0
+
+    while True:
+        now_mono = time.monotonic()
+        with _lock:
+            current = _active_watch_keys_locked()
+            poll_due = bool(current) and now_mono >= next_batch_poll
+            batch_keys = []
+            if current and not _batch_refreshing and (_dirty_pools or poll_due):
+                batch_keys = sorted(current if poll_due else _dirty_pools & current)
+                if batch_keys:
+                    _dirty_pools.difference_update(batch_keys)
+                    _batch_refreshing = True
+                    next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
+            _dirty_pools.intersection_update(current)
+        if batch_keys:
+            _batch_refresh_pool.submit(_refresh_many, batch_keys, poll_due)
+
+        for key in set(account_cache) - current:
+            del account_cache[key]
+        for key in set(discovery_retry_after) - current:
+            del discovery_retry_after[key]
+
+        for key in sorted(current - account_cache.keys()):
+            if now_mono < discovery_retry_after.get(key, 0):
+                continue
+            try:
+                accounts = get_pool_watch_accounts(key[0], key[1], key[2])
+                if not accounts:
+                    raise ValueError("pool returned no watchable accounts")
+                account_cache[key] = accounts
+                discovery_retry_after.pop(key, None)
+            except Exception as error:
+                discovery_retry_after[key] = time.monotonic() + 5
+                with _lock:
+                    _status["last_error"] = (
+                        "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
+                    )
+
+        desired_accounts = {}
+        for key, accounts in account_cache.items():
+            for account in accounts:
+                desired_accounts.setdefault(account, set()).add(key)
+
+        for account in account_subscriptions.keys() - desired_accounts.keys():
+            subscription_id = account_subscriptions.pop(account)
+            _send_request(ws, request_id, "accountUnsubscribe", [subscription_id])
+            request_id += 1
+            subscriptions.pop(subscription_id)
+        for account in subscription_retry_after.keys() - desired_accounts.keys():
+            del subscription_retry_after[account]
+
+        if any(time.monotonic() - started > 12 for _, started in pending.values()):
+            raise TimeoutError("accountSubscribe acknowledgement timed out")
+        for account in sorted(desired_accounts.keys() - account_subscriptions.keys() - pending_accounts):
+            if time.monotonic() < subscription_retry_after.get(account, 0):
+                continue
+            _send_request(ws, request_id, "accountSubscribe", [account, {
+                "encoding": "base64", "commitment": "processed"
+            }])
+            pending[request_id] = (account, time.monotonic())
+            pending_accounts.add(account)
+            request_id += 1
+        with _lock:
+            _status["subscriptions"] = len(subscriptions)
+
+        try:
+            payload = json.loads(ws.recv())
+        except websocket.WebSocketTimeoutException:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+        response_id = payload.get("id")
+        if type(response_id) is int and response_id in pending:
+            account, _ = pending.pop(response_id)
+            pending_accounts.remove(account)
+            subscription_id = payload.get("result")
+            if type(subscription_id) is int and subscription_id >= 0:
+                subscriptions[subscription_id] = account
+                account_subscriptions[account] = subscription_id
+                subscription_retry_after.pop(account, None)
+            elif account in desired_accounts:
+                subscription_retry_after[account] = time.monotonic() + 5
+                with _lock:
+                    _status["last_error"] = (
+                        "ACCOUNT SUBSCRIPTION REJECTED: " + str(payload.get("error"))[:150]
+                    )
+            continue
+
+        if payload.get("method") != "accountNotification":
+            continue
+        params = payload.get("params")
+        if not isinstance(params, dict) or not isinstance(params.get("result"), dict):
+            continue
+        subscription_id = params.get("subscription")
+        if type(subscription_id) is not int:
+            continue
+        account = subscriptions.get(subscription_id)
+        if account not in desired_accounts:
+            continue
+        with _lock:
+            keys = desired_accounts[account] & _active_watch_keys_locked()
+            if keys:
+                _status["notifications"] += 1
+                _status["coalesced_notifications"] += len(keys & _dirty_pools)
+                _dirty_pools.update(keys)
+
+
+def _run():
     delay = 1
     while True:
         url = _rpc_ws_url()
@@ -255,135 +392,27 @@ def _run():
             time.sleep(10)
             continue
         ws = None
+        connected_at = None
         try:
             ws = websocket.create_connection(url, timeout=8, enable_multithread=True)
             ws.settimeout(1)
-            # subscription id -> (pool key, account); request id -> same tuple.
-            subscriptions = {}
-            sent = {}
-            account_cache = {}
-            subscription_retry_after = {}
-            request_id = 1
-            next_batch_poll = 0.0
+            connected_at = time.monotonic()
             with _lock:
                 _status.update({"running": True, "configured": True, "last_error": None})
-            while True:
-                with _lock:
-                    current = _active_watch_keys_locked()
-                    now_mono = time.monotonic()
-                    poll_due = bool(current) and now_mono >= next_batch_poll
-                    batch_keys = None
-                    prune_unwatched = False
-                    if current and not _batch_refreshing and (_dirty_pools or poll_due):
-                        batch_keys = sorted(set(current) if poll_due else set(_dirty_pools))
-                        prune_unwatched = poll_due
-                        _dirty_pools.difference_update(batch_keys)
-                        _batch_refreshing = True
-                        next_batch_poll = now_mono + POOL_BATCH_POLL_INTERVAL
-                if batch_keys:
-                    _batch_refresh_pool.submit(_refresh_many, batch_keys, prune_unwatched)
-
-                # Remove every pool's state and reserve subscriptions when it leaves
-                # both the position set and the candidate LRU.
-                removed_keys = set(account_cache) - current
-                for key in removed_keys:
-                    account_cache.pop(key, None)
-                for pair in list(subscription_retry_after):
-                    if pair[0] not in current:
-                        subscription_retry_after.pop(pair, None)
-                for pair in list(sent):
-                    if pair[0] not in current:
-                        subscription_id = next(
-                            (sid for sid, active_pair in subscriptions.items()
-                             if active_pair == pair), None
-                        )
-                        if subscription_id is not None:
-                            ws.send(json.dumps({
-                                "jsonrpc": "2.0", "id": request_id,
-                                "method": "accountUnsubscribe",
-                                "params": [subscription_id]
-                            }))
-                            request_id += 1
-                            subscriptions.pop(subscription_id, None)
-                        sent.pop(pair, None)
-                with _lock:
-                    _status["subscriptions"] = len(subscriptions)
-
-                # Discover each pool's actual reserve accounts once per connection.
-                from solana_onchain import get_pool_watch_accounts
-                for key in current:
-                    if key not in account_cache:
-                        try:
-                            accounts = get_pool_watch_accounts(key[0], key[1], key[2])
-                            if not accounts:
-                                raise ValueError("pool returned no watchable accounts")
-                            account_cache[key] = accounts
-                        except Exception as error:
-                            with _lock:
-                                _status["last_error"] = (
-                                    "POOL WATCH ACCOUNT DISCOVERY: " + str(error)[:150]
-                                )
-                            continue
-                    for account in account_cache.get(key, []):
-                        pair = (key, account)
-                        if pair in sent or time.monotonic() < subscription_retry_after.get(pair, 0.0):
-                            continue
-                        ws.send(json.dumps({
-                            "jsonrpc": "2.0", "id": request_id,
-                            "method": "accountSubscribe",
-                            "params": [account, {
-                                "encoding": "base64", "commitment": "processed"
-                            }]
-                        }))
-                        sent[pair] = request_id
-                        request_id += 1
-
-                try:
-                    payload = json.loads(ws.recv())
-                except websocket.WebSocketTimeoutException:
-                    continue
-
-                if "id" in payload:
-                    pair = next(
-                        (item for item, rid in sent.items() if rid == payload["id"]),
-                        None
-                    )
-                    if pair and "result" in payload:
-                        subscriptions[payload["result"]] = pair
-                        subscription_retry_after.pop(pair, None)
-                    elif pair and "error" in payload:
-                        sent.pop(pair, None)
-                        subscription_retry_after[pair] = time.monotonic() + 5.0
-                        with _lock:
-                            _status["last_error"] = (
-                                "ACCOUNT SUBSCRIPTION REJECTED: "
-                                + str(payload["error"])[:150]
-                            )
-                    with _lock:
-                        _status["subscriptions"] = len(subscriptions)
-                    continue
-
-                params = payload.get("params") or {}
-                pair = subscriptions.get(params.get("subscription"))
-                if pair and isinstance(params.get("result"), dict):
-                    key = pair[0]
-                    with _lock:
-                        _status["notifications"] += 1
-                        if key in _dirty_pools:
-                            _status["coalesced_notifications"] += 1
-                        _dirty_pools.add(key)
-            delay = 1
+            _watch_connection(ws)
         except Exception as error:
             with _lock:
                 _status.update({
                     "running": False, "subscriptions": 0,
                     "last_error": str(error)[:200]
                 })
-            time.sleep(delay)
-            delay = min(delay * 2, 30)
         finally:
             if ws is not None:
                 try:
                     ws.close()
                 except Exception:
                     pass
+        if connected_at is not None and time.monotonic() - connected_at >= 30:
+            delay = 1
+        time.sleep(delay)
+        delay = min(delay * 2, 30)
